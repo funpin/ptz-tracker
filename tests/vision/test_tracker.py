@@ -89,6 +89,7 @@ def test_target_reacquired_by_appearance_after_timeout():
     back = step(tr, t, (900, 200, RED), (300, 200, BLUE))
     new_red = next(x for x in back if x.box[0] > 600)
     assert tr.target_id == new_red.id and tr.target_state == "tracking"
+    assert tr.target_id == red.id  # узнанная цель сохраняет свой номер (оператор видит «№3», а не «№7»)
 
 
 def test_weak_detection_continues_but_does_not_create():
@@ -126,3 +127,27 @@ def test_velocity_spike_does_not_lose_target_after_occlusion():
     t += DT
     back = step(tr, t, (505, 200, RED, 120, 300, 0.20))  # слабая детекция на том же месте
     assert [x.id for x in back] == [a.id] and tr.target_state == "tracking"
+
+
+def _partly_recolored(cx, top, color, frac, w=120, h=300):
+    """Кадр с человеком, у которого часть «рубашки» другого цвета — шум сжатия/света."""
+    img, ppl = scene((cx, top, RED), (cx - 190, top - 30, BLUE, 300, 340))
+    x1 = int(cx - w / 2)
+    img[int(top + 0.15 * h) : int(top + 0.6 * h), x1 : x1 + int(w * frac)] = color
+    return img, ppl
+
+
+def test_noisy_appearance_does_not_drop_lone_target():
+    # С площадки: статичный кадр, расстояние по одежде у того же человека скачет 0.12–0.37 →
+    # цель отвергалась, на её месте рождался «двойник» и перехватывал её навсегда.
+    tr = PersonTracker()
+    img, ppl = _partly_recolored(500, 200, RED, 0.0)
+    target = next(x for x in tr.update(ppl, 0.0, img) if x.box[0] > 400)
+    tr.select(target.id)
+    t = 0.0
+    for i in range(10):
+        t += DT
+        img, ppl = _partly_recolored(500, 200, GREEN, 0.4 if i % 2 == 0 else 0.0)
+        tr.update(ppl, t, img)
+        assert tr.target_state == "tracking" and tr.target_id == target.id
+    assert len(tr.tracks) == 2  # двойник не появился

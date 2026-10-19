@@ -129,12 +129,16 @@ class PersonTracker:
         reid_max_distance: float = 0.35,
         appearance_alpha: float = 0.1,
         new_track_score: float = 0.25,
+        reid_hard_distance: float = 0.6,
     ):
         self.match_iou = match_iou
         self.max_missing_s = max_missing_s
         self.reid_max_distance = reid_max_distance
         self.appearance_alpha = appearance_alpha
         self.new_track_score = new_track_score
+        # Внешность одного и того же человека «шумит» от кадра к кадру (с площадки: 0.12–0.37),
+        # поэтому единственного кандидата на месте цели отвергаем, только если он явно чужой.
+        self.reid_hard_distance = reid_hard_distance
         self._tracks: dict[int, Track] = {}
         self._ids = itertools.count(1)
         self._t: float | None = None
@@ -188,10 +192,32 @@ class PersonTracker:
 
     # --- обновление -----------------------------------------------------
 
-    def _appearance_ok(self, hist: np.ndarray | None) -> bool:
+    def _target_distance(self, hist: np.ndarray | None) -> float | None:
         if self._target_app is None or hist is None:
-            return True
-        return appearance_distance(self._target_app, hist) <= self.reid_max_distance
+            return None
+        return appearance_distance(self._target_app, hist)
+
+    def _match_target(self, t: float, people: list[Person], hists) -> int | None:
+        """Подобрать детекцию для цели первой, чтобы её не перехватил сосед или «двойник».
+
+        Один кандидат по положению — берём, если он не явно чужой. Несколько — выбираем по внешности.
+        """
+        tr = self.target
+        if tr is None:
+            return None
+        pb = tr.predicted_box(t)
+        cands = []
+        for di, p in enumerate(people):
+            iou = _iou(pb, p.box)
+            if iou >= self.match_iou:
+                d = self._target_distance(hists[di])
+                if d is None or d <= self.reid_hard_distance:
+                    cands.append((d if d is not None else 0.0, -iou, di))
+        if not cands:
+            return None
+        if len(cands) == 1:
+            return cands[0][2]
+        return min(cands)[2]  # ближе по внешности, при равенстве — больше перекрытие
 
     def update(
         self,
@@ -204,22 +230,29 @@ class PersonTracker:
         if hists is None:
             hists = compute_histograms(image, people)
         tracks = list(self._tracks.values())
+        used_t, used_d = set(), set()
+
+        tdi = self._match_target(t, people, hists)
+        if tdi is not None:
+            ti = next(i for i, x in enumerate(tracks) if x.id == self.target_id)
+            used_t.add(ti)
+            used_d.add(tdi)
+            self._apply(tracks[ti], people[tdi], hists[tdi], t, isolated=self._isolated(tdi, people))
 
         pairs = []
         for ti, tr in enumerate(tracks):
+            if tr.id == self.target_id:
+                continue
             pb = tr.predicted_box(t)
             for di, p in enumerate(people):
                 iou = _iou(pb, p.box)
                 if iou >= self.match_iou:
                     pairs.append((iou, ti, di))
         pairs.sort(reverse=True)
-        used_t, used_d = set(), set()
         for _, ti, di in pairs:
             if ti in used_t or di in used_d:
                 continue
             tr = tracks[ti]
-            if tr.id == self.target_id and not self._appearance_ok(hists[di]):
-                continue  # рядом кто-то другой, не наша цель
             used_t.add(ti)
             used_d.add(di)
             self._apply(tr, people[di], hists[di], t, isolated=self._isolated(di, people))
@@ -290,6 +323,9 @@ class PersonTracker:
         scored = [s for s in scored if s[0] <= self.reid_max_distance]
         if scored:
             _, best = min(scored, key=lambda s: s[0])
+            # узнанный трек получает номер цели — для оператора это тот же человек
             self._tracks.pop(self.target_id, None)
-            self.target_id = best.id
+            self._tracks.pop(best.id)
+            best.id = self.target_id
+            self._tracks[best.id] = best
             self._target_lost_since = None

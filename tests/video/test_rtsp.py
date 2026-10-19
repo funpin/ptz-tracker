@@ -49,14 +49,15 @@ def test_rtsp_reads_local_file_as_stream(tmp_path):
 
 def test_candidates_with_auth():
     c = rtsp_candidates("10.0.0.12", "admin", "p@ss")
-    # подтверждено на живой AW-HE42 (диагностика 2026-10-19): работает /MediaInput/h264/stream_1
-    assert c[0] == "rtsp://admin:p%40ss@10.0.0.12/MediaInput/h264/stream_1"
+    # живая AW-HE42 (диагностика 2026-10-19 17:23): MJPEG 344 мс против ~830 мс у H.264 — первым идёт MJPEG
+    assert c[0] == "http://admin:p%40ss@10.0.0.12/cgi-bin/mjpeg?resolution=640x360&framerate=25"
+    assert c[1] == "rtsp://admin:p%40ss@10.0.0.12/MediaInput/h264/stream_1"
     assert any(u.startswith("http://") for u in c)
 
 
 def test_candidates_without_auth():
     c = rtsp_candidates("10.0.0.12", None, None)
-    assert c[0] == "rtsp://10.0.0.12/MediaInput/h264/stream_1"
+    assert c[0] == "http://10.0.0.12/cgi-bin/mjpeg?resolution=640x360&framerate=25"
     assert len(c) == 5
 
 

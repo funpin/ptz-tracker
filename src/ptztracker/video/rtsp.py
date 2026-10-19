@@ -66,13 +66,14 @@ def stream_urls(
 def rtsp_candidates(host: str, username: str | None, password: str | None) -> list[str]:
     """Известные варианты адресов потока Panasonic. Рабочий подбирается перебором и запоминается.
 
-    Порядок — по проверке на живой AW-HE42 (2026-10-19): stream_1 работает,
-    /MediaInput/h264 и /MediaInput/stream_1 отвечают 5XX, MJPEG — запасной вариант.
+    Порядок — по проверке на живой AW-HE42 (2026-10-19): MJPEG даёт задержку ~344 мс
+    против ~830 мс у H.264 (stream_1/stream_2), поэтому идёт первым; /MediaInput/h264
+    и /MediaInput/stream_1 отвечают 5XX.
     """
     base = [
+        stream_url(host, "mjpeg"),
         f"rtsp://{host}/MediaInput/h264/stream_1",
         f"rtsp://{host}:554/MediaInput/h264/stream_1",
-        f"http://{host}/cgi-bin/mjpeg?resolution=640x360&framerate=30",
         f"rtsp://{host}/MediaInput/h264",
         f"rtsp://{host}/MediaInput/stream_1",
     ]
