@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: ptztracker
+Version: 0.1.0
+Summary: Управление и автослежение для PTZ-камер Panasonic AW-HE42
+Requires-Python: <3.14,>=3.12
+Requires-Dist: PySide6>=6.7
+Requires-Dist: av>=12
+Requires-Dist: numpy>=1.26
+Requires-Dist: opencv-contrib-python-headless>=4.9
+Requires-Dist: httpx>=0.27
+Requires-Dist: keyring>=25
+Requires-Dist: platformdirs>=4
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-qt>=4.4; extra == "dev"
+Provides-Extra: build
+Requires-Dist: pyinstaller>=6.6; extra == "build"

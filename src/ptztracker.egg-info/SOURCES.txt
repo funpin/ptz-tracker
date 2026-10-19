@@ -1,0 +1,9 @@
+pyproject.toml
+src/ptztracker/__init__.py
+src/ptztracker/__main__.py
+src/ptztracker.egg-info/PKG-INFO
+src/ptztracker.egg-info/SOURCES.txt
+src/ptztracker.egg-info/dependency_links.txt
+src/ptztracker.egg-info/entry_points.txt
+src/ptztracker.egg-info/requires.txt
+src/ptztracker.egg-info/top_level.txt
