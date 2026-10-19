@@ -1,2 +1,0 @@
-[console_scripts]
-ptztracker = ptztracker.__main__:main
