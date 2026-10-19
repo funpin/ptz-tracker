@@ -35,6 +35,7 @@ class CameraConfig:
     rtsp_url: str | None = None
     min_interval: float = 0.130
     stream: str = "auto"  # "auto" | "h264_1" | "h264_2" | "mjpeg"
+    calibration: dict | None = None  # результат мастера калибровки (control.camera_model.Calibration.to_json)
 
 
 @dataclass
@@ -92,6 +93,9 @@ def _camera_from(d) -> CameraConfig | None:
     if not ok:
         log.warning("Пропускаю неправильную запись камеры: %r", d)
         return None
+    if c.calibration is not None and not isinstance(c.calibration, dict):
+        log.warning("Неправильная калибровка у камеры %s — сбрасываю", c.name)
+        c.calibration = None
     if c.stream not in STREAMS:
         log.warning("Неизвестный поток %r у камеры %s — ставлю «Авто»", c.stream, c.name)
         c.stream = "auto"
