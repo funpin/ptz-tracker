@@ -57,3 +57,18 @@ def test_candidates_without_auth():
     c = rtsp_candidates("10.0.0.12", None, None)
     assert c[0] == "rtsp://10.0.0.12/MediaInput/h264"
     assert len(c) == 5
+
+
+def test_rtsp_password_not_shown_or_logged(caplog):
+    # Final review I3
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    src = RtspSource("rtsp://admin:s3cret@127.0.0.1:9/x", open_timeout_s=0.5)
+    src.start()
+    time.sleep(1.5)
+    st = src.stats()
+    src.stop()
+    assert st.error and "s3cret" not in st.error
+    assert "s3cret" not in st.url
+    assert "s3cret" not in caplog.text

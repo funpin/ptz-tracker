@@ -19,6 +19,27 @@ from ptztracker.camera.session import CameraSession
 from ptztracker.ui.joystick import JoystickWidget
 
 
+class SpringSlider(QSlider):
+    """Ползунок «держи-и-тяни»: колесо и клавиатура его не двигают, отпускание мыши возвращает в 0.
+
+    Иначе случайная прокрутка над ним запускала бы зум, который ничто не останавливает.
+    """
+
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self.setFocusPolicy(Qt.NoFocus)
+
+    def wheelEvent(self, e):  # noqa: N802
+        e.ignore()
+
+    def keyPressEvent(self, e):  # noqa: N802
+        e.ignore()
+
+    def mouseReleaseEvent(self, e):  # noqa: N802
+        super().mouseReleaseEvent(e)
+        self.setValue(0)
+
+
 class ManualControls(QWidget):
     """Ручное управление: джойстик, зум, фокус, ирис, пресеты камеры."""
 
@@ -29,7 +50,7 @@ class ManualControls(QWidget):
         self.joystick = JoystickWidget()
         self.joystick.moved.connect(self._on_joystick)
 
-        self.zoom_slider = QSlider(Qt.Horizontal)
+        self.zoom_slider = SpringSlider(Qt.Horizontal)
         self.zoom_slider.setRange(-100, 100)
         self.zoom_slider.setToolTip("Тяните вправо — приблизить, влево — отдалить. Отпустите — стоп.")
         self.zoom_slider.valueChanged.connect(self._on_zoom)
@@ -51,10 +72,11 @@ class ManualControls(QWidget):
         self.push_af.clicked.connect(lambda: self._s and self._s.push_focus())
         self.near_btn = QPushButton("Ближе")
         self.far_btn = QPushButton("Дальше")
-        self.near_btn.pressed.connect(lambda: self._s and self._s.set_focus_velocity(-0.5))
-        self.far_btn.pressed.connect(lambda: self._s and self._s.set_focus_velocity(0.5))
+        self._focus_moving = False
+        self.near_btn.pressed.connect(lambda: self._focus(-0.5))
+        self.far_btn.pressed.connect(lambda: self._focus(0.5))
         for b in (self.near_btn, self.far_btn):
-            b.released.connect(lambda: self._s and self._s.set_focus_velocity(0.0))
+            b.released.connect(lambda: self._focus(0.0))
         focus_box = QGroupBox("Фокус")
         fl = QGridLayout(focus_box)
         fl.addWidget(self.af_check, 0, 0)
@@ -97,6 +119,21 @@ class ManualControls(QWidget):
     def bind(self, session: CameraSession | None) -> None:
         self._session = session
         self.setEnabled(session is not None)
+
+    def _focus(self, v: float) -> None:
+        self._focus_moving = v != 0.0
+        if self._s:
+            self._s.set_focus_velocity(v)
+
+    def release_all(self) -> None:
+        """Отпустить всё, что может двигать камеру: джойстик, зум, фокус."""
+        self.joystick.release()
+        if self.zoom_slider.value() != 0:
+            self.zoom_slider.setValue(0)
+        if self._focus_moving:
+            for b in (self.near_btn, self.far_btn):
+                b.setDown(False)
+            self._focus(0.0)
 
     def _on_joystick(self, x: float, y: float) -> None:
         if self._s:

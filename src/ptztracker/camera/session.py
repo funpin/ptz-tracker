@@ -20,6 +20,8 @@ from ptztracker.video.rtsp import RtspSource, rtsp_candidates
 log = logging.getLogger(__name__)
 
 HEARTBEAT_S = 2.0
+ONE_SHOT_TTL_S = 2.0  # пресет/разовый AF, нажатые при обрыве связи, не выполняются позже
+STOP_FLUSH_S = 1.5  # сколько ждать отправки «стопов» при остановке (если камера на связи)
 SIM_START_TILT = -8.0  # чтобы в симуляторе докладчик сразу был в кадре
 
 
@@ -64,19 +66,21 @@ class CameraSession:
         self._hb_thread.start()
 
     def stop(self) -> None:
+        """Остановить камеру и освободить ресурсы, не подвешивая окно.
+
+        «Стопы» ждём, только если камера на связи; потоки, застрявшие в сетевых
+        таймаутах, дорабатывают в фоне (они daemon и сами завершатся).
+        """
         self._hb_stop.set()
         if self.scheduler:
             self.scheduler.emergency_stop()
-            self.scheduler.wait_idle(0.5)
-            self.scheduler.stop()
+            if self.scheduler.online:
+                self.scheduler.wait_emergency(STOP_FLUSH_S)
+            self.scheduler.stop(timeout=0.2)
         if self.frames:
-            self.frames.stop()
+            self.frames.stop(timeout=0.0)
         if self._server:
             self._server.stop()
-        if self.client:
-            self.client.close()
-        if self._hb_thread:
-            self._hb_thread.join(1.0)
 
     def _heartbeat(self) -> None:
         # Лёгкий запрос «камера включена?» раз в 2 с — чтобы статус связи был актуален без движения.
@@ -91,8 +95,8 @@ class CameraSession:
 
     # --- ручное управление --------------------------------------------
 
-    def _submit(self, key: str, cmd: str, only_if_changed: bool = True) -> None:
-        self.scheduler.submit(key, cmd, Priority.MANUAL, only_if_changed=only_if_changed)
+    def _submit(self, key: str, cmd: str, only_if_changed: bool = True, ttl: float | None = None) -> None:
+        self.scheduler.submit(key, cmd, Priority.MANUAL, only_if_changed=only_if_changed, ttl=ttl)
 
     def set_pan_tilt_velocity(self, vx: float, vy: float) -> None:
         self._submit("pt", P.pan_tilt_speed(velocity_to_code(vx), velocity_to_code(vy)))
@@ -104,7 +108,7 @@ class CameraSession:
         self._submit("focus_mode", P.focus_auto(on))
 
     def push_focus(self) -> None:
-        self._submit("focus_push", P.focus_push_auto(), only_if_changed=False)
+        self._submit("focus_push", P.focus_push_auto(), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
 
     def set_focus_velocity(self, v: float) -> None:
         self._submit("focus", P.focus_speed(velocity_to_code(v)))
@@ -117,10 +121,10 @@ class CameraSession:
         self._submit("iris", P.iris_abs(round(P.LENS_MIN + pos01 * (P.LENS_MAX - P.LENS_MIN))))
 
     def recall_preset(self, n: int) -> None:
-        self._submit("preset", P.preset_recall(n), only_if_changed=False)
+        self._submit("preset", P.preset_recall(n), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
 
     def store_preset(self, n: int) -> None:
-        self._submit("preset_store", P.preset_store(n), only_if_changed=False)
+        self._submit("preset_store", P.preset_store(n), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
 
     def emergency_stop(self) -> None:
         self.scheduler.emergency_stop()

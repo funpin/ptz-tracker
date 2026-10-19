@@ -80,3 +80,27 @@ def test_password_not_in_json(tmp_path):
 )
 def test_is_valid_ip(s, ok):
     assert is_valid_ip(s) is ok
+
+
+def test_utf16_file_does_not_crash(tmp_path):
+    # Final review I4: файл, сохранённый Блокнотом в UTF-16
+    p = tmp_path / "config.json"
+    p.write_bytes('{"cameras": []}'.encode("utf-16"))
+    cfg = ConfigStore(p).load()
+    assert cfg == default_config()
+    assert (tmp_path / "config.json.bak").exists()
+
+
+def test_utf8_bom_accepted(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_bytes(b"\xef\xbb\xbf" + '{"cameras": [{"id": "a", "name": "Сцена", "ip": "10.0.0.30"}]}'.encode("utf-8"))
+    assert [c.ip for c in ConfigStore(p).load().cameras] == ["10.0.0.30"]
+
+
+def test_invalid_camera_entries_skipped(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(
+        '{"cameras": [{"id": "a", "name": "А", "ip": 5}, {"id": "b", "name": "Б", "ip": "10.0.0.31"}]}',
+        encoding="utf-8",
+    )
+    assert [c.ip for c in ConfigStore(p).load().cameras] == ["10.0.0.31"]

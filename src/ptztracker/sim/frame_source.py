@@ -43,10 +43,10 @@ class SimFrameSource:
         self._thread = threading.Thread(target=self._run, name="sim-video", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 2.0) -> None:
         self._stop.set()
         if self._thread:
-            self._thread.join(2.0)
+            self._thread.join(timeout)
             self._thread = None
 
     def latest(self) -> Frame | None:

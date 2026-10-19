@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 
 import av
 
@@ -31,6 +32,23 @@ def rtsp_candidates(host: str, username: str | None, password: str | None) -> li
         f"rtsp://{auth}{host}/MediaInput/stream_1",
         f"http://{auth}{host}/cgi-bin/mjpeg?resolution=640x360&framerate=30",
     ]
+
+
+def redact_url(url: str) -> str:
+    """rtsp://user:pass@host/… → rtsp://user:***@host/… (для экрана и логов)."""
+    return re.sub(r"(//[^/@:]*:)[^/@]*@", r"\1***@", url)
+
+
+def _redact_text(text: str, url: str) -> str:
+    text = text.replace(url, redact_url(url))
+    try:
+        pw = urlsplit(url).password
+    except ValueError:
+        pw = None
+    if pw:
+        for s in {pw, unquote(pw)}:
+            text = text.replace(s, "***")
+    return text
 
 
 def _options(url: str) -> dict[str, str]:
@@ -61,10 +79,11 @@ class RtspSource:
         self._thread = threading.Thread(target=self._run, name="rtsp", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 2.0) -> None:
+        """Остановить приём. timeout=0 — не ждать потока (он может висеть в сетевом таймауте)."""
         self._stop.set()
         if self._thread:
-            self._thread.join(2.0)
+            self._thread.join(timeout)
             self._thread = None
 
     def latest(self) -> Frame | None:
@@ -79,7 +98,7 @@ class RtspSource:
                 width=self._size[0],
                 height=self._size[1],
                 error=self._error,
-                url=self.url,
+                url=redact_url(self.url),
             )
 
     def _run(self) -> None:
@@ -89,11 +108,12 @@ class RtspSource:
                 self._read_stream()
                 attempt = 0  # поток закончился штатно (файл) — переоткрыть сразу
             except Exception as e:
+                msg = _redact_text(str(e), self.url)
                 with self._lock:
                     self._connected = False
                     self._latest = None
-                    self._error = f"Нет видео: {e}"
-                log.info("Поток %s: %s", self.url, e)
+                    self._error = f"Нет видео: {msg}"
+                log.info("Поток %s: %s", redact_url(self.url), msg)
                 delay = RECONNECT_DELAYS[min(attempt, len(RECONNECT_DELAYS) - 1)]
                 attempt += 1
                 self._stop.wait(delay)

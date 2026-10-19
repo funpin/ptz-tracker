@@ -12,6 +12,7 @@ from typing import Literal
 
 STOP_PT = "#PTS5050"
 STOP_ZOOM = "#Z50"
+STOP_FOCUS = "#F50"
 Q_POWER = "#O"
 Q_PAN_TILT = "#APC"
 Q_ZOOM = "#GZ"

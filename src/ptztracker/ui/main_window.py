@@ -249,7 +249,7 @@ class MainWindow(QMainWindow):
         if self._held:
             self._held.clear()
             self._apply_held()
-        self.controls.joystick.release()
+        self.controls.release_all()
 
     def changeEvent(self, e):  # noqa: N802
         if e.type() == QEvent.ActivationChange and not self.isActiveWindow():

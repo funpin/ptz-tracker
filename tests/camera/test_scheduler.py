@@ -90,11 +90,11 @@ def test_emergency_stop_preempts_and_clears(env):
     s, clock, _ = env
     s.submit("pt", "#PTS9950", Priority.MANUAL)
     s.emergency_stop()
-    first = s.pump()
-    clock.t += 1
-    second = s.pump()
-    clock.t += 1
-    assert {first, second} == {"#PTS5050", "#Z50"}
+    sent = []
+    for _ in range(3):
+        sent.append(s.pump())
+        clock.t += 1
+    assert set(sent) == {"#PTS5050", "#Z50", "#F50"}
     assert s.pump() is None
 
 
@@ -186,3 +186,48 @@ def test_submit_not_blocked_by_slow_send():
     finally:
         gate.set()
         s.stop()
+
+
+def test_busy_stop_command_never_dropped(env):
+    # Final review C1: er2 (камера занята пультом) не должен приводить к потере «стопа»
+    s, clock, send = env
+    send.fail_next = [CameraError("er2", "eR2:PTS")] * 6
+    s.submit("pt", "#PTS5050", Priority.MANUAL, only_if_changed=False)
+    for _ in range(8):
+        s.pump()
+        clock.t += 0.131
+    assert send.ok == ["#PTS5050"]
+
+
+def test_emergency_never_dropped_even_on_er1(env):
+    s, clock, send = env
+    send.fail_next = [CameraError("er1", "eR1:Z")] * 5
+    s.emergency_stop()
+    for _ in range(12):
+        s.pump()
+        clock.t += 0.131
+    assert set(send.ok) >= {"#PTS5050", "#Z50"}
+
+
+def test_emergency_stop_also_stops_focus(env):
+    s, clock, send = env
+    s.emergency_stop()
+    for _ in range(4):
+        s.pump()
+        clock.t += 0.131
+    assert "#F50" in send.ok
+
+
+def test_one_shot_ttl_expires_during_outage(env):
+    # Final review I6: пресет, нажатый при обрыве, не должен сработать через минуту
+    s, clock, send = env
+    send.fail_next = [CameraUnreachable("x")] * 50
+    s.submit("preset", "#R03", Priority.MANUAL, only_if_changed=False, ttl=2.0)
+    for _ in range(30):
+        s.pump()
+        clock.t += 0.2
+    send.fail_next = []
+    for _ in range(5):
+        s.pump()
+        clock.t += 0.2
+    assert "#R03" not in send.ok

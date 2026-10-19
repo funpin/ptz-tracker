@@ -18,7 +18,7 @@ from enum import IntEnum
 from typing import Callable
 
 from ptztracker.camera.client import AuthRequired, CameraUnreachable
-from ptztracker.camera.protocol import STOP_PT, STOP_ZOOM, CameraError
+from ptztracker.camera.protocol import STOP_FOCUS, STOP_PT, STOP_ZOOM, CameraError
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ class _Item:
     key: str | None = None
     future: Future | None = None
     errors: int = 0
+    expires: float | None = None  # для разовых команд: не выполнять, если связь вернулась слишком поздно
 
 
 @dataclass
@@ -72,6 +73,7 @@ class CommandScheduler:
         self.on_state_change: Callable[[bool], None] | None = None
         self._thread: threading.Thread | None = None
         self._running = False
+        self._inflight: _Item | None = None
 
     # --- публичный API -------------------------------------------------
 
@@ -79,12 +81,20 @@ class CommandScheduler:
     def online(self) -> bool:
         return bool(self._online)
 
-    def submit(self, key: str, cmd: str, priority: Priority, only_if_changed: bool = True) -> None:
+    def submit(
+        self,
+        key: str,
+        cmd: str,
+        priority: Priority,
+        only_if_changed: bool = True,
+        ttl: float | None = None,
+    ) -> None:
         with self._cond:
             if only_if_changed and self._st.last_sent.get(key) == cmd:
                 self._st.slots.pop(key, None)  # вернулись к уже отправленному — отменить ожидающую
                 return
-            self._st.slots[key] = _Item(cmd, priority, next(self._seq), key=key)
+            expires = self._clock() + ttl if ttl is not None else None
+            self._st.slots[key] = _Item(cmd, priority, next(self._seq), key=key, expires=expires)
             self._cond.notify()
 
     def query(self, cmd: str, timeout: float = 2.0) -> str:
@@ -97,7 +107,7 @@ class CommandScheduler:
     def emergency_stop(self) -> None:
         with self._cond:
             self._st.slots.clear()
-            for key, cmd in (("pt", STOP_PT), ("zoom", STOP_ZOOM)):
+            for key, cmd in (("pt", STOP_PT), ("zoom", STOP_ZOOM), ("focus", STOP_FOCUS)):
                 self._st.slots[key] = _Item(cmd, Priority.EMERGENCY, next(self._seq), key=key)
             self._backoff_until = 0.0
             self._cond.notify()
@@ -121,6 +131,19 @@ class CommandScheduler:
         self._running = True
         self._thread = threading.Thread(target=self._loop, name="cmd-scheduler", daemon=True)
         self._thread.start()
+
+    def wait_emergency(self, timeout: float) -> bool:
+        """Дождаться отправки аварийных стопов (если камера на связи)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._cond:
+                busy = any(i.priority == Priority.EMERGENCY for i in self._st.slots.values()) or (
+                    self._inflight is not None and self._inflight.priority == Priority.EMERGENCY
+                )
+            if not busy:
+                return True
+            time.sleep(0.01)
+        return False
 
     def stop(self, timeout: float = 2.0) -> None:
         with self._cond:
@@ -151,6 +174,7 @@ class CommandScheduler:
         return max(0.0, due - now)
 
     def _take_due(self, now: float) -> _Item | None:
+        self._drop_expired(now)
         wait = self._wait_s(now)
         if wait is None or wait > 0:
             return None
@@ -161,9 +185,23 @@ class CommandScheduler:
         else:
             self._st.queries.remove(item)
         self._last_send_t = now
+        self._inflight = item
         return item
 
+    def _drop_expired(self, now: float) -> None:
+        for key, item in list(self._st.slots.items()):
+            if item.expires is not None and now > item.expires:
+                log.warning("Команда %s устарела (не было связи) и не будет выполнена", item.cmd)
+                del self._st.slots[key]
+
     def _execute(self, item: _Item) -> None:
+        try:
+            self._send_and_record(item)
+        finally:
+            with self._cond:
+                self._inflight = None
+
+    def _send_and_record(self, item: _Item) -> None:
         try:
             resp = self._send(item.cmd)
         except CameraUnreachable as e:
@@ -193,7 +231,9 @@ class CommandScheduler:
                 self._unreachable_streak += 1
                 if self._unreachable_streak >= UNREACHABLE_BACKOFF_AFTER:
                     self._backoff_until = self._clock() + UNREACHABLE_BACKOFF_S
-            else:
+            elif not (isinstance(err, CameraError) and err.code == "er2") and item.priority != Priority.EMERGENCY:
+                # er2 «занята» (например, работает пульт) — повторять, пока команду не заменит новая;
+                # аварийный стоп не отбрасывается никогда
                 item.errors += 1
             if item.key is not None and item.key not in self._st.slots:
                 if item.errors < MAX_CAMERA_ERROR_RETRIES:

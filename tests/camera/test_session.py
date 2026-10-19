@@ -75,3 +75,23 @@ def test_unreachable_camera_session_does_not_block():
     t0 = time.monotonic()
     s.stop()
     assert time.monotonic() - t0 < 3.5
+
+
+def test_stop_does_not_freeze_ui_on_dead_camera():
+    # Final review I5: камера «висит» (TCP принимает, но не отвечает) — смена камеры/закрытие не подвешивают окно
+    import socket
+
+    hole = socket.socket()
+    hole.bind(("127.0.0.1", 0))
+    hole.listen(50)
+    host = f"127.0.0.1:{hole.getsockname()[1]}"
+    try:
+        s = CameraSession(CameraConfig(id="x", name="X", ip=host))
+        s.start()
+        s.set_pan_tilt_velocity(1, 0)
+        time.sleep(1.2)
+        t0 = time.monotonic()
+        s.stop()
+        assert time.monotonic() - t0 < 0.7
+    finally:
+        hole.close()

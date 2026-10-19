@@ -72,6 +72,27 @@ def _filter_fields(cls, data: dict) -> dict:
     return {k: v for k, v in data.items() if k in names}
 
 
+def _camera_from(d) -> CameraConfig | None:
+    """Камера из JSON; неправильные записи пропускаются с предупреждением."""
+    try:
+        c = CameraConfig(**_filter_fields(CameraConfig, d))
+    except TypeError as e:
+        log.warning("Пропускаю запись камеры %r: %s", d, e)
+        return None
+    ok = (
+        isinstance(c.id, str)
+        and isinstance(c.name, str)
+        and isinstance(c.ip, str)
+        and c.kind in ("panasonic", "sim")
+        and (c.kind == "sim" or is_valid_ip(c.ip))
+        and isinstance(c.min_interval, (int, float))
+    )
+    if not ok:
+        log.warning("Пропускаю неправильную запись камеры: %r", d)
+        return None
+    return c
+
+
 class ConfigStore:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -79,14 +100,23 @@ class ConfigStore:
     def load(self) -> AppConfig:
         if not self.path.exists():
             return default_config()
-        raw = self.path.read_text(encoding="utf-8")
         try:
-            data = json.loads(raw)
-            cameras = [CameraConfig(**_filter_fields(CameraConfig, c)) for c in data.get("cameras", [])]
+            raw = self.path.read_bytes()
+        except OSError as e:
+            log.error("Не удалось прочитать настройки (%s), беру настройки по умолчанию", e)
+            return default_config()
+        try:
+            data = json.loads(raw.decode("utf-8-sig"))
+            if not isinstance(data, dict):
+                raise ValueError("ожидался JSON-объект")
+            cameras = [c for c in (_camera_from(d) for d in data.get("cameras") or []) if c is not None]
             cfg = AppConfig(**_filter_fields(AppConfig, {**data, "cameras": cameras}))
-        except (ValueError, TypeError, AttributeError) as e:
+        except (UnicodeDecodeError, ValueError, TypeError, AttributeError) as e:
             log.warning("Конфиг повреждён (%s), сохраняю копию и беру настройки по умолчанию", e)
-            self.path.with_name(self.path.name + ".bak").write_text(raw, encoding="utf-8")
+            try:
+                self.path.with_name(self.path.name + ".bak").write_bytes(raw)
+            except OSError as e2:
+                log.error("Не удалось сохранить копию повреждённого конфига: %s", e2)
             return default_config()
         if not cfg.cameras:
             cfg.cameras = default_config().cameras

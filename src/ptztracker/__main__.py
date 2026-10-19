@@ -96,6 +96,12 @@ def diag_main() -> int:
         default_ip = last.ip if last else "10.0.0.12"
         ip = input(f"IP камеры [{default_ip}]: ").strip() or default_ip
         argv += ["--ip", ip]
+    if "--user" not in argv:
+        import getpass
+
+        user = input("Логин камеры (Enter — без логина): ").strip()
+        if user:
+            argv += ["--user", user, "--password", getpass.getpass("Пароль (не отображается): ")]
     try:
         return main(["--diagnose", *argv])
     finally:
