@@ -111,6 +111,9 @@ class MainWindow(QMainWindow):
         self.diag_action = QAction("Диагностика камеры…", self)
         self.service_menu.addAction(self.diag_action)
         self.diag_action.triggered.connect(self._run_diagnostics)
+        self.calib_action = QAction("Калибровка камеры…", self)
+        self.service_menu.addAction(self.calib_action)
+        self.calib_action.triggered.connect(self._run_calibration)
 
         self.add_btn.clicked.connect(self._add_camera)
         self.edit_btn.clicked.connect(self._edit_camera)
@@ -231,6 +234,29 @@ class MainWindow(QMainWindow):
         set_password(cur.id, None)
         self._save()
         self._fill_combo(None)
+
+    def _run_calibration(self) -> None:
+        from ptztracker.control.calibration import CalibrationRunner
+        from ptztracker.ui.calibration_dialog import CalibrationDialog
+
+        cam, s = self._current_cfg(), self.session
+        if cam is None or s is None:
+            return
+        if s.follower:
+            s.follower.disable("калибровка")
+        kind = s.stream_kind()
+
+        def factory(progress):
+            return CalibrationRunner(s.client.send, s.frames, progress, stream_kind=kind)
+
+        def saved(calib: dict) -> None:
+            cam.calibration = calib
+            if cam.kind != "sim":
+                self._save()
+
+        CalibrationDialog(factory, saved, parent=self).exec()
+        if cam.calibration is not None:
+            self._activate(cam)  # слежение подхватит новую калибровку
 
     def _run_diagnostics(self) -> None:
         from ptztracker.ui.diagnostics_dialog import DiagnosticsDialog

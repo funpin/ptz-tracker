@@ -369,7 +369,13 @@ def check_command_latency(ctx: DiagContext, st: dict) -> CheckResult:
     )
 
 
-def _probe_run(pacer: Pacer, src: FrameSource, code: int) -> dict:
+def _probe_run(
+    pacer: Pacer,
+    src: FrameSource,
+    code: int,
+    max_s: float = SPEED_MAX_S,
+    max_fraction: float = SPEED_MAX_FRACTION,
+) -> dict:
     """Повернуть с кодом code до 25% ширины кадра или 1.5 с; вернуть скорость в px/с, разгон и торможение."""
     first = src.latest()
     width = first.image.shape[1]
@@ -378,7 +384,7 @@ def _probe_run(pacer: Pacer, src: FrameSource, code: int) -> dict:
     samples = [(0.0, 0.0)]
     t_cmd = time.monotonic()
     pacer.send(P.pan_tilt_speed(code, 50))
-    while time.monotonic() - t_cmd < SPEED_MAX_S and abs(cum) < SPEED_MAX_FRACTION * width:
+    while time.monotonic() - t_cmd < max_s and abs(cum) < max_fraction * width:
         fr = src.latest()
         if fr is not None and fr.seq != last_seq:
             dx, _ = measure_shift(prev.image, fr.image)
