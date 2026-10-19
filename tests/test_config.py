@@ -104,3 +104,16 @@ def test_invalid_camera_entries_skipped(tmp_path):
         encoding="utf-8",
     )
     assert [c.ip for c in ConfigStore(p).load().cameras] == ["10.0.0.31"]
+
+
+def test_stream_roundtrip_and_invalid(tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = default_config()
+    assert cfg.cameras[0].stream == "auto"
+    cfg.cameras[0].stream = "h264_2"
+    store.save(cfg)
+    assert store.load().cameras[0].stream == "h264_2"
+    (tmp_path / "c.json").write_text(
+        '{"cameras": [{"id": "a", "name": "А", "ip": "10.0.0.12", "stream": "zzz"}]}', encoding="utf-8"
+    )
+    assert store.load().cameras[0].stream == "auto"

@@ -21,6 +21,7 @@ import platformdirs
 log = logging.getLogger(__name__)
 
 APP_NAME = "PTZTracker"
+STREAMS = ("auto", "h264_1", "h264_2", "mjpeg")
 KEYRING_SERVICE = "PTZTracker"
 
 
@@ -33,6 +34,7 @@ class CameraConfig:
     username: str | None = None
     rtsp_url: str | None = None
     min_interval: float = 0.130
+    stream: str = "auto"  # "auto" | "h264_1" | "h264_2" | "mjpeg"
 
 
 @dataclass
@@ -90,6 +92,9 @@ def _camera_from(d) -> CameraConfig | None:
     if not ok:
         log.warning("Пропускаю неправильную запись камеры: %r", d)
         return None
+    if c.stream not in STREAMS:
+        log.warning("Неизвестный поток %r у камеры %s — ставлю «Авто»", c.stream, c.name)
+        c.stream = "auto"
     return c
 
 

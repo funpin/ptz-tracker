@@ -72,3 +72,22 @@ def test_found_rtsp_url_saved_without_password(qtbot, tmp_path):
     w.close()
     cam = store.load().cameras[0]
     assert cam.rtsp_url == "rtsp://10.0.0.12/MediaInput/h264/stream_1"
+
+
+def test_stream_combo_saves_and_restarts(qtbot, tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    old = w.session
+    w.stream_combo.setCurrentIndex(w.stream_combo.findData("h264_2"))
+    assert w.session is not old
+    assert w.session.frames.urls == ["rtsp://10.0.0.12/MediaInput/h264/stream_2"]
+    w.close()
+    assert store.load().cameras[0].stream == "h264_2"
+
+
+def test_stream_combo_disabled_for_sim(qtbot, tmp_path):
+    w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
+    qtbot.addWidget(w)
+    assert not w.stream_combo.isEnabled()
+    w.close()

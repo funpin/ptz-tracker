@@ -34,6 +34,35 @@ def strip_credentials(url: str) -> str:
     return re.sub(r"^([a-z]+://)[^/@]*@", r"\1", url, count=1)
 
 
+STREAM_CHOICES = {
+    "auto": "Авто",
+    "h264_1": "H.264 (1)",
+    "h264_2": "H.264 (2)",
+    "mjpeg": "JPEG (MJPEG)",
+}
+
+
+def stream_url(host: str, stream: str) -> str:
+    """Адрес конкретного потока камеры (без логина)."""
+    return {
+        "h264_1": f"rtsp://{host}/MediaInput/h264/stream_1",
+        "h264_2": f"rtsp://{host}/MediaInput/h264/stream_2",
+        "mjpeg": f"http://{host}/cgi-bin/mjpeg?resolution=640x360&framerate=25",
+    }[stream]
+
+
+def stream_urls(
+    host: str, stream: str, username: str | None, password: str | None, saved_url: str | None
+) -> list[str]:
+    """Что пробовать: выбранный оператором поток — ровно он; «Авто» — сохранённый адрес, затем известные варианты."""
+    if stream != "auto":
+        return [with_credentials(stream_url(host, stream), username, password)]
+    urls = rtsp_candidates(host, username, password)
+    if saved_url:
+        urls.insert(0, with_credentials(saved_url, username, password))
+    return list(dict.fromkeys(urls))
+
+
 def rtsp_candidates(host: str, username: str | None, password: str | None) -> list[str]:
     """Известные варианты адресов потока Panasonic. Рабочий подбирается перебором и запоминается.
 
@@ -98,6 +127,10 @@ class RtspSource:
         self._size = (0, 0)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+    @property
+    def urls(self) -> list[str]:
+        return list(self._urls)
 
     @property
     def url(self) -> str:

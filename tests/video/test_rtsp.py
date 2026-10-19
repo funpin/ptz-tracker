@@ -108,3 +108,19 @@ def test_credentials_helpers():
     assert with_credentials("rtsp://10.0.0.12/MediaInput/h264", "admin", "p@ss") == "rtsp://admin:p%40ss@10.0.0.12/MediaInput/h264"
     assert with_credentials("rtsp://10.0.0.12/x", None, None) == "rtsp://10.0.0.12/x"
     assert strip_credentials("rtsp://admin:p%40ss@10.0.0.12/x") == "rtsp://10.0.0.12/x"
+
+
+def test_stream_urls_specific_and_auto():
+    from ptztracker.video.rtsp import STREAM_CHOICES, stream_urls
+
+    assert set(STREAM_CHOICES) == {"auto", "h264_1", "h264_2", "mjpeg"}
+    assert stream_urls("h", "h264_2", "admin", "pw", None) == ["rtsp://admin:pw@h/MediaInput/h264/stream_2"]
+    assert stream_urls("h", "h264_1", None, None, "rtsp://h/saved") == ["rtsp://h/MediaInput/h264/stream_1"]
+    assert stream_urls("h", "mjpeg", None, None, None) == ["http://h/cgi-bin/mjpeg?resolution=640x360&framerate=25"]
+    a = stream_urls("h", "auto", None, None, "rtsp://h/saved")
+    assert a[0] == "rtsp://h/saved" and len(a) > 1 and len(a) == len(set(a))
+
+
+def test_rtsp_source_exposes_urls():
+    src = RtspSource(["rtsp://a/x", "rtsp://b/y"])
+    assert src.urls == ["rtsp://a/x", "rtsp://b/y"]

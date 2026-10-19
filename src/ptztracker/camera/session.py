@@ -15,7 +15,7 @@ from ptztracker.camera.scheduler import CommandScheduler, Priority
 from ptztracker.camera.speed import velocity_to_code
 from ptztracker.config import CameraConfig, get_password
 from ptztracker.video.frames import FrameSource
-from ptztracker.video.rtsp import RtspSource, rtsp_candidates, with_credentials
+from ptztracker.video.rtsp import RtspSource, stream_urls
 
 log = logging.getLogger(__name__)
 
@@ -57,11 +57,9 @@ class CameraSession:
         else:
             password = get_password(self.cfg.id) if self.cfg.username else None
             self.client = CameraClient(self.cfg.ip, self.cfg.username, password)
-            # сначала сохранённый/указанный адрес, затем известные варианты
-            urls = rtsp_candidates(self.cfg.ip, self.cfg.username, password)
-            if self.cfg.rtsp_url:
-                urls.insert(0, with_credentials(self.cfg.rtsp_url, self.cfg.username, password))
-            self.frames = RtspSource(list(dict.fromkeys(urls)), on_found=self._on_rtsp_found)
+            urls = stream_urls(self.cfg.ip, self.cfg.stream, self.cfg.username, password, self.cfg.rtsp_url)
+            on_found = self._on_rtsp_found if self.cfg.stream == "auto" else None
+            self.frames = RtspSource(urls, on_found=on_found)
         self.scheduler = CommandScheduler(self.client.send, min_interval=self.cfg.min_interval)
         self.scheduler.start()
         self.frames.start()

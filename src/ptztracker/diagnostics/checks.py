@@ -22,7 +22,7 @@ from ptztracker.camera.client import AuthRequired, CameraClient, CameraUnreachab
 from ptztracker.diagnostics.motion import estimate_scale, measure_shift, wait_for_motion
 from ptztracker.diagnostics.notify import NotificationListener
 from ptztracker.video.frames import FrameSource
-from ptztracker.video.rtsp import RtspSource, rtsp_candidates
+from ptztracker.video.rtsp import RtspSource, rtsp_candidates, stream_url, with_credentials
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +34,8 @@ SPEED_CODES = (55, 60, 70, 80)
 SPEED_MAX_S = 1.5
 SPEED_MAX_FRACTION = 0.25
 INTERVALS = (0.05, 0.08, 0.10, 0.13)
+MAX_OPEN_STREAMS = 3  # сколько разных работающих потоков держать открытыми для замера задержки
+LATENCY_TRIES = 3
 INTERVAL_TRIES = 10
 
 
@@ -131,7 +133,10 @@ def _open_source(ctx: DiagContext, url: str) -> FrameSource:
 
 def check_rtsp(ctx: DiagContext, st: dict) -> CheckResult:
     urls = ([ctx.rtsp_override] if ctx.rtsp_override else []) + rtsp_candidates(ctx.host, ctx.username, ctx.password)
+    urls.append(with_credentials(stream_url(ctx.host, "h264_2"), ctx.username, ctx.password))
     urls = list(dict.fromkeys(urls))
+    kept: list[tuple[str, FrameSource]] = []
+    kept_keys: set[str] = set()
     frames_dir = ctx.out_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
     tried = []
@@ -165,8 +170,12 @@ def check_rtsp(ctx: DiagContext, st: dict) -> CheckResult:
                 fps=round((last.seq - s0) / FPS_WINDOW_S, 1) if last else 0.0,
             )
             cv2.imwrite(str(frames_dir / f"{n}.jpg"), first.image)
+            key = url.replace(":554/", "/")  # тот же поток на явном порту 554 — не отдельный поток
             if best is None:
                 best = (url, src)
+            if key not in kept_keys and len(kept) < MAX_OPEN_STREAMS:
+                kept.append((url, src))
+                kept_keys.add(key)
             else:
                 src.stop()
         tried.append(row)
@@ -174,6 +183,7 @@ def check_rtsp(ctx: DiagContext, st: dict) -> CheckResult:
         return CheckResult("rtsp", "Видеопоток", "fail", "Ни один из адресов видеопотока не открылся.", {"tried": tried})
     st["source"] = best[1]
     st["source_url"] = best[0]
+    st["sources"] = kept
     return CheckResult(
         "rtsp",
         "Видеопоток",
@@ -294,38 +304,68 @@ def _need_motion(ctx: DiagContext, st: dict, cid: str, title: str) -> CheckResul
     return None
 
 
+def _latency_on(ctx: DiagContext, pacer: Pacer, src: FrameSource, label: str) -> list[float]:
+    samples: list[float] = []
+    for i, cmd in enumerate(("#PTS6050", "#PTS4050", "#PTS6050")[:LATENCY_TRIES]):
+        ctx.progress(f"Замер задержки ({label}) {i + 1}/{LATENCY_TRIES}…")
+        ref = src.latest()
+        if ref is None:
+            break
+        threshold = 1.5 * ref.image.shape[1] / 1280
+        time.sleep(max(0.0, pacer._last + pacer.gap - time.monotonic()))
+        t_cmd = time.monotonic()
+        pacer.send(cmd)
+        t_seen = wait_for_motion(src, t_cmd, threshold_px=threshold, reference=ref.image)
+        pacer.send(P.STOP_PT)
+        if t_seen is not None:
+            samples.append((t_seen - t_cmd) * 1000)
+        time.sleep(1.0)
+    if len(samples) % 2:  # нечётное число поворотов — вернуть камеру на место
+        pacer.send("#PTS4050")
+        time.sleep(0.6)
+        pacer.send(P.STOP_PT)
+        time.sleep(0.8)
+    return samples
+
+
 def check_command_latency(ctx: DiagContext, st: dict) -> CheckResult:
     title = "Задержка «команда → движение в кадре»"
     if r := _need_motion(ctx, st, "command_latency", title):
         return r
     pacer: Pacer = st["pacer"]
-    src: FrameSource = st["source"]
-    samples = []
+    per_stream = []
     try:
-        for i, cmd in enumerate(("#PTS6050", "#PTS4050", "#PTS6050", "#PTS4050")):
-            ctx.progress(f"Замер задержки {i + 1}/4…")
-            ref = src.latest()
-            if ref is None:
-                break
-            time.sleep(max(0.0, pacer._last + pacer.gap - time.monotonic()))
-            t_cmd = time.monotonic()
-            pacer.send(cmd)
-            t_seen = wait_for_motion(src, t_cmd, reference=ref.image)
-            pacer.send(P.STOP_PT)
-            if t_seen is not None:
-                samples.append((t_seen - t_cmd) * 1000)
-            time.sleep(1.0)
+        for url, src in st.get("sources") or [(st["source_url"], st["source"])]:
+            fr = src.latest()
+            samples = _latency_on(ctx, pacer, src, mask(url, ctx).split("/")[-1])
+            if samples:
+                per_stream.append(
+                    {
+                        "url": mask(url, ctx),
+                        "width": fr.image.shape[1] if fr is not None else 0,
+                        "height": fr.image.shape[0] if fr is not None else 0,
+                        "samples_ms": [round(x) for x in samples],
+                        "median_ms": round(statistics.median(samples)),
+                    }
+                )
     finally:
         _stop_all(pacer)
-    if not samples:
-        return CheckResult("command_latency", title, "fail", "Движение в кадре не обнаружено.", {"samples_ms": []})
-    med = statistics.median(samples)
+        _return_home(st)
+    if not per_stream:
+        return CheckResult("command_latency", title, "fail", "Движение в кадре не обнаружено.", {"per_stream": []})
+    fastest = min(per_stream, key=lambda r: r["median_ms"])
+    summary = "; ".join(f"{r['width']}×{r['height']}: {r['median_ms']} мс" for r in per_stream)
     return CheckResult(
         "command_latency",
         title,
         "ok",
-        f"Медиана {med:.0f} мс (команда по сети + задержка видеопотока).",
-        {"samples_ms": [round(s) for s in samples], "median_ms": round(med)},
+        f"Медианы по потокам — {summary} (сеть + разгон камеры + видеопоток).",
+        {
+            "per_stream": per_stream,
+            "median_ms": per_stream[0]["median_ms"],
+            "samples_ms": per_stream[0]["samples_ms"],
+            "fastest": fastest["url"],
+        },
     )
 
 

@@ -24,7 +24,7 @@ from ptztracker.config import AppConfig, CameraConfig, ConfigStore, get_password
 from ptztracker.ui.camera_dialog import CameraDialog
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.preview import PreviewWidget
-from ptztracker.video.rtsp import strip_credentials
+from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +59,16 @@ class MainWindow(QMainWindow):
         for b in (self.add_btn, self.edit_btn, self.del_btn):
             row.addWidget(b)
         cl.addLayout(row)
+        self.stream_combo = QComboBox()
+        for key, label in STREAM_CHOICES.items():
+            self.stream_combo.addItem(label, key)
+        self.stream_combo.setToolTip(
+            "Какой поток камеры показывать и анализировать. Меньшее разрешение — обычно меньше задержка."
+        )
+        srow = QHBoxLayout()
+        srow.addWidget(QLabel("Видео"))
+        srow.addWidget(self.stream_combo, 1)
+        cl.addLayout(srow)
         self.controls = ManualControls()
 
         side = QWidget()
@@ -90,6 +100,7 @@ class MainWindow(QMainWindow):
         self.edit_btn.clicked.connect(self._edit_camera)
         self.del_btn.clicked.connect(self._delete_camera)
         self.camera_combo.currentIndexChanged.connect(self._on_combo)
+        self.stream_combo.currentIndexChanged.connect(self._on_stream_changed)
 
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._update_status)
@@ -130,6 +141,10 @@ class MainWindow(QMainWindow):
         self.controls.bind(None)
         self.edit_btn.setEnabled(cam is not None and cam.kind != "sim")
         self.del_btn.setEnabled(cam is not None and cam.kind != "sim")
+        self.stream_combo.blockSignals(True)
+        self.stream_combo.setCurrentIndex(max(0, self.stream_combo.findData(cam.stream if cam else "auto")))
+        self.stream_combo.blockSignals(False)
+        self.stream_combo.setEnabled(cam is not None and cam.kind != "sim")
         if cam is None:
             return
         self.session = CameraSession(cam, scene_path=self.cfg.sim_scene_path)
@@ -139,6 +154,14 @@ class MainWindow(QMainWindow):
         if cam.kind != "sim":
             self.cfg.last_camera_id = cam.id
             self._save()
+
+    def _on_stream_changed(self, *_):
+        cam = self._current_cfg()
+        if not cam or cam.kind == "sim":
+            return
+        cam.stream = self.stream_combo.currentData()
+        self._save()
+        self._activate(cam)
 
     def _save(self) -> None:
         try:

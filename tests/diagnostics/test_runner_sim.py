@@ -96,3 +96,13 @@ def test_password_masked_in_report(tmp_path, sim_env):
     z = zipfile.ZipFile(zp)
     for name in ("report.json", "report.txt", "diag.log"):
         assert "S3cr3t!" not in z.read(name).decode("utf-8")
+
+
+def test_diagnostics_latency_per_stream(tmp_path, sim_env):
+    sim, srv, factory = sim_env
+    rep, z = load(run_diagnostics(ctx_with(tmp_path, srv.url_host, factory)))
+    lat = check(rep, "command_latency")["details"]
+    assert len(lat["per_stream"]) >= 2
+    assert all(150 <= r["median_ms"] <= 700 for r in lat["per_stream"])
+    assert lat["fastest"] in [r["url"] for r in lat["per_stream"]]
+    assert "Быстрее всего" in z.read("report.txt").decode("utf-8")

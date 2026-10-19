@@ -58,8 +58,10 @@ def _report_txt(ctx: DiagContext, results: list[CheckResult], started: datetime)
         lines.append(f"- Адрес видеопотока: {r.details.get('best')}")
     if (r := by_id.get("min_interval")) and r.details.get("recommended_s"):
         lines.append(f"- Минимальный интервал команд: {int(r.details['recommended_s'] * 1000)} мс")
-    if (r := by_id.get("command_latency")) and r.details.get("median_ms"):
-        lines.append(f"- Задержка команда→кадр: ~{r.details['median_ms']} мс")
+    if (r := by_id.get("command_latency")) and r.details.get("per_stream"):
+        for row in r.details["per_stream"]:
+            lines.append(f"- Задержка: {row['url']} ({row['width']}×{row['height']}) ~{row['median_ms']} мс")
+        lines.append(f"- Быстрее всего: {r.details['fastest']}")
     lines += ["", "Пришлите этот архив разработчику целиком."]
     return "\n".join(lines) + "\n"
 
@@ -98,6 +100,8 @@ def run_diagnostics(ctx: DiagContext) -> Path:
         if pacer := state.get("pacer"):
             pacer.try_send(P.STOP_PT)
             pacer.try_send(P.STOP_ZOOM)
+        for _, src in state.get("sources") or []:
+            src.stop()
         if src := state.get("source"):
             src.stop()
         if client := state.get("client"):
