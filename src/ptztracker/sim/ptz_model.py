@@ -23,6 +23,18 @@ TILT_MIN, TILT_MAX = -30.0, 90.0
 HE42_FW_S = {50: 0.0, 53: 0.0, 55: 0.0015, 58: 0.012, 60: 0.034, 62: 0.07, 65: 0.15, 68: 0.26,
              70: 0.33, 75: 0.42, 80: 0.50, 90: 0.75, 99: 1.2}
 HE42_DEG_S = {c: v * 62.1 for c, v in HE42_FW_S.items()}
+# Зум: ln(масштаба)/с по коду — та же таблица, что у регулятора по умолчанию (замер: #Z75 → ×1,21 за 0,7 с).
+HE42_ZOOM_LN_S = {50: 0.0, 55: 0.02, 60: 0.05, 65: 0.1, 75: 0.27, 85: 0.5, 99: 0.8}
+_ZTABLE = sorted(HE42_ZOOM_LN_S.items())
+
+
+def he42_zoom_ln_s(code: int) -> float:
+    n = 50 + abs(code - 50)
+    for (c0, v0), (c1, v1) in zip(_ZTABLE, _ZTABLE[1:]):
+        if c0 <= n <= c1:
+            v = v0 + (v1 - v0) * (n - c0) / (c1 - c0)
+            return v if code >= 50 else -v
+    return 0.0
 _TABLE = sorted(HE42_DEG_S.items())
 ABS_MOVE_DEG_S = 60.0  # скорость перехода к абсолютной позиции / пресету
 APC_DEG_PER_UNIT = 0.0075
@@ -40,11 +52,6 @@ def he42_deg_s(code: int) -> float:
             v = v0 + (v1 - v0) * (n - c0) / (c1 - c0)
             return v if code >= 50 else -v
     return 0.0
-
-
-def _code_rate(code: int, power: float) -> float:
-    n = code - 50
-    return math.copysign((abs(n) / 49) ** power, n) if n else 0.0
 
 
 class SimPtz:
@@ -77,7 +84,7 @@ class SimPtz:
         self.iris_auto = True
         self.iris_pos = 0x800
         self.presets: dict[int, tuple[float, float, float]] = {}
-        self.received: deque[str] = deque(maxlen=200)
+        self.received: deque[str] = deque(maxlen=5000)
         self._target: tuple[float, float] | None = None
         self._zoom_target: float | None = None
 
@@ -124,7 +131,8 @@ class SimPtz:
                 if abs(d) < 1e-4:
                     self._zoom_target = None
             else:
-                self.zoom_vel += (ZOOM_RATE * _code_rate(self.zoom_code, 1.5) - self.zoom_vel) * a
+                # zoom — доля диапазона 20×: ln-скорость / ln(20)
+                self.zoom_vel += (he42_zoom_ln_s(self.zoom_code) / math.log(ZOOM_RATIO_MAX) - self.zoom_vel) * a
             self.pan_deg = max(-PAN_LIMIT, min(PAN_LIMIT, self.pan_deg + self.pan_vel * dt))
             self.tilt_deg = max(TILT_MIN, min(TILT_MAX, self.tilt_deg + self.tilt_vel * dt))
             self.zoom = max(0.0, min(1.0, self.zoom + self.zoom_vel * dt))

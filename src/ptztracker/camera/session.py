@@ -27,9 +27,18 @@ SIM_VIDEO_LATENCY_S = 0.15  # как MJPEG у живой камеры  # что�
 
 
 class CameraSession:
-    def __init__(self, cfg: CameraConfig, scene_path: str | None = None, analysis: bool = True):
+    def __init__(
+        self,
+        cfg: CameraConfig,
+        scene_path: str | None = None,
+        analysis: bool = True,
+        scene=None,
+        sim_latency: float | None = None,
+    ):
         self.cfg = cfg
         self.scene_path = scene_path
+        self._scene = scene  # для тестов: готовая сцена симулятора
+        self._sim_latency = SIM_VIDEO_LATENCY_S if sim_latency is None else sim_latency
         self.analysis = analysis
         self.analyzer = None
         self.follower = None
@@ -56,8 +65,8 @@ class CameraSession:
             self._server = SimHttpServer(self.sim)
             self._server.start()
             self.client = CameraClient(self._server.url_host)
-            scene = VideoScene(self.scene_path) if self.scene_path else SyntheticStage()
-            self.frames = SimFrameSource(self.sim, scene, latency_s=SIM_VIDEO_LATENCY_S)
+            scene = self._scene or (VideoScene(self.scene_path) if self.scene_path else SyntheticStage())
+            self.frames = SimFrameSource(self.sim, scene, latency_s=self._sim_latency)
         else:
             password = get_password(self.cfg.id) if self.cfg.username else None
             self.client = CameraClient(self.cfg.ip, self.cfg.username, password)

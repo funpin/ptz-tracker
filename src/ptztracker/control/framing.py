@@ -21,6 +21,8 @@ from ptztracker.control.effort import EffortProfile
 
 ALPHA = 0.35  # сглаживание положения человека
 VEL_WINDOW_S = 0.4  # окно оценки скорости человека
+CALM_WINDOW_S = 1.5  # «человек стоит», если за это время сместился меньше мёртвой зоны
+SWAY_FRACTION = 0.8  # смещение меньше этой доли мёртвой зоны за окно — покачивание, а не ходьба
 STILL_V = 0.02  # медленнее — считаем, что человек стоит
 START_V, STOP_V = 0.05, 0.03  # скорость человека для перехода в «движение» / обратно в «стоим»
 RELEASE = 0.4  # возврат в «стоим», когда ошибка < RELEASE·dead
@@ -73,6 +75,7 @@ class _Axis:
         self.v_world = 0.0  # мировые единицы/с
         self.v_img = 0.0  # то же в долях кадра/с при текущем зуме
         self.hist: list[tuple[float, float]] = []
+        self.calm_hist: list[tuple[float, float]] = []
         self.t_meas: float | None = None
         self.mode = "holding"
         self.v_cmd = 0.0
@@ -80,7 +83,7 @@ class _Axis:
         self.err = 0.0
 
     def _cam(self, t: float) -> float:
-        return self.dyn.displacement(0.0, t)
+        return self.dyn.position(t)
 
     def measure(self, img: float, t_shot: float, k_shot: float) -> None:
         # «мировая» позиция: что было бы без поворота камеры и без зума
@@ -93,6 +96,8 @@ class _Axis:
         pred = self.world + self.v_world * dt
         self.world = pred + ALPHA * (z - pred)
         self.t_meas = t_shot
+        self.calm_hist.append((t_shot, z))
+        self.calm_hist = [(t, v) for t, v in self.calm_hist if t_shot - t <= CALM_WINDOW_S + 0.5]
         # скорость — наклон по последним VEL_WINDOW_S: быстро замечает, что человек остановился
         self.hist.append((t_shot, z))
         self.hist = [(t, v) for t, v in self.hist if t_shot - t <= VEL_WINDOW_S]
@@ -103,6 +108,13 @@ class _Axis:
             den = sum((t - mt) ** 2 for t in ts)
             if den > 0:
                 self.v_world = sum((t - mt) * (v - mz) for t, v in zip(ts, zs)) / den
+
+    def spread(self, now: float, k_now: float) -> float:
+        """Размах положения человека за последние CALM_WINDOW_S, в долях кадра при текущем зуме."""
+        pts = [z for t, z in self.calm_hist if now - t <= CALM_WINDOW_S]
+        if len(pts) < 3:
+            return float("inf")
+        return (max(pts) - min(pts)) * k_now
 
     def step(
         self,
@@ -115,6 +127,7 @@ class _Axis:
         lead_k: float,
         active: bool,
         k_now: float = 1.0,
+        zoom_rate: float = 0.0,
     ) -> float:
         if active and self.world is not None:
             self.v_img = self.v_world * k_now
@@ -124,10 +137,15 @@ class _Axis:
             self.lead += (lead_target - self.lead) * (1 - math.exp(-dt / LEAD_TAU))
             self.err = img_now - (anchor + self.lead)
             a = abs(self.err)
-            if self.mode == "holding" and (a > dead or abs(v_w) >= START_V):
+            # «Пошёл» — не просто скорость (покачивание у кафедры даёт её тоже), а реальное смещение
+            # за окно CALM_WINDOW_S. Иначе камера ходит за покачиванием туда-сюда.
+            walked = self.spread(now, k_now) >= SWAY_FRACTION * dead
+            if self.mode == "holding" and (a > dead or (abs(v_w) >= START_V and walked)):
                 self.mode = "moving"
-            elif self.mode == "moving" and a < RELEASE * dead and abs(v_w) < STOP_V:
+            elif self.mode == "moving" and a < RELEASE * dead and (abs(v_w) < STOP_V or not walked):
                 self.mode = "holding"
+            if not walked:
+                v_w = 0.0  # покачивание — не повод вести камеру за человеком
             if self.mode == "moving":
                 base = RELEASE * dead
                 shaped = max(0.0, a - base)
@@ -141,6 +159,8 @@ class _Axis:
                     want = _limit(want, SETTLE_V)
             else:
                 want = 0.0
+            # Наезд/отъезд уводит человека от центра кадра — доворачиваем одновременно, как оператор
+            want += self.sign * (img_now - 0.5) * zoom_rate
         else:
             want = 0.0
         want = _limit(want, e.v_max)
@@ -202,8 +222,9 @@ class FramingController:
         active = self._t_seen is not None and now - self._t_seen <= NO_TARGET_S
         dead_y = e.dead_y * inp.aspect / (16 / 9)
         k_now = self._k(now)
-        pan = self.x.step(now, dt, comp.anchor[0], e.dead_x, e.soft_x, e, e.lead, active, k_now)
-        tilt = self.y.step(now, dt, comp.anchor[1], dead_y, e.soft_y, e, 0.0, active, k_now)
+        zr = self.zdyn.velocity(now)
+        pan = self.x.step(now, dt, comp.anchor[0], e.dead_x, e.soft_x, e, e.lead, active, k_now, zr)
+        tilt = self.y.step(now, dt, comp.anchor[1], dead_y, e.soft_y, e, 0.0, active, k_now, zr)
 
         if not active:
             state = "idle"
@@ -217,7 +238,8 @@ class FramingController:
             if self._hold_since is None:
                 self._hold_since = now
 
-        still = active and abs(self.x.v_img) < STOP_V and abs(self.y.v_img) < STOP_V
+        # «Стоит» — по размаху мирового положения за CALM_WINDOW_S (покачивание у кафедры не мешает)
+        still = active and self.x.spread(now, k_now) < e.dead_x and self.y.spread(now, k_now) < dead_y
         if not still:
             self._still_since = None
         elif self._still_since is None:
@@ -227,7 +249,7 @@ class FramingController:
 
     def _k(self, t: float) -> float:
         """Во сколько раз картинка увеличена зумом с момента старта регулятора."""
-        return math.exp(self.zdyn.displacement(0.0, t))
+        return math.exp(self.zdyn.position(t))
 
     def _zoom(self, now: float, dt: float, active: bool, state: str, e: EffortProfile) -> tuple[float, float | None]:
         want = 0.0

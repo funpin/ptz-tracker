@@ -135,7 +135,8 @@ class Follower:
     def _tick(self) -> None:
         now = time.monotonic()
         r = self.analyzer.latest()
-        if r is None or now - r.t_capture > STALE_S or not self.analyzer.is_running():
+        stale_after = STALE_S + self.controller.video_latency  # кадры H.264 приходят с опозданием сами по себе
+        if r is None or now - r.t_capture > stale_after or not self.analyzer.is_running():
             self.disable("анализ остановился")
             return
         measure = None

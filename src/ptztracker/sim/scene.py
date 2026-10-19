@@ -13,8 +13,14 @@ import cv2
 import numpy as np
 
 # Сценарий движения докладчика (секунды): стоит у кафедры, идёт вправо, стоит, идёт влево.
-_STAND_A, _WALK_R, _STAND_B, _WALK_L = 6.0, 4.0, 5.0, 6.0
-_CYCLE = _STAND_A + _WALK_R + _STAND_B + _WALK_L
+# Сценарии движения докладчика: (стоит у кафедры, идёт вправо, стоит, идёт влево), секунды.
+# Человек ростом 1,75 м = 460 px сцены, путь 0,17 ширины сцены ≈ 5 м.
+SCRIPTS = {
+    "walk": (6.0, 4.0, 5.0, 6.0),  # быстро, ~1,2 м/с — стресс-тест
+    "lecture": (8.0, 10.0, 8.0, 10.0),  # прохаживается, ~0,5 м/с
+    "stand": None,  # стоит у кафедры и слегка покачивается
+}
+SWAY_PX, SWAY_PERIOD_S = 10.0, 3.0
 
 
 def _build_pyramid(img: np.ndarray, levels: int = 4) -> list[np.ndarray]:
@@ -62,7 +68,8 @@ def warp_view(
 class SyntheticStage:
     """Сцена с фоном, экраном, кафедрой и одним идущим человеком. Полностью детерминирована по seed."""
 
-    def __init__(self, width: int = 7680, height: int = 2560, seed: int = 0):
+    def __init__(self, width: int = 7680, height: int = 2560, seed: int = 0, script: str = "walk"):
+        self.script = SCRIPTS[script]
         self.size = (width, height)
         self.seed = seed
         rng = np.random.default_rng(seed)
@@ -101,21 +108,27 @@ class SyntheticStage:
         self._pants = tuple(int(c) for c in rng.integers(20, 90, 3))
 
     def person_x(self, t: float) -> float:
-        u = t % _CYCLE
-        if u < _STAND_A:
+        if self.script is None:
+            return self._x0 + SWAY_PX * math.sin(2 * math.pi * t / SWAY_PERIOD_S)
+        stand_a, walk_r, stand_b, walk_l = self.script
+        u = t % sum(self.script)
+        if u < stand_a:
             return self._x0
-        u -= _STAND_A
-        if u < _WALK_R:
-            return self._x0 + (self._x1 - self._x0) * (u / _WALK_R)
-        u -= _WALK_R
-        if u < _STAND_B:
+        u -= stand_a
+        if u < walk_r:
+            return self._x0 + (self._x1 - self._x0) * (u / walk_r)
+        u -= walk_r
+        if u < stand_b:
             return self._x1
-        u -= _STAND_B
-        return self._x1 - (self._x1 - self._x0) * (u / _WALK_L)
+        u -= stand_b
+        return self._x1 - (self._x1 - self._x0) * (u / walk_l)
 
     def _walking(self, t: float) -> bool:
-        u = t % _CYCLE
-        return _STAND_A <= u < _STAND_A + _WALK_R or u >= _STAND_A + _WALK_R + _STAND_B
+        if self.script is None:
+            return False
+        stand_a, walk_r, stand_b, _ = self.script
+        u = t % sum(self.script)
+        return stand_a <= u < stand_a + walk_r or u >= stand_a + walk_r + stand_b
 
     def _draw_person(self, img: np.ndarray, m: np.ndarray, t: float) -> None:
         s = m[0, 0]

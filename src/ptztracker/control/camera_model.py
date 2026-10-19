@@ -139,6 +139,11 @@ class CameraDynamics:
     def velocity(self, t: float) -> float:
         return self._state(t)[1]
 
+    def position(self, t: float) -> float:
+        """Накопленное смещение картинки с начала работы. Верно для последних KEEP_S секунд:
+        более старые команды свёрнуты (отсюда нельзя брать «смещение с момента 0»)."""
+        return self._state(t)[0]
+
     def displacement(self, t0: float, t1: float) -> float:
         return self._state(t1)[0] - self._state(t0)[0]
 

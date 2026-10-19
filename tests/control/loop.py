@@ -51,9 +51,9 @@ def run(
         if t >= next_meas:
             next_meas += MEAS_DT
             if visible(t):
-                zx = math.exp(cam_z.displacement(0.0, t))
-                ix = 0.5 + (world_x(t) - cam_x.displacement(0.0, t) - 0.5) * zx
-                iy = 0.5 + (world_y(t) + cam_y.displacement(0.0, t) - 0.5) * zx
+                zx = math.exp(cam_z.position(t))
+                ix = 0.5 + (world_x(t) - cam_x.position(t) - 0.5) * zx
+                iy = 0.5 + (world_y(t) + cam_y.position(t) - 0.5) * zx
                 pending.append((t + latency, BodyMeasure((ix, iy), world_u(t) * zx, True)))
             else:
                 pending.append((t + latency, None))
@@ -61,17 +61,17 @@ def run(
         while pending and pending[0][0] <= t:
             t_cap, measure = pending.pop(0)
         out = ctrl.step(FramingInput(now=t, t_capture=t_cap, measure=measure, zoom_pos=0x73F))
-        k = math.exp(cam_z.displacement(0.0, t))
+        k = math.exp(cam_z.position(t))
         cam_x.command(t, out.pan / k)  # камера даёт fw/s при текущем зуме → мировые единицы
         cam_y.command(t, out.tilt / k)
         cam_z.command(t, out.zoom)
-        zx = math.exp(cam_z.displacement(0.0, t))
+        zx = math.exp(cam_z.position(t))
         tr.t.append(t)
         tr.pan.append(out.pan)
         tr.tilt.append(out.tilt)
         tr.zoom.append(out.zoom)
-        tr.img_x.append(0.5 + (world_x(t) - cam_x.displacement(0.0, t) - 0.5) * zx)
-        tr.img_y.append(0.5 + (world_y(t) + cam_y.displacement(0.0, t) - 0.5) * zx)
+        tr.img_x.append(0.5 + (world_x(t) - cam_x.position(t) - 0.5) * zx)
+        tr.img_y.append(0.5 + (world_y(t) + cam_y.position(t) - 0.5) * zx)
         tr.u.append(world_u(t) * zx)
         tr.state.append(out.state)
         t = round(t + CTRL_DT, 6)

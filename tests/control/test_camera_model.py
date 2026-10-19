@@ -77,3 +77,15 @@ def test_calibration_json_roundtrip_and_config(tmp_path):
     store.save(cfg)
     loaded = store.load().cameras[0].calibration
     assert Calibration.from_json(loaded).zoom.rate(75) == c.zoom.rate(75)
+
+
+def test_position_continuous_after_old_commands_folded():
+    # Слежение дольше 10 с: старые команды сворачиваются — положение камеры не должно «прыгать»
+    d = CameraDynamics(dead_time=0.08, tau=0.37)
+    d.command(0.0, 0.1)
+    d.command(5.0, -0.05)
+    before = d.position(11.9)
+    d.command(12.0, 0.0)  # сворачивает команды старше 10 с
+    d.command(16.0, 0.02)
+    assert abs(d.position(11.9) - before) < 1e-9
+    assert abs(d.displacement(11.0, 11.9) - (d.position(11.9) - d.position(11.0))) < 1e-12

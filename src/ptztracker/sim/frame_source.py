@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 from collections import deque
@@ -51,11 +52,13 @@ class SimFrameSource:
             self._thread = None
 
     def latest(self) -> Frame | None:
+        """Самый свежий кадр, «дошедший» до программы. Как у живой камеры, t_capture — момент получения
+        (отрисовка + задержка), а не съёмки: регулятор сам вычитает задержку видео."""
         cutoff = time.monotonic() - self.latency_s
         with self._lock:
             for fr in reversed(self._buf):
                 if fr.t_capture <= cutoff:
-                    return fr
+                    return dataclasses.replace(fr, t_capture=fr.t_capture + self.latency_s)
         return None
 
     def stats(self) -> SourceStats:

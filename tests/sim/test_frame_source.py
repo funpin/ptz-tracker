@@ -44,7 +44,12 @@ def test_sim_latency():
     fs.start()
     try:
         time.sleep(0.8)
-        assert fs.latest().t_capture <= time.monotonic() - 0.3 + 0.05
+        fr = fs.latest()
+        # кадр «дошёл» только что (t_capture — момент получения), а отрисован на 0.3 с раньше
+        assert abs(fr.t_capture - time.monotonic()) < 0.1
+        seen = fr.seq
+        time.sleep(0.05)
+        assert fs.latest().seq >= seen
     finally:
         fs.stop()
 
