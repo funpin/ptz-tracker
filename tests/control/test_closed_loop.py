@@ -77,8 +77,14 @@ def test_walk_and_stop_like_operator():
     errs = [abs(r["x"] - ax) for r in warm]
     # На старте ходьбы с крупного плана камера отстаёт (разгон ~0.85 с + задержка): главное — человек в кадре
     assert np.mean(errs) < 0.08 and max(errs) <= 0.40
-    jumps = [abs(b["pan"] - a["pan"]) for a, b in zip(rows, rows[1:])]
-    assert max(jumps) <= 12
+    # Резкость — по ускорению (доли кадра/с²), а не по коду: шкала кодов сильно нелинейна,
+    # а 60→40 через ноль — смена направления на малой скорости, не рывок.
+    table = default_calibration().pan
+    acc = [
+        abs(table.speed(b["pan"], 0x73F) - table.speed(a["pan"], 0x73F)) / max(0.05, b["t"] - a["t"])
+        for a, b in zip(rows, rows[1:])
+    ]
+    assert max(acc) <= 2.5 * e.a_max
     assert reversals([r["pan"] for r in rows]) <= 3
 
 
