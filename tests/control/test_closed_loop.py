@@ -24,11 +24,15 @@ def wait_until(pred, timeout):
     return False
 
 
-def run_follow(script, seconds, comp="waist_center", effort=0.5, sim_latency=None, calib_latency=None):
+def run_follow(
+    script, seconds, comp="waist_center", effort=0.5, sim_latency=None, calib_latency=None, calibrated=True
+):
+    """calibrated=True — как после мастера калибровки (таблица совпадает с камерой симулятора)."""
     cfg = CameraConfig(id="s", name="Сим", ip="sim", kind="sim", composition=comp, effort=effort)
-    if calib_latency is not None:
+    if calibrated or calib_latency is not None:
         c = default_calibration()
-        c.video_latency["sim"] = calib_latency
+        if calib_latency is not None:
+            c.video_latency["sim"] = calib_latency
         cfg.calibration = c.to_json()
     s = CameraSession(cfg, scene=SyntheticStage(script=script), sim_latency=sim_latency)
     s.start()
@@ -85,6 +89,14 @@ def test_walk_and_stop_like_operator():
         for a, b in zip(rows, rows[1:])
     ]
     assert max(acc) <= 2.5 * e.a_max
+    assert reversals([r["pan"] for r in rows]) <= 3
+
+
+def test_uncalibrated_still_keeps_person_in_frame():
+    # до калибровки модель с запасом считает камеру быстрее: ведёт свободнее, но устойчиво
+    rows = run_follow("lecture", 30, calibrated=False)
+    assert all(r["vis"] for r in rows), "человек выходил из кадра"
+    assert np.mean([abs(r["x"] - 0.5) for r in rows if r["t"] > 6]) < 0.12
     assert reversals([r["pan"] for r in rows]) <= 3
 
 

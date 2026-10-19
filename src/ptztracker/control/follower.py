@@ -63,6 +63,12 @@ class Follower:
         r = self.analyzer.latest() if self.analyzer else None
         if r is None or r.target_id is None:
             return False
+        try:  # сразу узнать зум: от него зависит таблица скоростей
+            z = self.query_zoom()
+            if z is not None:
+                self._zoom_pos = z
+        except Exception as e:
+            log.debug("Запрос зума при включении не удался: %s", e)
         with self._lock:
             self.controller.video_latency = self.video_latency()
             self.controller.reset()
@@ -81,9 +87,10 @@ class Follower:
             self.enabled = False
             self.last_reason = reason
             self.output = None
-        # стопы с приоритетом слежения: если следом идёт ручная команда, она их заменит и уйдёт первой
-        self.scheduler.submit("pt", P.STOP_PT, Priority.TRACKING, only_if_changed=False)
-        self.scheduler.submit("zoom", P.STOP_ZOOM, Priority.TRACKING, only_if_changed=False)
+        # стопы как ручные команды: уходят раньше следующих ручных (вызов пресета не будет прерван),
+        # а ручная команда в те же ячейки «pt»/«zoom» их просто заменит
+        self.scheduler.submit("pt", P.STOP_PT, Priority.MANUAL, only_if_changed=False)
+        self.scheduler.submit("zoom", P.STOP_ZOOM, Priority.MANUAL, only_if_changed=False)
         log.info("Слежение выключено: %s", reason)
         self._notify()
 
@@ -155,6 +162,7 @@ class Follower:
                              aspect=r.frame_size[0] / max(1, r.frame_size[1]))
             )
             self.output = out
+            diverged = out.state == "diverged"
             p0, t0, z0 = self._codes
             pan = self.calib.pan.code_for(out.pan, zoom, current=p0)
             tilt = self.calib.pan.code_for(out.tilt * TILT_FROM_FH, zoom, current=t0)
@@ -162,4 +170,6 @@ class Follower:
             self._codes = (pan, tilt, zc)
             # отправка под замком: disable() не сможет вклиниться между проверкой enabled и submit
             self.scheduler.submit("pt", P.pan_tilt_speed(pan, tilt), Priority.TRACKING)
-            self.scheduler.submit("zoom", P.zoom_speed(zc), Priority.TRACKING)
+            self.scheduler.submit("zoom", P.zoom_speed(zc), Priority.TRACKING_ZOOM)
+        if diverged:
+            self.disable("камера раскачивалась — она быстрее, чем ожидалось. Сервис → Калибровка камеры")

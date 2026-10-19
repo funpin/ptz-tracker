@@ -186,6 +186,11 @@ _PAN_HE42 = [(53, 0.0), (55, 0.0015), (58, 0.012), (60, 0.034), (62, 0.07), (65,
 _ZOOM_HE42 = [(55, 0.02), (60, 0.05), (65, 0.1), (75, 0.27), (85, 0.5), (99, 0.8)]
 
 
-def default_calibration() -> Calibration:
-    """Средние значения до калибровки: одна таблица для всех зумов (камера сама замедляет pan на теле)."""
-    return Calibration(pan=SpeedTable({0x73F: list(_PAN_HE42)}), zoom=ZoomTable(list(_ZOOM_HE42)))
+def default_calibration(safety: float = 1.0) -> Calibration:
+    """Средние значения до калибровки: одна таблица для всех зумов (камера сама замедляет pan на теле).
+
+    safety > 1 — считать камеру быстрее замеров: ошибиться в «медленную» сторону безопасно
+    (регулятор устойчив до ρ≈0.5), а в «быструю» — раскачка (устойчив до ρ≈1.7).
+    """
+    pan = [(c, v * safety) for c, v in _PAN_HE42]
+    return Calibration(pan=SpeedTable({0x73F: pan}), zoom=ZoomTable(list(_ZOOM_HE42)))

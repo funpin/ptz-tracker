@@ -112,3 +112,49 @@ def test_target_lost_stops_camera():
         assert s.follower.enabled  # слежение остаётся включённым — ждёт цель
     finally:
         s.stop()
+
+
+def test_enable_reads_zoom_immediately():
+    s = sim_session()
+    try:
+        s.sim.zoom = 0.5
+        time.sleep(0.2)
+        select_person(s)
+        assert s.follower.enable()
+        assert abs(s.follower._zoom_pos - (0x555 + 0.5 * (0xFFF - 0x555))) < 30
+    finally:
+        s.stop()
+
+
+def test_preset_recall_not_cancelled_by_follow_stop():
+    s = sim_session()
+    try:
+        select_person(s)
+        s.follower.enable()
+        time.sleep(1.0)
+        s.recall_preset(2)
+        time.sleep(0.8)
+        rec = list(s.sim.received)
+        i_r = max(i for i, c in enumerate(rec) if c == "#R02")
+        assert not any(c.startswith(("#PTS", "#Z")) for c in rec[i_r + 1 :]), rec[i_r:]
+    finally:
+        s.stop()
+
+
+def test_divergence_disables_with_calibration_hint():
+    s = sim_session()
+    try:
+        select_person(s)
+        s.follower.enable()
+        s.follower.controller.diverged = True
+        assert wait_until(lambda: not s.follower.enabled, 1.0)
+        assert "калибровк" in s.follower.last_reason.lower()
+    finally:
+        s.stop()
+
+
+def test_uncalibrated_uses_conservative_table():
+    from ptztracker.control.camera_model import default_calibration
+
+    s = CameraSession(CameraConfig(id="x", name="X", ip="sim", kind="sim"), analysis=False)
+    assert abs(s.calibration().pan.speed(70, 0x73F) - 1.5 * default_calibration().pan.speed(70, 0x73F)) < 1e-9

@@ -15,6 +15,7 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
+from ptztracker.camera import protocol as P
 from ptztracker.control.camera_model import Calibration, CameraDynamics
 from ptztracker.control.composition import BodyMeasure, Composition
 from ptztracker.control.effort import EffortProfile
@@ -23,6 +24,15 @@ ALPHA = 0.35  # сглаживание положения человека
 VEL_WINDOW_S = 0.4  # окно оценки скорости человека
 CALM_WINDOW_S = 1.5  # «человек стоит», если за это время сместился меньше мёртвой зоны
 SWAY_FRACTION = 0.8  # смещение меньше этой доли мёртвой зоны за окно — покачивание, а не ходьба
+# Вес упреждения по скорости человека. Скорость считается с поправкой на движение камеры по модели;
+# если реальная камера быстрее модели в ρ раз, в оценку попадает (ρ−1)·скорость камеры и замыкается
+# внутренняя петля. Вес 0.5 держит её устойчивой до ρ≈2 с задержкой очереди 0.13 с (тест).
+FF_GAIN = 0.5
+# Сторож раскачки: столько разворотов pan с большой ошибкой за окно — стоп и выключение
+WATCHDOG_REVERSALS, WATCHDOG_WINDOW_S = 3, 6.0
+WATCHDOG_ERR_FRACTION = 0.6  # «большая ошибка» — больше этой доли мягкой зоны
+LENS_END_MARGIN = 8
+LOST_STOP_S = 0.5
 STILL_V = 0.02  # медленнее — считаем, что человек стоит
 START_V, STOP_V = 0.05, 0.03  # скорость человека для перехода в «движение» / обратно в «стоим»
 RELEASE = 0.4  # возврат в «стоим», когда ошибка < RELEASE·dead
@@ -49,7 +59,7 @@ class FramingOutput:
     pan: float  # fw/s, > 0 — вправо
     tilt: float  # fh/s, > 0 — вверх
     zoom: float  # ln/s, > 0 — к теле
-    state: Literal["idle", "holding", "moving"]
+    state: Literal["idle", "holding", "moving", "diverged"]
     error: tuple[float, float]
     size_error: float | None
 
@@ -81,6 +91,9 @@ class _Axis:
         self.v_cmd = 0.0
         self.lead = 0.0
         self.err = 0.0
+        self.flips: list[float] = []  # моменты разворотов с большой ошибкой (сторож)
+        self.max_err_since_flip = 0.0
+        self.last_sign = 0
 
     def _cam(self, t: float) -> float:
         return self.dyn.position(t)
@@ -140,7 +153,8 @@ class _Axis:
             # «Пошёл» — не просто скорость (покачивание у кафедры даёт её тоже), а реальное смещение
             # за окно CALM_WINDOW_S. Иначе камера ходит за покачиванием туда-сюда.
             walked = self.spread(now, k_now) >= SWAY_FRACTION * dead
-            if self.mode == "holding" and (a > dead or (abs(v_w) >= START_V and walked)):
+            # трогаемся, только когда человек вышел из мёртвой зоны: скорость покачивания не повод
+            if self.mode == "holding" and a > dead:
                 self.mode = "moving"
             elif self.mode == "moving" and a < RELEASE * dead and (abs(v_w) < STOP_V or not walked):
                 self.mode = "holding"
@@ -151,7 +165,7 @@ class _Axis:
                 shaped = max(0.0, a - base)
                 if a > soft:
                     shaped = (soft - base) + EDGE_GAIN * (a - soft)
-                want = self.sign * (v_w + e.gain * math.copysign(shaped, self.err))
+                want = self.sign * (FF_GAIN * v_w + e.gain * math.copysign(shaped, self.err))
                 # Камера проехала остановившегося (или замедлившегося) человека: назад — только медленно,
                 # пока он в мягкой зоне. Оператор так и делает: доводит, а не дёргает обратно.
                 against = want * self.sign * self.v_img < 0
@@ -164,9 +178,22 @@ class _Axis:
         else:
             want = 0.0
         want = _limit(want, e.v_max)
-        self.v_cmd += _limit(want - self.v_cmd, e.a_max * dt)
+        # без цели — останавливаемся быстрее (за ~0.5 с), но так же плавно
+        a_lim = e.a_max if active else max(e.a_max, abs(self.v_cmd) / LOST_STOP_S)
+        self.v_cmd += _limit(want - self.v_cmd, a_lim * dt)
         if abs(self.v_cmd) < 1e-9:
             self.v_cmd = 0.0
+        # сторож раскачки: развороты при большой ошибке
+        self.max_err_since_flip = max(self.max_err_since_flip, abs(self.err))
+        self.v_cmd = float(self.v_cmd)  # из ключевых точек приходят numpy-числа
+        sgn = int(self.v_cmd > 0) - int(self.v_cmd < 0)
+        if sgn and self.last_sign and sgn != self.last_sign:
+            if self.max_err_since_flip > WATCHDOG_ERR_FRACTION * soft:
+                self.flips.append(now)
+            self.max_err_since_flip = 0.0
+        if sgn:
+            self.last_sign = sgn
+        self.flips = [t for t in self.flips if now - t <= WATCHDOG_WINDOW_S]
         self.dyn.command(now, self.v_cmd / k_now)  # камера даёт fw/s при текущем зуме → в мировые единицы
         return self.v_cmd
 
@@ -199,6 +226,7 @@ class FramingController:
         self._zoom_active = False
         self._hold_since: float | None = None
         self._still_since: float | None = None
+        self.diverged = False
 
     def step(self, inp: FramingInput) -> FramingOutput:
         now = inp.now
@@ -219,14 +247,20 @@ class FramingController:
                 self._u = u_now if self._u is None else self._u + U_SMOOTH * (u_now - self._u)
                 self._u_t = now
 
-        active = self._t_seen is not None and now - self._t_seen <= NO_TARGET_S
+        if not self.diverged and (len(self.x.flips) >= WATCHDOG_REVERSALS or len(self.y.flips) >= WATCHDOG_REVERSALS):
+            self.diverged = True  # раскачка — дальше только остановка, до reset()
+        active = (self._t_seen is not None and now - self._t_seen <= NO_TARGET_S) and not self.diverged
         dead_y = e.dead_y * inp.aspect / (16 / 9)
         k_now = self._k(now)
         zr = self.zdyn.velocity(now)
         pan = self.x.step(now, dt, comp.anchor[0], e.dead_x, e.soft_x, e, e.lead, active, k_now, zr)
         tilt = self.y.step(now, dt, comp.anchor[1], dead_y, e.soft_y, e, 0.0, active, k_now, zr)
 
-        if not active:
+        if self.diverged:
+            state = "diverged"
+            self.x.mode = self.y.mode = "holding"
+            self._hold_since = None
+        elif not active:
             state = "idle"
             self.x.mode = self.y.mode = "holding"
             self._hold_since = None
@@ -244,14 +278,16 @@ class FramingController:
             self._still_since = None
         elif self._still_since is None:
             self._still_since = now
-        zoom, size_err = self._zoom(now, dt, active, state, e)
+        zoom, size_err = self._zoom(now, dt, active, state, e, inp.zoom_pos)
         return FramingOutput(pan, tilt, zoom, state, (self.x.err, self.y.err), size_err)
 
     def _k(self, t: float) -> float:
         """Во сколько раз картинка увеличена зумом с момента старта регулятора."""
         return math.exp(self.zdyn.position(t))
 
-    def _zoom(self, now: float, dt: float, active: bool, state: str, e: EffortProfile) -> tuple[float, float | None]:
+    def _zoom(
+        self, now: float, dt: float, active: bool, state: str, e: EffortProfile, zoom_pos: int
+    ) -> tuple[float, float | None]:
         want = 0.0
         size_err = None
         if active:
@@ -272,6 +308,9 @@ class FramingController:
                         want = 0.0
             if at_edge:
                 want = -e.zoom_max  # человек уходит из кадра — сразу шире
+        # у края диапазона объектива дальше не зумируем (и не считаем, что зумируем)
+        if (want < 0 and zoom_pos <= P.LENS_MIN + LENS_END_MARGIN) or (want > 0 and zoom_pos >= P.LENS_MAX - LENS_END_MARGIN):
+            want = 0.0
         self._zoom_cmd += _limit(want - self._zoom_cmd, ZOOM_ACCEL * dt)
         if abs(self._zoom_cmd) < 1e-9:
             self._zoom_cmd = 0.0

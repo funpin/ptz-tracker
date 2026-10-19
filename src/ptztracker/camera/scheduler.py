@@ -31,7 +31,8 @@ class Priority(IntEnum):
     EMERGENCY = 0
     MANUAL = 1
     TRACKING = 2
-    QUERY = 3
+    TRACKING_ZOOM = 3  # зум при слежении уступает повороту (спека §7)
+    QUERY = 4
 
 
 @dataclass

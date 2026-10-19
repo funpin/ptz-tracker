@@ -31,6 +31,23 @@ ZOOM_RUN_S = 0.6
 PROBE_MAX_S, PROBE_MAX_FRACTION = 2.5, 0.9
 
 
+def default_zooms(start_zoom: int) -> list[int]:
+    """Широкий угол, текущий зум (рабочий) и тело — регулятор не должен экстраполировать."""
+    return sorted({P.LENS_MIN, start_zoom, (start_zoom + P.LENS_MAX) // 2, P.LENS_MAX})
+
+
+def drop_flat_curves(curves: dict[int, list[tuple[int, float]]]) -> dict[int, list[tuple[int, float]]]:
+    """Отбросить зумы, где картинка не дала измерить сдвиг (быстрые коды «стоят»)."""
+    good = {}
+    for z, curve in curves.items():
+        fast = [v for c, v in curve if c >= 65]
+        if fast and sum(1 for v in fast if v < FLAT_FW_S) <= len(fast) / 2:
+            good[z] = curve
+        else:
+            log.warning("Зум %03X: картинка не дала измерить скорость — замеры отброшены", z)
+    return good
+
+
 class _Sender:
     """Pacer поверх произвольной функции отправки (клиент сессии или отдельный)."""
 
@@ -143,11 +160,10 @@ class CalibrationRunner:
     def run(self) -> Calibration:
         start_pt = P.parse_pan_tilt(self.pacer.send(P.Q_PAN_TILT))
         start_zoom = P.parse_zoom(self.pacer.send(P.Q_ZOOM))
-        zooms = self.zooms or sorted({0x555, start_zoom, (start_zoom + 0xFFF) // 2})
+        zooms = self.zooms or default_zooms(start_zoom)
         try:
-            curves = {z: self._pan_curve(z) for z in zooms}
-            fast = [v for curve in curves.values() for c, v in curve if c >= 65]
-            if fast and sum(1 for v in fast if v < FLAT_FW_S) > len(fast) / 2:
+            curves = drop_flat_curves({z: self._pan_curve(z) for z in zooms})
+            if not curves:
                 raise RuntimeError(
                     "Слишком однотонная картинка — сдвиг кадра не измерить. "
                     "Наведите камеру на сцену с деталями и повторите."

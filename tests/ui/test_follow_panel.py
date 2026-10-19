@@ -96,3 +96,10 @@ def test_window_fits_small_screen(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     assert w.minimumSizeHint().height() <= 760
     w.close()
+
+
+def test_effort_applied_on_any_change(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w.follow_panel.effort_slider.setValue(100)  # колесо/клик по полосе — тоже применяется
+    assert w.session.follower.controller.effort.gain == 2.2
+    w.close()

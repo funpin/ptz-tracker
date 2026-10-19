@@ -39,3 +39,18 @@ def test_compositions_sane():
     for c in COMPOSITIONS.values():
         assert 0 < c.anchor[0] < 1 and 0 < c.anchor[1] < 1 and c.u_frac > 0 and c.title
     assert COMPOSITIONS["waist_left"].anchor[0] < 0.5 < COMPOSITIONS["waist_right"].anchor[0]
+
+
+def test_head_pitch_does_not_move_reference_or_size():
+    # Докладчик смотрит в записи: нос опускается на 0.4U, расстояние нос→плечи сжимается.
+    # Опорная точка и размер берутся от плеч — не меняются заметно.
+    # реалистичные пропорции: ширина плеч ≈ 2.6·U
+    up = measure_body(kp((320, 100), (398, 160), (242, 160)), (220, 60, 420, 360), (640, 360), None)
+    down = measure_body(kp((320, 124), (398, 160), (242, 160)), (220, 60, 420, 360), (640, 360), up.u)
+    assert abs(down.nose[1] - up.nose[1]) < 0.02 and abs(down.u / up.u - 1) < 0.25
+
+
+def test_head_turn_does_not_move_reference_x():
+    a = measure_body(kp((320, 100), (350, 160), (290, 160)), (260, 60, 380, 360), (640, 360), None)
+    b = measure_body(kp((345, 100), (350, 160), (290, 160)), (260, 60, 380, 360), (640, 360), a.u)
+    assert abs(b.nose[0] - a.nose[0]) < 0.005

@@ -231,3 +231,11 @@ def test_one_shot_ttl_expires_during_outage(env):
         s.pump()
         clock.t += 0.2
     assert "#R03" not in send.ok
+
+
+def test_pan_tilt_before_zoom_when_tracking(env):
+    # спека §7: #PTS важнее #Z — зум не должен задерживать поворот
+    s, clock, _ = env
+    s.submit("zoom", "#Z60", Priority.TRACKING_ZOOM)
+    s.submit("pt", "#PTS6050", Priority.TRACKING)
+    assert s.pump() == "#PTS6050"

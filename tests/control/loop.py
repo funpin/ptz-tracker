@@ -36,6 +36,10 @@ def run(
     effort: float = 0.5,
     comp: str = "waist_center",
     visible=lambda t: True,
+    speed_factor: float = 1.0,  # реальная камера быстрее модели в столько раз (рассогласование калибровки)
+    cmd_delay: float = 0.0,  # команды доходят до камеры позже (очередь планировщика)
+    zoom_pos: int = 0x73F,
+    controller_hook=None,
 ) -> Trace:
     calib = default_calibration()
     cam_x = CameraDynamics(calib.dead_time, calib.tau)
@@ -47,6 +51,7 @@ def run(
     tr = Trace()
     t, next_meas = 0.0, 0.0
     pending = []  # (когда придёт, t_shot, measure)
+    queued = []  # (когда дойдёт до камеры, pan, tilt, zoom)
     while t < T:
         if t >= next_meas:
             next_meas += MEAS_DT
@@ -60,11 +65,16 @@ def run(
         measure, t_cap = None, None
         while pending and pending[0][0] <= t:
             t_cap, measure = pending.pop(0)
-        out = ctrl.step(FramingInput(now=t, t_capture=t_cap, measure=measure, zoom_pos=0x73F))
-        k = math.exp(cam_z.position(t))
-        cam_x.command(t, out.pan / k)  # камера даёт fw/s при текущем зуме → мировые единицы
-        cam_y.command(t, out.tilt / k)
-        cam_z.command(t, out.zoom)
+        out = ctrl.step(FramingInput(now=t, t_capture=t_cap, measure=measure, zoom_pos=zoom_pos))
+        if controller_hook:
+            controller_hook(t, ctrl, out)
+        queued.append((t + cmd_delay, out.pan, out.tilt, out.zoom))
+        while queued and queued[0][0] <= t + 1e-9:
+            _, qp, qt, qz = queued.pop(0)
+            k = math.exp(cam_z.position(t))
+            cam_x.command(t, speed_factor * qp / k)  # камера даёт fw/s при текущем зуме → мировые единицы
+            cam_y.command(t, speed_factor * qt / k)
+            cam_z.command(t, qz)
         zx = math.exp(cam_z.position(t))
         tr.t.append(t)
         tr.pan.append(out.pan)

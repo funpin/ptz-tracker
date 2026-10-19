@@ -58,3 +58,12 @@ def test_flat_scene_reports_error():
     finally:
         src.stop()
         srv.stop()
+
+
+def test_default_zooms_cover_tele_and_flat_curves_dropped():
+    from ptztracker.control.calibration import default_zooms, drop_flat_curves
+
+    z = default_zooms(0x73F)
+    assert z[0] == 0x555 and z[-1] == 0xFFF and 0x73F in z
+    curves = {0x555: [(60, 0.03), (70, 0.3), (80, 0.5)], 0xFFF: [(60, 0.0), (70, 0.001), (80, 0.002)]}
+    assert list(drop_flat_curves(curves)) == [0x555]

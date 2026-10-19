@@ -48,7 +48,9 @@ class FollowPanel(QGroupBox):
         self.effort_slider = QSlider(Qt.Horizontal)
         self.effort_slider.setRange(0, 100)
         self.effort_slider.setFocusPolicy(Qt.NoFocus)
-        self.effort_slider.sliderReleased.connect(lambda: self.effortChanged.emit(self.effort_slider.value() / 100))
+        # любое изменение (перетаскивание, клик по полосе, колесо) применяется сразу —
+        # иначе ползунок показывал бы не то, что действует
+        self.effort_slider.valueChanged.connect(lambda v: self.effortChanged.emit(v / 100))
         erow = QHBoxLayout()
         erow.addWidget(QLabel("Мягко"))
         erow.addWidget(self.effort_slider, 1)
@@ -87,7 +89,9 @@ class FollowPanel(QGroupBox):
             self.comp_buttons[key].setChecked(True)
 
     def set_effort(self, x: float) -> None:
+        self.effort_slider.blockSignals(True)
         self.effort_slider.setValue(round(x * 100))
+        self.effort_slider.blockSignals(False)
 
     def set_calibrated(self, calibrated: bool) -> None:
         self.calib_label.setText(

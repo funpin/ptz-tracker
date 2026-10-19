@@ -23,7 +23,8 @@ HEARTBEAT_S = 2.0
 ONE_SHOT_TTL_S = 2.0  # пресет/разовый AF, нажатые при обрыве связи, не выполняются позже
 STOP_FLUSH_S = 1.5  # сколько ждать отправки «стопов» при остановке (если камера на связи)
 SIM_START_TILT = -8.0
-SIM_VIDEO_LATENCY_S = 0.15  # как MJPEG у живой камеры  # чтобы в симуляторе докладчик сразу был в кадре
+SIM_VIDEO_LATENCY_S = 0.15  # как MJPEG у живой камеры
+UNCALIBRATED_SAFETY = 1.5  # без калибровки считаем камеру в 1,5 раза быстрее замеров (запас устойчивости)  # чтобы в симуляторе докладчик сразу был в кадре
 
 
 class CameraSession:
@@ -115,7 +116,7 @@ class CameraSession:
                 return Calibration.from_json(self.cfg.calibration)
             except Exception as e:  # повреждённая калибровка — работаем по средним значениям
                 log.warning("Калибровка камеры %s не читается (%s) — беру средние значения", self.cfg.name, e)
-        return default_calibration()
+        return default_calibration(safety=UNCALIBRATED_SAFETY)
 
     def stream_kind(self) -> str:
         if self.cfg.kind == "sim":
