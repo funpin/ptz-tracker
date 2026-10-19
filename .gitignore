@@ -1,0 +1,22 @@
+# Brainstorm / visual companion
+.superpowers/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Build
+build/
+dist/
+*.spec.bak
+
+# Models & media (large files)
+models/*.onnx
+media/
+
+# OS
+.DS_Store
+Thumbs.db
