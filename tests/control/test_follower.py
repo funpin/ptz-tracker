@@ -15,12 +15,17 @@ def wait_until(pred, timeout):
     return False
 
 
-def sim_session(calibrated=False, **cfg):
+def sim_session(calibrated=False, script=None, **cfg):
     if calibrated:
         from ptztracker.control.camera_model import default_calibration
 
         cfg["calibration"] = default_calibration().to_json()  # как после мастера калибровки
-    s = CameraSession(CameraConfig(id="s", name="Сим", ip="sim", kind="sim", **cfg))
+    scene = None
+    if script:
+        from ptztracker.sim.scene import SyntheticStage
+
+        scene = SyntheticStage(script=script)
+    s = CameraSession(CameraConfig(id="s", name="Сим", ip="sim", kind="sim", **cfg), scene=scene)
     s.start()
     assert wait_until(lambda: s.analyzer.latest() is not None and len(s.analyzer.latest().tracks) > 0, 4)
     return s
@@ -47,22 +52,21 @@ def test_enable_requires_target():
 
 
 def test_follows_walking_sim_person():
-    s = sim_session(composition="full", calibrated=True)
+    s = sim_session(composition="full", calibrated=True, script="lecture")
     try:
         select_person(s)
         assert s.follower.enable()
         errs, in_frame = [], []
-        t_end = time.monotonic() + 10
+        t_end = time.monotonic() + 16  # «lecture»: стоит 8 с, затем прохаживается
         while time.monotonic() < t_end:
             fr = s.frames.latest()
             kp = fr.meta["people"][0]
             in_frame.append(kp[0, 2] > 0)
-            if time.monotonic() > t_end - 6 and kp[0, 2] > 0:
+            if time.monotonic() > t_end - 8 and kp[0, 2] > 0:
                 errs.append(abs(kp[0, 0] / fr.image.shape[1] - 0.5))
             time.sleep(0.1)
         assert all(in_frame), "человек выходил из кадра"
-        # окно может попасть на старт быстрой ходьбы (1.2 м/с) — тонкое поведение проверяет test_closed_loop
-        assert np.mean(errs) < 0.12, f"средняя ошибка {np.mean(errs):.3f}"
+        assert np.mean(errs) < 0.10, f"средняя ошибка {np.mean(errs):.3f}"
     finally:
         s.stop()
 
