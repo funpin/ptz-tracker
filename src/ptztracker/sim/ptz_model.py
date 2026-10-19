@@ -1,7 +1,7 @@
-"""Виртуальная PTZ-камера: принимает те же команды, что AW-HE42, и двигается с инерцией.
+"""Виртуальная PTZ-камера: принимает те же команды, что AW-HE42, и двигается как она.
 
-Таблица скоростей и шкала APC здесь условные (только для симулятора);
-реальные значения даст диагностика на живой камере.
+Скорости, разгон и зум — из замеров живой камеры (camera.he42). Шкала APC и углы обзора —
+условные (только для симулятора).
 """
 
 from __future__ import annotations
@@ -13,45 +13,45 @@ import time
 from collections import deque
 from typing import Callable
 
-TAU_S = 0.37  # разгон/торможение живой AW-HE42: до 90% скорости ~0,85 с
-DEAD_TIME_S = 0.08  # команда начинает действовать не сразу
+from ptztracker.camera import he42
+
+TAU_S = he42.RAMP_TAU_S
+DEAD_TIME_S = he42.DEAD_TIME_S
 PAN_LIMIT = 175.0
 TILT_MIN, TILT_MAX = -30.0, 90.0
-# Скорость pan/tilt по коду в долях ширины кадра в секунду — замеры живой AW-HE42 (§7 спеки).
-# Камера с «Speed with zoom» сама замедляется на теле, и в долях кадра скорость почти не зависит
-# от зума. Поэтому град/с = доли кадра/с × угол обзора на широком угле.
-HE42_FW_S = {50: 0.0, 53: 0.0, 55: 0.0015, 58: 0.012, 60: 0.034, 62: 0.07, 65: 0.15, 68: 0.26,
-             70: 0.33, 75: 0.42, 80: 0.50, 90: 0.75, 99: 1.2}
-HE42_DEG_S = {c: v * 62.1 for c, v in HE42_FW_S.items()}
-# Зум: ln(масштаба)/с по коду — та же таблица, что у регулятора по умолчанию (замер: #Z75 → ×1,21 за 0,7 с).
-HE42_ZOOM_LN_S = {50: 0.0, 55: 0.02, 60: 0.05, 65: 0.1, 75: 0.27, 85: 0.5, 99: 0.8}
-_ZTABLE = sorted(HE42_ZOOM_LN_S.items())
-
-
-def he42_zoom_ln_s(code: int) -> float:
-    n = 50 + abs(code - 50)
-    for (c0, v0), (c1, v1) in zip(_ZTABLE, _ZTABLE[1:]):
-        if c0 <= n <= c1:
-            v = v0 + (v1 - v0) * (n - c0) / (c1 - c0)
-            return v if code >= 50 else -v
-    return 0.0
-_TABLE = sorted(HE42_DEG_S.items())
 ABS_MOVE_DEG_S = 60.0  # скорость перехода к абсолютной позиции / пресету
 APC_DEG_PER_UNIT = 0.0075
 HFOV_WIDE, HFOV_TELE = 62.1, 3.3
 ZOOM_RATIO_MAX = 20.0
-ZOOM_RATE = 0.4  # доля диапазона зума в секунду на максимальной скорости
+ZOOM_RATE = 0.4  # доля диапазона зума в секунду при переходе к абсолютной позиции
 LENS_MIN, LENS_MAX = 0x555, 0xFFF
 
+# Камера с «Speed with zoom» сама замедляется на теле, и в долях кадра скорость почти не зависит
+# от зума. Поэтому град/с = доли кадра/с × угол обзора на широком угле.
+HE42_FW_S = {50: 0.0, **he42.PAN_FW_S}
+HE42_DEG_S = {c: v * HFOV_WIDE for c, v in HE42_FW_S.items()}
+HE42_ZOOM_LN_S = {50: 0.0, **he42.ZOOM_LN_S}
 
-def he42_deg_s(code: int) -> float:
-    """Скорость (град/с, со знаком) для кода 01–99 по таблице HE42 (линейно между точками)."""
+
+def _signed_interp(table: dict[int, float], code: int) -> float:
+    """Значение для кода 01–99 по таблице кодов 50–99 (линейно между точками, зеркально для < 50)."""
+    pts = sorted(table.items())
     n = 50 + abs(code - 50)
-    for (c0, v0), (c1, v1) in zip(_TABLE, _TABLE[1:]):
+    for (c0, v0), (c1, v1) in zip(pts, pts[1:], strict=False):
         if c0 <= n <= c1:
             v = v0 + (v1 - v0) * (n - c0) / (c1 - c0)
             return v if code >= 50 else -v
     return 0.0
+
+
+def he42_deg_s(code: int) -> float:
+    """Скорость pan/tilt (град/с, со знаком) для кода 01–99."""
+    return _signed_interp(HE42_DEG_S, code)
+
+
+def he42_zoom_ln_s(code: int) -> float:
+    """Скорость зума (ln масштаба/с, со знаком) для кода 01–99."""
+    return _signed_interp(HE42_ZOOM_LN_S, code)
 
 
 class SimPtz:

@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-qt>=4.4"]
+dev = ["pytest>=8", "pytest-qt>=4.4", "ruff>=0.6"]
 build = ["pyinstaller>=6.6"]
 
 [project.scripts]
@@ -34,4 +34,12 @@ ptztracker = ["models/*.onnx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: долгие тесты (сеть/таймауты)"]
+markers = ["slow: тесты в реальном времени на симуляторе (минуты); быстрый цикл: -m \"not slow\""]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["F", "E9", "B", "I"]
+ignore = ["B905"]  # zip без strict: попарные проходы по соседним элементам — намеренно разной длины

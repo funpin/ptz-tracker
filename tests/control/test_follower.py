@@ -1,9 +1,12 @@
 import time
 
 import numpy as np
+import pytest
 
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import CameraConfig
+
+pytestmark = pytest.mark.slow  # реальное время на симуляторе
 
 
 def wait_until(pred, timeout):

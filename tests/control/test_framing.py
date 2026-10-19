@@ -37,7 +37,7 @@ def test_stops_without_overshoot_after_walk():
     from ptztracker.control.framing import SETTLE_V
 
     for speed in (0.1, 0.25):
-        tr = run(lambda t: walk_then_stop(t, speed), T=13)
+        tr = run(lambda t, speed=speed: walk_then_stop(t, speed), T=13)
         after = [i for i, t in enumerate(tr.t) if t > 3.0]
         assert max(abs(tr.img_x[i] - AX) for i in after) <= E.soft_x
         # медленный возврат; сверху допускается доворот, компенсирующий отъезд зума у края кадра
@@ -132,7 +132,7 @@ def test_divergence_watchdog_stops_runaway():
 
 def test_sway_at_lectern_does_not_hunt():
     for amp, period in ((0.025, 2.5), (0.03, 3.0)):
-        tr = run(lambda t: AX + amp * math.sin(2 * math.pi * t / period), T=15)
+        tr = run(lambda t, amp=amp, period=period: AX + amp * math.sin(2 * math.pi * t / period), T=15)
         assert sign_changes(tr.pan) <= 2, (amp, period)
 
 

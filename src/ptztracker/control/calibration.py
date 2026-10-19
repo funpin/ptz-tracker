@@ -16,8 +16,8 @@ from typing import Callable
 
 from ptztracker.camera import protocol as P
 from ptztracker.control.camera_model import Calibration, SpeedTable, ZoomTable, default_calibration
-from ptztracker.diagnostics.checks import Pacer, _probe_run
 from ptztracker.diagnostics.motion import estimate_scale, measure_shift, wait_for_motion
+from ptztracker.diagnostics.probe import Pacer, probe_run
 from ptztracker.video.frames import FrameSource
 
 log = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ class CalibrationRunner:
             c = code if i % 2 == 0 else 100 - code  # попеременно вправо/влево — камера остаётся на месте
             self.progress(f"Зум {zoom:03X}: скорость {code}…")
             # дольше и дальше, чем в диагностике: камера разгоняется ~0,85 с, нужна установившаяся скорость
-            run = _probe_run(self.pacer, self.source, c, max_s=PROBE_MAX_S, max_fraction=PROBE_MAX_FRACTION)
+            run = probe_run(self.pacer, self.source, c, max_s=PROBE_MAX_S, max_fraction=PROBE_MAX_FRACTION)
             curve.append((code, abs(run["px_per_s"]) / width))
             time.sleep(0.4)
         # скорость не может падать с ростом кода — сгладить выбросы
@@ -108,7 +108,7 @@ class CalibrationRunner:
         self.pacer.send(P.pan_tilt_speed(STEP_CODE, 50))
         t_first = wait_for_motion(self.source, t_cmd, threshold_px=threshold, reference=ref.image)
         samples = []  # (t, скорость px/с) по соседним кадрам
-        prev, last_seq = self.source.latest(), None
+        prev = self.source.latest()
         t_prev = time.monotonic()
         while time.monotonic() - t_cmd < 2.2:
             fr = self.source.latest()
@@ -133,7 +133,7 @@ class CalibrationRunner:
         t63 = next((t for t, v in sm if v >= 0.63 * steady), None)
         dead = default_calibration().dead_time
         latency = min(1.5, max(0.0, (t_first - t_cmd) - dead))
-        tau = 0.37 if t63 is None else min(1.0, max(0.1, t63 - t_first))
+        tau = default_calibration().tau if t63 is None else min(1.0, max(0.1, t63 - t_first))
         return latency, tau
 
     def _zoom_rates(self) -> list[tuple[int, float]]:

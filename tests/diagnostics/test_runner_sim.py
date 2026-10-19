@@ -10,6 +10,8 @@ from ptztracker.sim.http_server import SimHttpServer
 from ptztracker.sim.ptz_model import SimPtz
 from ptztracker.sim.scene import SyntheticStage
 
+pytestmark = pytest.mark.slow  # реальное время на симуляторе
+
 
 @pytest.fixture
 def sim_env():

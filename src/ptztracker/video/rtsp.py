@@ -14,7 +14,7 @@ from urllib.parse import quote, unquote, urlsplit
 
 import av
 
-from ptztracker.video.frames import Frame, FpsMeter, SourceStats
+from ptztracker.video.frames import FpsMeter, Frame, SourceStats
 
 log = logging.getLogger(__name__)
 

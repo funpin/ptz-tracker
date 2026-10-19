@@ -19,20 +19,18 @@ import httpx
 
 from ptztracker.camera import protocol as P
 from ptztracker.camera.client import AuthRequired, CameraClient, CameraUnreachable
-from ptztracker.diagnostics.motion import estimate_scale, measure_shift, wait_for_motion
+from ptztracker.diagnostics.motion import estimate_scale, wait_for_motion
 from ptztracker.diagnostics.notify import NotificationListener
+from ptztracker.diagnostics.probe import Pacer, probe_run
 from ptztracker.video.frames import FrameSource
 from ptztracker.video.rtsp import RtspSource, rtsp_candidates, stream_url, with_credentials
 
 log = logging.getLogger(__name__)
 
 Status = Literal["ok", "warn", "fail", "skip"]
-PACE_S = 0.15  # пауза между командами во время диагностики (с запасом к 130 мс)
 RTSP_WAIT_S = 4.0
 FPS_WINDOW_S = 1.5
 SPEED_CODES = (55, 60, 70, 80)
-SPEED_MAX_S = 1.5
-SPEED_MAX_FRACTION = 0.25
 INTERVALS = (0.05, 0.08, 0.10, 0.13)
 MAX_OPEN_STREAMS = 3  # сколько разных работающих потоков держать открытыми для замера задержки
 LATENCY_TRIES = 3
@@ -62,27 +60,6 @@ class DiagContext:
     notify_port: int = 31004
     notify_wait_s: float = 15.0
     source_factory: Callable[[str], FrameSource] | None = None
-
-
-class Pacer:
-    """Отправка команд не чаще PACE_S."""
-
-    def __init__(self, client: CameraClient, gap: float = PACE_S):
-        self.client, self.gap, self._last = client, gap, 0.0
-
-    def send(self, cmd: str) -> str:
-        wait = self._last + self.gap - time.monotonic()
-        if wait > 0:
-            time.sleep(wait)
-        self._last = time.monotonic()
-        return self.client.send(cmd)
-
-    def try_send(self, cmd: str) -> str | None:
-        try:
-            return self.send(cmd)
-        except Exception as e:
-            log.warning("%s: %s", cmd, e)
-            return None
 
 
 def mask(text: str, ctx: DiagContext) -> str:
@@ -369,70 +346,6 @@ def check_command_latency(ctx: DiagContext, st: dict) -> CheckResult:
     )
 
 
-def _probe_run(
-    pacer: Pacer,
-    src: FrameSource,
-    code: int,
-    max_s: float = SPEED_MAX_S,
-    max_fraction: float = SPEED_MAX_FRACTION,
-) -> dict:
-    """Повернуть с кодом code до 25% ширины кадра или 1.5 с; вернуть скорость в px/с, разгон и торможение."""
-    first = src.latest()
-    width = first.image.shape[1]
-    prev, last_seq = first, first.seq
-    cum = 0.0
-    samples = [(0.0, 0.0)]
-    t_cmd = time.monotonic()
-    pacer.send(P.pan_tilt_speed(code, 50))
-    while time.monotonic() - t_cmd < max_s and abs(cum) < max_fraction * width:
-        fr = src.latest()
-        if fr is not None and fr.seq != last_seq:
-            dx, _ = measure_shift(prev.image, fr.image)
-            cum += dx
-            samples.append((time.monotonic() - t_cmd, cum))
-            prev, last_seq = fr, fr.seq
-        time.sleep(0.005)
-    t_stop = time.monotonic()
-    pacer.send(P.STOP_PT)
-    decel_s = None
-    quiet_since = None
-    while time.monotonic() - t_stop < 2.0:
-        fr = src.latest()
-        if fr is not None and fr.seq != last_seq:
-            dx, _ = measure_shift(prev.image, fr.image)
-            prev, last_seq = fr, fr.seq
-            if abs(dx) < 0.5:
-                quiet_since = quiet_since or time.monotonic()
-                if time.monotonic() - quiet_since > 0.2:
-                    decel_s = round(quiet_since - t_stop, 3)
-                    break
-            else:
-                quiet_since = None
-        time.sleep(0.005)
-    # скорость — по второй половине разгона (установившийся участок)
-    tail = samples[len(samples) // 2 :]
-    if len(tail) >= 2 and tail[-1][0] > tail[0][0]:
-        v = (tail[-1][1] - tail[0][1]) / (tail[-1][0] - tail[0][0])
-    else:
-        v = 0.0
-    accel_s = None
-    if v:
-        for i in range(1, len(samples)):
-            t0, c0 = samples[i - 1]
-            t1, c1 = samples[i]
-            if t1 > t0 and abs((c1 - c0) / (t1 - t0)) >= 0.9 * abs(v):
-                accel_s = round(t1, 3)
-                break
-    return {
-        "code": code,
-        "px_per_s": round(-v, 1),  # поворот вправо сдвигает картинку влево
-        "frame_width": width,
-        "accel_s": accel_s,
-        "decel_s": decel_s,
-        "moved_px": round(-cum, 1),
-    }
-
-
 def check_speed_probe(ctx: DiagContext, st: dict) -> CheckResult:
     title = "Скорости поворота"
     if r := _need_motion(ctx, st, "speed_probe", title):
@@ -444,7 +357,7 @@ def check_speed_probe(ctx: DiagContext, st: dict) -> CheckResult:
         for code in SPEED_CODES:
             for c in (code, 100 - code):
                 ctx.progress(f"Скорость: код {c:02d}…")
-                runs.append(_probe_run(pacer, src, c))
+                runs.append(probe_run(pacer, src, c))
                 time.sleep(0.5)
     finally:
         _stop_all(pacer)

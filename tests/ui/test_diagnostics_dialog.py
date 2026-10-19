@@ -1,8 +1,12 @@
 from pathlib import Path
 
+import pytest
+
 from ptztracker.sim.http_server import SimHttpServer
 from ptztracker.sim.ptz_model import SimPtz
 from ptztracker.ui.diagnostics_dialog import DiagnosticsDialog
+
+pytestmark = pytest.mark.slow  # реальное время на симуляторе
 
 
 def test_dialog_runs_and_shows_path(qtbot, tmp_path, monkeypatch):

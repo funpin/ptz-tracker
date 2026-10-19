@@ -9,7 +9,7 @@ from collections import deque
 
 from ptztracker.sim.ptz_model import SimPtz
 from ptztracker.sim.scene import view_matrix
-from ptztracker.video.frames import Frame, FpsMeter, SourceStats
+from ptztracker.video.frames import FpsMeter, Frame, SourceStats
 
 
 class SimFrameSource:

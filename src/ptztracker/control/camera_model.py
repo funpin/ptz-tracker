@@ -10,6 +10,8 @@ import bisect
 import math
 from dataclasses import dataclass, field
 
+from ptztracker.camera import he42
+
 MOVING_THRESHOLD = 0.005  # быстрее этого (fw/s или ln/s) — код «реально двигает»
 
 
@@ -98,7 +100,7 @@ class CameraDynamics:
 
     KEEP_S = 10.0
 
-    def __init__(self, dead_time: float = 0.08, tau: float = 0.37):
+    def __init__(self, dead_time: float = he42.DEAD_TIME_S, tau: float = he42.RAMP_TAU_S):
         self.dead_time = dead_time
         self.tau = tau
         self._base = (-1e9, 0.0, 0.0, 0.0)  # (t, x, v, цель) — свёрнутая история
@@ -152,9 +154,9 @@ class CameraDynamics:
 class Calibration:
     pan: SpeedTable
     zoom: ZoomTable
-    dead_time: float = 0.08
-    tau: float = 0.37
-    video_latency: dict[str, float] = field(default_factory=lambda: {"mjpeg": 0.12, "h264": 0.6, "sim": 0.15})
+    dead_time: float = he42.DEAD_TIME_S
+    tau: float = he42.RAMP_TAU_S
+    video_latency: dict[str, float] = field(default_factory=lambda: dict(he42.VIDEO_LATENCY_S))
     created: str | None = None
 
     def to_json(self) -> dict:
@@ -172,18 +174,12 @@ class Calibration:
         return cls(
             pan=SpeedTable.from_json(d["pan"]),
             zoom=ZoomTable([tuple(p) for p in d["zoom"]]),
-            dead_time=float(d.get("dead_time", 0.08)),
-            tau=float(d.get("tau", 0.37)),
+            dead_time=float(d.get("dead_time", he42.DEAD_TIME_S)),
+            tau=float(d.get("tau", he42.RAMP_TAU_S)),
             video_latency={k: float(v) for k, v in (d.get("video_latency") or {}).items()}
-            or {"mjpeg": 0.12, "h264": 0.6, "sim": 0.15},
+            or dict(he42.VIDEO_LATENCY_S),
             created=d.get("created"),
         )
-
-
-# Замеры живой AW-HE42 (16:11 и 17:23, 2026-10-19) при зуме 0x73F, fw/s; промежуточные точки — по форме кривой.
-_PAN_HE42 = [(53, 0.0), (55, 0.0015), (58, 0.012), (60, 0.034), (62, 0.07), (65, 0.15),
-             (68, 0.26), (70, 0.33), (75, 0.42), (80, 0.50), (90, 0.75), (99, 1.2)]
-_ZOOM_HE42 = [(55, 0.02), (60, 0.05), (65, 0.1), (75, 0.27), (85, 0.5), (99, 0.8)]
 
 
 def default_calibration(safety: float = 1.0) -> Calibration:
@@ -192,5 +188,5 @@ def default_calibration(safety: float = 1.0) -> Calibration:
     safety > 1 — считать камеру быстрее замеров: ошибиться в «медленную» сторону безопасно
     (регулятор устойчив до ρ≈0.5), а в «быструю» — раскачка (устойчив до ρ≈1.7).
     """
-    pan = [(c, v * safety) for c, v in _PAN_HE42]
-    return Calibration(pan=SpeedTable({0x73F: pan}), zoom=ZoomTable(list(_ZOOM_HE42)))
+    pan = [(c, v * safety) for c, v in he42.PAN_FW_S.items()]
+    return Calibration(pan=SpeedTable({he42.MEASURED_AT_ZOOM: pan}), zoom=ZoomTable(list(he42.ZOOM_LN_S.items())))

@@ -5,7 +5,6 @@ from ptztracker.control.camera_model import (
     Calibration,
     CameraDynamics,
     SpeedTable,
-    ZoomTable,
     default_calibration,
 )
 

@@ -11,6 +11,7 @@ def test_cli_requires_ip(capsys):
     assert main(["--diagnose"]) == 2
 
 
+@pytest.mark.slow
 def test_cli_against_sim(tmp_path, monkeypatch):
     monkeypatch.setattr(builtins, "input", lambda *a: "д")
     monkeypatch.setattr("ptztracker.diagnostics.checks.RTSP_WAIT_S", 1.5)
