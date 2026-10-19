@@ -7,6 +7,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
+    QCheckBox,
     QComboBox,
     QGroupBox,
     QHBoxLayout,
@@ -71,10 +72,23 @@ class MainWindow(QMainWindow):
         cl.addLayout(srow)
         self.controls = ManualControls()
 
+        target_box = QGroupBox("Цель")
+        tl = QVBoxLayout(target_box)
+        self.target_label = QLabel("Цель: не выбрана — кликните по человеку на видео")
+        self.target_label.setWordWrap(True)
+        self.reset_target_btn = QPushButton("Сбросить цель")
+        self.skeleton_check = QCheckBox("Показывать скелет")
+        trow = QHBoxLayout()
+        trow.addWidget(self.reset_target_btn)
+        trow.addWidget(self.skeleton_check)
+        tl.addWidget(self.target_label)
+        tl.addLayout(trow)
+
         side = QWidget()
         side.setFixedWidth(340)
         sl = QVBoxLayout(side)
         sl.setContentsMargins(0, 0, 0, 0)
+        sl.addWidget(target_box)
         sl.addWidget(cam_box)
         sl.addWidget(self.controls)
         sl.addStretch(1)
@@ -87,8 +101,10 @@ class MainWindow(QMainWindow):
 
         self.link_label = QLabel()
         self.video_label = QLabel()
+        self.analysis_label = QLabel()
         self.statusBar().addWidget(self.link_label)
-        self.statusBar().addWidget(self.video_label, 1)
+        self.statusBar().addWidget(self.video_label)
+        self.statusBar().addWidget(self.analysis_label, 1)
         self.statusBar().addPermanentWidget(QLabel("Esc — стоп · стрелки — поворот · +/− — зум"))
 
         self.service_menu = self.menuBar().addMenu("Сервис")
@@ -101,6 +117,9 @@ class MainWindow(QMainWindow):
         self.del_btn.clicked.connect(self._delete_camera)
         self.camera_combo.currentIndexChanged.connect(self._on_combo)
         self.stream_combo.currentIndexChanged.connect(self._on_stream_changed)
+        self.reset_target_btn.clicked.connect(self._reset_target)
+        self.skeleton_check.toggled.connect(self._on_skeleton)
+        self.preview.targetClicked.connect(lambda _id: self._update_status())
 
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._update_status)
@@ -138,6 +157,7 @@ class MainWindow(QMainWindow):
             self.session.stop()
             self.session = None
         self.preview.set_source(None)
+        self.preview.set_analyzer(None)
         self.controls.bind(None)
         self.edit_btn.setEnabled(cam is not None and cam.kind != "sim")
         self.del_btn.setEnabled(cam is not None and cam.kind != "sim")
@@ -150,10 +170,20 @@ class MainWindow(QMainWindow):
         self.session = CameraSession(cam, scene_path=self.cfg.sim_scene_path)
         self.session.start()
         self.preview.set_source(self.session.frames)
+        self.preview.set_analyzer(self.session.analyzer)
         self.controls.bind(self.session)
         if cam.kind != "sim":
             self.cfg.last_camera_id = cam.id
             self._save()
+
+    def _reset_target(self) -> None:
+        if self.session and self.session.analyzer:
+            self.session.analyzer.clear_target()
+        self._update_status()
+
+    def _on_skeleton(self, on: bool) -> None:
+        self.preview.show_skeleton = on
+        self.preview.update()
 
     def _on_stream_changed(self, *_):
         cam = self._current_cfg()
@@ -231,6 +261,28 @@ class MainWindow(QMainWindow):
             self.video_label.setText(f"видео {st.width}×{st.height}, {st.fps:.0f} к/с")
         else:
             self.video_label.setText(st.error or "нет видео")
+        self._update_analysis_status(s)
+
+    def _update_analysis_status(self, s: CameraSession) -> None:
+        a = s.analyzer
+        r = a.latest() if a else None
+        if a is None:
+            self.analysis_label.setText("")
+        elif a.error:
+            self.analysis_label.setText(f"Распознавание недоступно: {a.error}")
+        elif r is None:
+            self.analysis_label.setText("анализ: загрузка модели…")
+        else:
+            self.analysis_label.setText(f"анализ {r.fps:.0f} к/с · {r.infer_ms:.0f} мс · {r.device}")
+        if r is None or r.target_id is None:
+            self.target_label.setText("Цель: не выбрана — кликните по человеку на видео")
+            self.target_label.setStyleSheet("")
+        elif r.target_state == "tracking":
+            self.target_label.setText(f"Цель: №{r.target_id} — веду")
+            self.target_label.setStyleSheet("color: #60a5fa; font-weight: bold;")
+        else:
+            self.target_label.setText(f"Цель: №{r.target_id} — потеряна")
+            self.target_label.setStyleSheet("color: #f59e0b; font-weight: bold;")
 
     def _remember_rtsp_url(self, s: CameraSession) -> None:
         """Сохранить подобранный адрес видео (без пароля), чтобы в следующий раз открывался сразу."""
