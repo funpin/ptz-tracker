@@ -45,6 +45,7 @@ class PreviewWidget(QWidget):
         self.setMouseTracking(True)
         self._source: FrameSource | None = None
         self._analyzer = None
+        self._follower = None
         self._image: QImage | None = None
         self._seq = -1
         self._an_seq = None
@@ -66,6 +67,20 @@ class PreviewWidget(QWidget):
         self._an_seq = None
         self.update()
 
+    def set_follow(self, follower) -> None:
+        self._follower = follower
+        self.update()
+
+    def follow_zones(self):
+        """(центр x, центр y, мёртвая зона, мягкая зона) в долях кадра — или None, если слежение выключено."""
+        f = self._follower
+        if f is None or not f.enabled or f.output is None:
+            return None
+        c = f.controller
+        e = c.effort
+        ax, ay = c.composition.anchor
+        return (ax + c.x.lead, ay, (e.dead_x, e.dead_y), (e.soft_x, e.soft_y))
+
     def has_frame(self) -> bool:
         return self._image is not None
 
@@ -86,7 +101,7 @@ class PreviewWidget(QWidget):
             self._seq = fr.seq
             changed = True
         r = self._result()
-        key = None if r is None else (r.seq, r.target_id, r.target_state)
+        key = None if r is None else (r.seq, r.target_id, r.target_state, self.follow_zones() is not None)
         if key != self._an_seq:
             self._an_seq = key
             changed = True
@@ -171,7 +186,25 @@ class PreviewWidget(QWidget):
             text = "Камера не выбрана"
         p.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, text)
 
+    def _paint_zones(self, p: QPainter) -> None:
+        z = self.follow_zones()
+        if z is None:
+            return
+        cx, cy, dead, soft = z
+        rect = self._image_rect()
+        for (hw, hh), color in ((soft, QColor(245, 158, 11, 200)), (dead, QColor(34, 197, 94, 220))):
+            pen = QPen(color, 1.5)
+            pen.setStyle(Qt.DashLine)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(QRectF(rect.x() + (cx - hw) * rect.width(), rect.y() + (cy - hh) * rect.height(),
+                              2 * hw * rect.width(), 2 * hh * rect.height()))
+        p.setBrush(QColor(34, 197, 94))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(QPointF(rect.x() + cx * rect.width(), rect.y() + cy * rect.height()), 3, 3)
+
     def _paint_overlay(self, p: QPainter) -> None:
+        self._paint_zones(p)
         r = self._result()
         if r is None:
             return

@@ -16,13 +16,17 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import AppConfig, CameraConfig, ConfigStore, get_password, set_password
+from ptztracker.control.composition import COMPOSITIONS
+from ptztracker.control.effort import EffortProfile
 from ptztracker.ui.camera_dialog import CameraDialog
+from ptztracker.ui.follow_panel import FollowPanel
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.preview import PreviewWidget
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
@@ -72,6 +76,7 @@ class MainWindow(QMainWindow):
         cl.addLayout(srow)
         self.controls = ManualControls()
 
+        self.follow_panel = FollowPanel()
         target_box = QGroupBox("Цель")
         tl = QVBoxLayout(target_box)
         self.target_label = QLabel("Цель: не выбрана — кликните по человеку на видео")
@@ -85,18 +90,27 @@ class MainWindow(QMainWindow):
         tl.addLayout(trow)
 
         side = QWidget()
-        side.setFixedWidth(340)
         sl = QVBoxLayout(side)
         sl.setContentsMargins(0, 0, 0, 0)
+        sl.addWidget(self.follow_panel)
         sl.addWidget(target_box)
         sl.addWidget(cam_box)
         sl.addWidget(self.controls)
         sl.addStretch(1)
 
+        # боковая панель прокручивается — окно помещается и на небольших экранах
+        side_scroll = QScrollArea()
+        side_scroll.setWidget(side)
+        side_scroll.setWidgetResizable(True)
+        side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        side_scroll.setFrameShape(QScrollArea.NoFrame)
+        side_scroll.setFixedWidth(362)
+        side.setFixedWidth(345)
+
         central = QWidget()
         hl = QHBoxLayout(central)
         hl.addWidget(self.preview, 1)
-        hl.addWidget(side)
+        hl.addWidget(side_scroll)
         self.setCentralWidget(central)
 
         self.link_label = QLabel()
@@ -123,6 +137,13 @@ class MainWindow(QMainWindow):
         self.reset_target_btn.clicked.connect(self._reset_target)
         self.skeleton_check.toggled.connect(self._on_skeleton)
         self.preview.targetClicked.connect(lambda _id: self._update_status())
+        self.follow_panel.followRequested.connect(self._on_follow_requested)
+        self.follow_panel.compositionChanged.connect(self._on_composition)
+        self.follow_panel.effortChanged.connect(self._on_effort)
+        self._follow_timer = QTimer(self)
+        self._follow_timer.timeout.connect(self._sync_follow)
+        self._follow_timer.start(100)
+        self._follow_shown = (False, None)
 
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._update_status)
@@ -161,6 +182,7 @@ class MainWindow(QMainWindow):
             self.session = None
         self.preview.set_source(None)
         self.preview.set_analyzer(None)
+        self.preview.set_follow(None)
         self.controls.bind(None)
         self.edit_btn.setEnabled(cam is not None and cam.kind != "sim")
         self.del_btn.setEnabled(cam is not None and cam.kind != "sim")
@@ -174,10 +196,67 @@ class MainWindow(QMainWindow):
         self.session.start()
         self.preview.set_source(self.session.frames)
         self.preview.set_analyzer(self.session.analyzer)
+        self.preview.set_follow(self.session.follower)
+        self.follow_panel.set_composition(cam.composition)
+        self.follow_panel.set_effort(cam.effort)
+        self.follow_panel.set_calibrated(cam.calibration is not None)
+        self.follow_panel.set_state(False, None)
+        self._follow_shown = (False, None)
         self.controls.bind(self.session)
         if cam.kind != "sim":
             self.cfg.last_camera_id = cam.id
             self._save()
+
+    # --- слежение -----------------------------------------------------
+
+    def _follower(self):
+        return self.session.follower if self.session else None
+
+    def _on_follow_requested(self, want: bool) -> None:
+        f = self._follower()
+        if f is None:
+            self.follow_panel.set_state(False, "распознавание недоступно")
+            return
+        if want:
+            if not f.enable():
+                self.follow_panel.set_state(False, None)
+                self.follow_panel.show_hint("Сначала кликните по человеку на видео.")
+        else:
+            f.disable("выключено оператором")
+        self._sync_follow()
+
+    def toggle_follow(self) -> None:
+        f = self._follower()
+        self._on_follow_requested(not (f and f.enabled))
+
+    def _sync_follow(self) -> None:
+        """Состояние слежения меняется и из других потоков (ручное управление, сбой анализа) — показать."""
+        f = self._follower()
+        state = (bool(f and f.enabled), f.last_reason if f else None)
+        if state != self._follow_shown:
+            self._follow_shown = state
+            self.follow_panel.set_state(*state)
+
+    def _on_composition(self, key: str) -> None:
+        cam = self._current_cfg()
+        self.follow_panel.set_composition(key)
+        if cam is None:
+            return
+        cam.composition = key
+        if cam.kind != "sim":
+            self._save()
+        if f := self._follower():
+            f.set_composition(COMPOSITIONS[key])
+
+    def _on_effort(self, x: float) -> None:
+        cam = self._current_cfg()
+        if cam is None:
+            return
+        cam.effort = x
+        if cam.kind != "sim":
+            self._save()
+        if f := self._follower():
+            f.set_effort(EffortProfile.at(x))
 
     def _reset_target(self) -> None:
         if self.session and self.session.analyzer:
@@ -335,6 +414,15 @@ class MainWindow(QMainWindow):
             if isinstance(focus, (QLineEdit, QAbstractSpinBox)):
                 return False
             key = event.key()
+            if key == Qt.Key_Space:
+                if et == QEvent.KeyPress and not event.isAutoRepeat():
+                    self.toggle_follow()
+                return True
+            comp_keys = {Qt.Key_1 + i: k for i, k in enumerate(COMPOSITIONS)}
+            if key in comp_keys:
+                if et == QEvent.KeyPress and not event.isAutoRepeat():
+                    self._on_composition(comp_keys[key])
+                return True
             if key == Qt.Key_Escape and et == QEvent.KeyPress:
                 self.release_all_held()
                 if self.session:
@@ -375,6 +463,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, e):  # noqa: N802
         QApplication.instance().removeEventFilter(self)
         self._status_timer.stop()
+        self._follow_timer.stop()
         self.release_all_held()
         if self.session:
             self.session.stop()
