@@ -111,3 +111,18 @@ def test_no_people_no_crash():
     tr = PersonTracker()
     img, _ = scene()
     assert tr.update([], 0.0, img) == [] and tr.target_state == "none"
+
+
+def test_velocity_spike_does_not_lose_target_after_occlusion():
+    # Final review I2: два кадра почти в одно время (пачка RTSP) + дрожание рамки → не улетать прогнозом
+    tr = PersonTracker()
+    a = step(tr, 0.0, (500, 200, RED))[0]
+    tr.select(a.id)
+    step(tr, 0.002, (508, 200, RED))  # 8 px за 2 мс
+    t = 0.002
+    for _ in range(15):  # ~1 с перекрытия
+        t += DT
+        step(tr, t)
+    t += DT
+    back = step(tr, t, (505, 200, RED, 120, 300, 0.20))  # слабая детекция на том же месте
+    assert [x.id for x in back] == [a.id] and tr.target_state == "tracking"

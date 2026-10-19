@@ -20,6 +20,9 @@ from ptztracker.vision.types import KP_L_HIP, KP_L_SHOULDER, KP_R_HIP, KP_R_SHOU
 KP_MIN_CONF = 0.3
 ISOLATION_IOU = 0.1
 VELOCITY_ALPHA = 0.5
+MIN_VELOCITY_DT = 1 / 30  # кадры из RTSP приходят пачками — не делить сдвиг на миллисекунды
+MAX_SPEED_PX_S = 1500.0
+MAX_EXTRAPOLATION_S = 0.3  # дальше прогноз не тянем: человек за кафедрой обычно стоит на месте
 
 
 def _iou(a, b) -> float:
@@ -34,36 +37,63 @@ def _area(b) -> float:
     return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
 
 
-def torso_histogram(image: np.ndarray, p: Person) -> np.ndarray | None:
-    """HSV-гистограмма (H16×S8) торса — «цвет одежды» человека. None, если торс слишком мал."""
-    h, w = image.shape[:2]
+def _torso_mask(p: Person, w: int, h: int) -> tuple[int, int, np.ndarray] | None:
+    """Маска торса только в пределах его прямоугольника: (x0, y0, маска). None — торс слишком мал."""
     kp = p.keypoints
-    mask = np.zeros((h, w), np.uint8)
     ls, rs = kp[KP_L_SHOULDER], kp[KP_R_SHOULDER]
     lh, rh = kp[KP_L_HIP], kp[KP_R_HIP]
+    poly = None
     if ls[2] >= KP_MIN_CONF and rs[2] >= KP_MIN_CONF:
         if lh[2] >= KP_MIN_CONF and rh[2] >= KP_MIN_CONF:
-            pts = np.array([ls[:2], rs[:2], rh[:2], lh[:2]], np.float32)
-            cv2.fillConvexPoly(mask, cv2.convexHull(pts).astype(np.int32), 255)
+            poly = np.array([ls[:2], rs[:2], rh[:2], lh[:2]], np.float32)
+            x0, y0 = poly[:, 0].min(), poly[:, 1].min()
+            x1, y1 = poly[:, 0].max(), poly[:, 1].max()
         else:  # крупный план: бёдер не видно — от плеч вниз на 1,2 ширины плеч
             sw = abs(ls[0] - rs[0])
             x0, x1 = min(ls[0], rs[0]), max(ls[0], rs[0])
             y0 = (ls[1] + rs[1]) / 2
             y1 = min(y0 + 1.2 * sw, p.box[3])
-            mask[int(max(0, y0)) : int(max(0, y1)), int(max(0, x0)) : int(max(0, x1))] = 255
     else:
         bx1, by1, bx2, by2 = p.box
         bw, bh = bx2 - bx1, by2 - by1
         x0, x1 = bx1 + bw / 3, bx1 + 2 * bw / 3
         y0, y1 = by1 + 0.2 * bh, by1 + 0.55 * bh
-        mask[int(max(0, y0)) : int(max(0, y1)), int(max(0, x0)) : int(max(0, x1))] = 255
-    ys, xs = np.nonzero(mask)
-    if len(xs) == 0 or xs.max() - xs.min() < 8 or ys.max() - ys.min() < 8:
+    ix0, iy0 = int(max(0, x0)), int(max(0, y0))
+    ix1, iy1 = int(min(w, x1)), int(min(h, y1))
+    if ix1 - ix0 < 8 or iy1 - iy0 < 8:
         return None
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    mask = np.full((iy1 - iy0, ix1 - ix0), 255, np.uint8)
+    if poly is not None:
+        mask[:] = 0
+        shifted = (poly - np.array([ix0, iy0], np.float32)).astype(np.int32)
+        cv2.fillConvexPoly(mask, cv2.convexHull(shifted), 255)
+        if cv2.countNonZero(mask) < 64:
+            return None
+    return ix0, iy0, mask
+
+
+def torso_histogram(image: np.ndarray, p: Person) -> np.ndarray | None:
+    """HSV-гистограмма (H16×S8) торса — «цвет одежды» человека. None, если торс слишком мал.
+
+    Считается только по прямоугольнику торса, без обработки всего кадра.
+    """
+    h, w = image.shape[:2]
+    region = _torso_mask(p, w, h)
+    if region is None:
+        return None
+    x0, y0, mask = region
+    roi = image[y0 : y0 + mask.shape[0], x0 : x0 + mask.shape[1]]
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     hist = cv2.calcHist([hsv], [0, 1], mask, [16, 8], [0, 180, 0, 256])
     cv2.normalize(hist, hist, 1.0, 0.0, cv2.NORM_L1)
     return hist.flatten().astype(np.float32)
+
+
+def compute_histograms(image: np.ndarray | None, people: list[Person]) -> list[np.ndarray | None]:
+    """Гистограммы всех найденных людей. Вызывается до блокировки трекера (это самая дорогая часть)."""
+    if image is None:
+        return [None] * len(people)
+    return [torso_histogram(image, p) for p in people]
 
 
 def appearance_distance(a: np.ndarray, b: np.ndarray) -> float:
@@ -85,7 +115,7 @@ class Track:
     created: float = 0.0
 
     def predicted_box(self, t: float) -> tuple[float, float, float, float]:
-        dt = max(0.0, t - self.last_seen)
+        dt = min(max(0.0, t - self.last_seen), MAX_EXTRAPOLATION_S)
         dx, dy = self.velocity[0] * dt, self.velocity[1] * dt
         x1, y1, x2, y2 = self.box
         return (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
@@ -163,9 +193,16 @@ class PersonTracker:
             return True
         return appearance_distance(self._target_app, hist) <= self.reid_max_distance
 
-    def update(self, people: list[Person], t: float, image: np.ndarray | None) -> list[Track]:
+    def update(
+        self,
+        people: list[Person],
+        t: float,
+        image: np.ndarray | None,
+        hists: list[np.ndarray | None] | None = None,
+    ) -> list[Track]:
         self._t = t
-        hists = [torso_histogram(image, p) if image is not None else None for p in people]
+        if hists is None:
+            hists = compute_histograms(image, people)
         tracks = list(self._tracks.values())
 
         pairs = []
@@ -215,9 +252,11 @@ class PersonTracker:
     def _apply(self, tr: Track, p: Person, hist: np.ndarray | None, t: float, isolated: bool) -> None:
         dt = t - tr.last_seen
         if dt > 0:
+            dt = max(dt, MIN_VELOCITY_DT)
             ocx, ocy = (tr.box[0] + tr.box[2]) / 2, (tr.box[1] + tr.box[3]) / 2
             ncx, ncy = (p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2
-            vx, vy = (ncx - ocx) / dt, (ncy - ocy) / dt
+            vx = max(-MAX_SPEED_PX_S, min(MAX_SPEED_PX_S, (ncx - ocx) / dt))
+            vy = max(-MAX_SPEED_PX_S, min(MAX_SPEED_PX_S, (ncy - ocy) / dt))
             a = VELOCITY_ALPHA
             tr.velocity = (a * vx + (1 - a) * tr.velocity[0], a * vy + (1 - a) * tr.velocity[1])
         tr.box, tr.score, tr.keypoints = p.box, p.score, p.keypoints

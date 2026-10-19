@@ -18,6 +18,7 @@ from ptztracker.vision.types import NUM_KP, Person
 log = logging.getLogger(__name__)
 
 INPUT_SIZE = 640
+CPU_THREADS = 3  # рядом работают vMix/OBS — не занимать все ядра
 PAD_VALUE = 114
 _PREFERRED = ("DmlExecutionProvider", "CPUExecutionProvider")
 _DEVICE_NAMES = {"DmlExecutionProvider": "DirectML", "CPUExecutionProvider": "CPU"}
@@ -82,19 +83,30 @@ class PoseDetector:
             raise RuntimeError(f"Не найден файл модели распознавания: {model_path}")
         wanted = providers or choose_providers(ort.get_available_providers())
         try:
-            self._session = ort.InferenceSession(str(model_path), providers=wanted)
+            self._session = self._open(ort, model_path, wanted)
         except Exception as e:
             if wanted == ["CPUExecutionProvider"]:
                 raise RuntimeError(f"Не удалось загрузить модель распознавания: {e}") from e
             log.warning("Видеокарта (%s) недоступна для распознавания: %s — перехожу на CPU", wanted, e)
             try:
-                self._session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+                self._session = self._open(ort, model_path, ["CPUExecutionProvider"])
             except Exception as e2:
                 raise RuntimeError(f"Не удалось загрузить модель распознавания: {e2}") from e2
         used = self._session.get_providers()[0]
         self.device = _DEVICE_NAMES.get(used, used)
         self._input = self._session.get_inputs()[0].name
         log.info("Модель распознавания загружена, устройство: %s", self.device)
+
+    @staticmethod
+    def _open(ort, model_path: Path, providers: list[str]):
+        """Создать сессию и сразу прогнать пустой кадр: сбои DirectML часто проявляются только при запуске."""
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = CPU_THREADS
+        opts.inter_op_num_threads = 1
+        opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        sess = ort.InferenceSession(str(model_path), sess_options=opts, providers=providers)
+        sess.run(None, {sess.get_inputs()[0].name: np.zeros((1, 3, INPUT_SIZE, INPUT_SIZE), np.float32)})
+        return sess
 
     def detect(self, frame: Frame) -> list[Person]:
         tensor, scale, pad = letterbox(frame.image)

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from ptztracker.video.frames import FpsMeter, FrameSource
-from ptztracker.vision.tracker import PersonTracker, Track
+from ptztracker.vision.tracker import PersonTracker, Track, compute_histograms
 from ptztracker.vision.types import Detector
 
 log = logging.getLogger(__name__)
@@ -35,6 +35,9 @@ class AnalysisResult:
 
 
 class Analyzer:
+    RECREATE_AFTER = 5  # столько сбоев подряд — пересоздать детектор (видеокарта «отвалилась»)
+    FAIL_PAUSE_S = 0.5
+
     def __init__(
         self,
         source: FrameSource,
@@ -104,6 +107,7 @@ class Analyzer:
             return
         period = 1.0 / self.max_fps
         last_seq = None
+        failures = 0
         while not self._stop.is_set():
             fr = self.source.latest()
             if fr is None or fr.seq == last_seq:
@@ -114,13 +118,25 @@ class Analyzer:
             try:
                 people = detector.detect(fr)
             except Exception as e:
-                log.exception("Ошибка распознавания")
+                failures += 1
+                if failures == 1:
+                    log.exception("Ошибка распознавания")
+                else:
+                    log.warning("Ошибка распознавания (%d подряд): %s", failures, e)
                 self.error = str(e)
-                self._stop.wait(0.5)
+                if failures % self.RECREATE_AFTER == 0:
+                    try:
+                        detector = self.detector_factory()
+                        log.info("Детектор пересоздан (%s)", detector.device)
+                    except Exception as e2:
+                        log.warning("Не удалось пересоздать детектор: %s", e2)
+                self._stop.wait(self.FAIL_PAUSE_S)
                 continue
+            failures = 0
             infer_ms = (time.monotonic() - t_start) * 1000
+            hists = compute_histograms(fr.image, people)  # дорого — вне блокировки, чтобы окно не ждало
             with self._lock:
-                seen = self.tracker.update(people, fr.t_capture, fr.image)
+                seen = self.tracker.update(people, fr.t_capture, fr.image, hists)
                 tracks = list(seen)
                 tgt = self.tracker.target
                 if tgt is not None and all(t.id != tgt.id for t in seen):

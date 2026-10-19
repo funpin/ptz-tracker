@@ -153,3 +153,68 @@ def test_target_lost_while_others_visible_keeps_running():
         assert any(t.id == r.target_id for t in r.tracks)  # последняя известная рамка цели доступна UI
     finally:
         a.stop()
+
+
+def test_lock_not_held_while_computing_appearance(monkeypatch):
+    # Final review I1: UI (latest()) не должен ждать, пока считаются гистограммы толпы
+    import ptztracker.vision.analyzer as an
+    from ptztracker.vision.types import Person
+
+    real = an.compute_histograms
+
+    def slow(image, people):
+        time.sleep(0.3)
+        return real(image, people)
+
+    monkeypatch.setattr(an, "compute_histograms", slow)
+
+    class One:
+        name, device = "один", "CPU"
+
+        def detect(self, frame):
+            return [Person(box=(100, 100, 200, 400), score=0.9, keypoints=np.zeros((17, 3), np.float32))]
+
+    a = Analyzer(FakeSource(np.zeros((720, 1280, 3), np.uint8)), One)
+    a.start()
+    try:
+        assert wait_until(lambda: a.latest() is not None, 3)
+        worst = 0.0
+        for _ in range(40):
+            t0 = time.monotonic()
+            a.latest()
+            worst = max(worst, time.monotonic() - t0)
+            time.sleep(0.01)
+        assert worst < 0.05
+    finally:
+        a.stop()
+
+
+def test_detector_failure_logged_once_and_recreated(caplog):
+    # Final review I3: не сыпать трейсбэками каждые 0.5 с; после серии сбоев пересоздать детектор
+    import logging
+
+    caplog.set_level(logging.WARNING)
+    made = {"n": 0}
+
+    class Flaky:
+        name, device = "flaky", "DirectML"
+
+        def __init__(self):
+            made["n"] += 1
+            self.gen = made["n"]
+
+        def detect(self, frame):
+            if self.gen == 1:
+                raise RuntimeError("887A0005 device removed")
+            return []
+
+    monkeypatch_fail = Analyzer(FakeSource(np.zeros((360, 640, 3), np.uint8)), Flaky)
+    monkeypatch_fail.RECREATE_AFTER = 3
+    monkeypatch_fail.FAIL_PAUSE_S = 0.05
+    monkeypatch_fail.start()
+    try:
+        assert wait_until(lambda: made["n"] >= 2 and monkeypatch_fail.latest() is not None, 3)
+        assert monkeypatch_fail.error is None
+        assert sum("Traceback" in (r.exc_text or "") or r.exc_info is not None for r in caplog.records) <= 1
+    finally:
+        monkeypatch_fail.stop()

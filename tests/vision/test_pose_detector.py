@@ -95,3 +95,52 @@ def test_falls_back_to_cpu_when_dml_fails(monkeypatch):
 def test_missing_model_clear_error(tmp_path):
     with pytest.raises(RuntimeError, match="модел"):
         PoseDetector(model_path=tmp_path / "nope.onnx")
+
+
+class _FakeSess:
+    def __init__(self, real, fail_run):
+        self.real, self.fail_run = real, fail_run
+
+    def run(self, *a, **k):
+        if self.fail_run:
+            raise RuntimeError("DirectML: device removed")
+        return self.real.run(*a, **k)
+
+    def get_inputs(self):
+        return self.real.get_inputs()
+
+    def get_providers(self):
+        return ["DmlExecutionProvider"] if self.fail_run else self.real.get_providers()
+
+
+def test_falls_back_to_cpu_when_dml_fails_on_first_run(monkeypatch):
+    # Final review I3: DirectML создался, но падает при первом распознавании
+    import onnxruntime as ort
+
+    real = ort.InferenceSession
+
+    def fake(path, sess_options=None, providers=None, **kw):
+        s = real(path, sess_options=sess_options, providers=["CPUExecutionProvider"])
+        return _FakeSess(s, fail_run=bool(providers and "DmlExecutionProvider" in providers))
+
+    monkeypatch.setattr(ort, "InferenceSession", fake)
+    d = PoseDetector(providers=["DmlExecutionProvider", "CPUExecutionProvider"])
+    assert d.device == "CPU"
+
+
+def test_cpu_session_limits_threads_and_spinning(monkeypatch):
+    # Final review I4: не занимать все ядра рядом с vMix/OBS
+    import onnxruntime as ort
+
+    real = ort.InferenceSession
+    seen = {}
+
+    def spy(path, sess_options=None, providers=None, **kw):
+        seen["opts"] = sess_options
+        return real(path, sess_options=sess_options, providers=providers)
+
+    monkeypatch.setattr(ort, "InferenceSession", spy)
+    PoseDetector(providers=["CPUExecutionProvider"])
+    o = seen["opts"]
+    assert o is not None and 1 <= o.intra_op_num_threads <= 3
+    assert o.get_session_config_entry("session.intra_op.allow_spinning") == "0"
