@@ -7,6 +7,7 @@ import time
 from collections import deque
 
 from ptztracker.sim.ptz_model import SimPtz
+from ptztracker.sim.scene import view_matrix
 from ptztracker.video.frames import Frame, FpsMeter, SourceStats
 
 
@@ -69,23 +70,33 @@ class SimFrameSource:
         )
 
     def render_now(self):
+        return self._render()[0]
+
+    def _render(self):
+        """Кадр и служебные данные (истинная разметка, если сцена её умеет)."""
         w, h = self.scene.size
         with self.sim._lock:
             pan, tilt, hfov = self.sim.pan_deg, self.sim.tilt_deg, self.sim.hfov_deg()
         cx = w / 2 + pan / self.pan_span_deg * w
         cy = h / 2 - tilt / self.tilt_span_deg * h
         crop_w = w * hfov / self.pan_span_deg
-        return self.scene.render(time.monotonic() - self._t0, cx, cy, crop_w, self.out_size)
+        t = time.monotonic() - self._t0
+        img = self.scene.render(t, cx, cy, crop_w, self.out_size)
+        meta = None
+        if hasattr(self.scene, "person_keypoints"):
+            m = view_matrix(cx, cy, crop_w, self.out_size)
+            meta = {"people": [self.scene.person_keypoints(t, m, self.out_size)]}
+        return img, meta
 
     def _run(self) -> None:
         period = 1.0 / self.fps
         next_t = time.monotonic()
         while not self._stop.is_set():
-            img = self.render_now()
+            img, meta = self._render()
             now = time.monotonic()
             with self._lock:
                 self._seq += 1
-                self._buf.append(Frame(img, now, self._seq))
+                self._buf.append(Frame(img, now, self._seq, meta))
                 self._meter.tick(now)
             next_t += period
             delay = next_t - time.monotonic()

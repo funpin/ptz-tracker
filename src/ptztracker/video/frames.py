@@ -11,6 +11,7 @@ class Frame:
     image: np.ndarray  # BGR uint8
     t_capture: float  # time.monotonic() момента получения кадра
     seq: int
+    meta: dict | None = None  # служебные данные источника (симулятор кладёт сюда точную разметку)
 
 
 @dataclass

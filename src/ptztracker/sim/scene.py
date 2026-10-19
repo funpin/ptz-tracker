@@ -24,6 +24,13 @@ def _build_pyramid(img: np.ndarray, levels: int = 4) -> list[np.ndarray]:
     return pyr
 
 
+def view_matrix(cx: float, cy: float, crop_w: float, out_size: tuple[int, int]) -> np.ndarray:
+    """Матрица 2×3 «координаты сцены → координаты кадра» для окна шириной crop_w с центром (cx, cy)."""
+    out_w, out_h = out_size
+    scale = out_w / crop_w
+    return np.array([[scale, 0, out_w / 2 - scale * cx], [0, scale, out_h / 2 - scale * cy]])
+
+
 def warp_view(
     pyramid: list[np.ndarray],
     cx: float,
@@ -49,8 +56,7 @@ def warp_view(
         dtype=np.float64,
     )
     img = cv2.warpAffine(src, m_level, (out_w, out_h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-    m_scene = np.array([[scale, 0, out_w / 2 - scale * cx], [0, scale, out_h / 2 - scale * cy]])
-    return img, m_scene
+    return img, view_matrix(cx, cy, crop_w, out_size)
 
 
 class SyntheticStage:
@@ -140,6 +146,33 @@ class SyntheticStage:
         img, m = warp_view(self._pyr, cx, cy, crop_w, out_size)
         self._draw_person(img, m, t)
         return img
+
+    def person_keypoints(self, t: float, m: np.ndarray, out_size: tuple[int, int]) -> np.ndarray:
+        """Истинные ключевые точки (COCO-17, x/y/conf) человека в координатах кадра.
+
+        Заполнены нос, плечи, бёдра, колени, щиколотки; точки вне кадра — conf 0.
+        Левые точки — левые для самого человека (он смотрит на камеру, т. е. справа в кадре).
+        """
+        px, hgt, foot = self.person_x(t), self._person_h, self.floor_y
+        swing = math.sin(t * 6.0) * hgt * 0.08 if self._walking(t) else 0.0
+        hip, sh = foot - hgt * 0.47, foot - hgt * 0.82
+        pts = {
+            0: (px, foot - hgt * 0.92),
+            5: (px + hgt * 0.11, sh),
+            6: (px - hgt * 0.11, sh),
+            11: (px + hgt * 0.05, hip),
+            12: (px - hgt * 0.05, hip),
+            13: (px + hgt * 0.055 - swing / 2, foot - hgt * 0.24),
+            14: (px - hgt * 0.055 + swing / 2, foot - hgt * 0.24),
+            15: (px + hgt * 0.06 - swing, foot),
+            16: (px - hgt * 0.06 + swing, foot),
+        }
+        kp = np.zeros((17, 3), np.float32)
+        w, h = out_size
+        for i, (x, y) in pts.items():
+            fx, fy = m[0, 0] * x + m[0, 2], m[1, 1] * y + m[1, 2]
+            kp[i] = (fx, fy, 1.0 if 0 <= fx < w and 0 <= fy < h else 0.0)
+        return kp
 
     def frame_at(self, t: float) -> np.ndarray:
         img = self._bg.copy()
