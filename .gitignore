@@ -14,7 +14,6 @@ dist/
 *.spec.bak
 
 # Models & media (large files)
-models/*.onnx
 media/
 
 # OS
