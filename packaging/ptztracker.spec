@@ -10,7 +10,10 @@ SRC = os.path.join(SPECPATH, "..", "src")
 EXCLUDES = ["tkinter", "matplotlib", "IPython", "PySide6.QtWebEngineCore", "PySide6.QtQuick", "PySide6.Qt3DCore"]
 
 datas, binaries, hiddenimports = [], [], []
-for pkg in ("av",):
+# модель распознавания людей (YOLO11n-pose, AGPL-3.0, внутреннее использование)
+datas += [(os.path.join(SRC, "ptztracker", "models", "yolo11n-pose.onnx"), "ptztracker/models")]
+# onnxruntime: на Windows ставится onnxruntime-directml, но модуль называется так же — "onnxruntime"
+for pkg in ("av", "onnxruntime"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b

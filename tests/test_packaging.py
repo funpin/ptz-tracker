@@ -27,3 +27,13 @@ def test_ci_workflow():
 def test_readme_has_diagnostics_section():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "Диагностика камеры на площадке" in text and "PTZTracker-diag.exe" in text
+
+
+def test_spec_bundles_model_and_onnxruntime():
+    text = (ROOT / "packaging" / "ptztracker.spec").read_text(encoding="utf-8")
+    assert "yolo11n-pose.onnx" in text and '"onnxruntime"' in text
+
+
+def test_readme_has_target_selection():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "Выбор человека" in text and "AGPL" in text
