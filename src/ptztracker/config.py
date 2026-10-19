@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 
 APP_NAME = "PTZTracker"
 STREAMS = ("auto", "h264_1", "h264_2", "mjpeg")
+COMPOSITION_KEYS = ("waist_center", "waist_left", "waist_right", "full", "wide")
 KEYRING_SERVICE = "PTZTracker"
 
 
@@ -36,6 +37,8 @@ class CameraConfig:
     min_interval: float = 0.130
     stream: str = "auto"  # "auto" | "h264_1" | "h264_2" | "mjpeg"
     calibration: dict | None = None  # результат мастера калибровки (control.camera_model.Calibration.to_json)
+    composition: str = "waist_center"  # control.composition.COMPOSITIONS
+    effort: float = 0.5  # 0 — мягко, 1 — резко
 
 
 @dataclass
@@ -96,6 +99,11 @@ def _camera_from(d) -> CameraConfig | None:
     if c.calibration is not None and not isinstance(c.calibration, dict):
         log.warning("Неправильная калибровка у камеры %s — сбрасываю", c.name)
         c.calibration = None
+    if c.composition not in COMPOSITION_KEYS:
+        c.composition = "waist_center"
+    if not isinstance(c.effort, (int, float)):
+        c.effort = 0.5
+    c.effort = min(1.0, max(0.0, float(c.effort)))
     if c.stream not in STREAMS:
         log.warning("Неизвестный поток %r у камеры %s — ставлю «Авто»", c.stream, c.name)
         c.stream = "auto"

@@ -32,6 +32,7 @@ class CameraSession:
         self.scene_path = scene_path
         self.analysis = analysis
         self.analyzer = None
+        self.follower = None
         self.sim = None
         self._server = None
         self.client: CameraClient | None = None
@@ -71,6 +72,7 @@ class CameraSession:
 
             self.analyzer = Analyzer(self.frames, self._detector_factory())
             self.analyzer.start()
+            self._start_follower()
         self._hb_stop.clear()
         self._hb_thread = threading.Thread(target=self._heartbeat, name="cam-heartbeat", daemon=True)
         self._hb_thread.start()
@@ -82,6 +84,8 @@ class CameraSession:
         таймаутах, дорабатывают в фоне (они daemon и сами завершатся).
         """
         self._hb_stop.set()
+        if self.follower:
+            self.follower.stop()
         if self.analyzer:
             self.analyzer.stop(timeout=0.2)  # поток daemon: если он в середине распознавания — доработает сам
         if self.scheduler:
@@ -93,6 +97,50 @@ class CameraSession:
             self.frames.stop(timeout=0.0)
         if self._server:
             self._server.stop()
+
+    def calibration(self):
+        from ptztracker.control.camera_model import Calibration, default_calibration
+
+        if self.cfg.calibration:
+            try:
+                return Calibration.from_json(self.cfg.calibration)
+            except Exception as e:  # повреждённая калибровка — работаем по средним значениям
+                log.warning("Калибровка камеры %s не читается (%s) — беру средние значения", self.cfg.name, e)
+        return default_calibration()
+
+    def stream_kind(self) -> str:
+        if self.cfg.kind == "sim":
+            return "sim"
+        url = getattr(self.frames, "url", "") or ""
+        return "mjpeg" if url.startswith("http") else "h264"
+
+    def _start_follower(self) -> None:
+        from ptztracker.control.composition import COMPOSITIONS, DEFAULT_COMPOSITION
+        from ptztracker.control.effort import EffortProfile
+        from ptztracker.control.follower import Follower
+
+        calib = self.calibration()
+
+        def latency() -> float:
+            return calib.video_latency.get(self.stream_kind(), 0.15)
+
+        def query_zoom():
+            return P.parse_zoom(self.scheduler.query(P.Q_ZOOM, timeout=1.0))
+
+        self.follower = Follower(
+            self.analyzer,
+            self.scheduler,
+            calib,
+            latency,
+            COMPOSITIONS.get(self.cfg.composition, COMPOSITIONS[DEFAULT_COMPOSITION]),
+            EffortProfile.at(self.cfg.effort),
+            query_zoom,
+        )
+
+    def _manual(self) -> None:
+        """Ручное действие оператора: слежение уступает немедленно."""
+        if self.follower and self.follower.enabled:
+            self.follower.disable("ручное управление")
 
     def _detector_factory(self):
         """Симулятор с синтетической сценой — точная разметка; иначе — нейросеть."""
@@ -128,9 +176,13 @@ class CameraSession:
         self.scheduler.submit(key, cmd, Priority.MANUAL, only_if_changed=only_if_changed, ttl=ttl)
 
     def set_pan_tilt_velocity(self, vx: float, vy: float) -> None:
+        if vx or vy:
+            self._manual()
         self._submit("pt", P.pan_tilt_speed(velocity_to_code(vx), velocity_to_code(vy)))
 
     def set_zoom_velocity(self, v: float) -> None:
+        if v:
+            self._manual()
         self._submit("zoom", P.zoom_speed(velocity_to_code(v)))
 
     def set_focus_auto(self, on: bool) -> None:
@@ -140,6 +192,8 @@ class CameraSession:
         self._submit("focus_push", P.focus_push_auto(), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
 
     def set_focus_velocity(self, v: float) -> None:
+        if v:
+            self._manual()
         self._submit("focus", P.focus_speed(velocity_to_code(v)))
 
     def set_iris_auto(self, on: bool) -> None:
@@ -150,10 +204,14 @@ class CameraSession:
         self._submit("iris", P.iris_abs(round(P.LENS_MIN + pos01 * (P.LENS_MAX - P.LENS_MIN))))
 
     def recall_preset(self, n: int) -> None:
+        self._manual()
         self._submit("preset", P.preset_recall(n), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
 
     def store_preset(self, n: int) -> None:
+        self._manual()
         self._submit("preset_store", P.preset_store(n), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
 
     def emergency_stop(self) -> None:
+        if self.follower and self.follower.enabled:
+            self.follower.disable("аварийный стоп")
         self.scheduler.emergency_stop()

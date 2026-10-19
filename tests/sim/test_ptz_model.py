@@ -126,14 +126,14 @@ def test_received_log_capped():
 
 
 def test_he42_speed_table_shape():
-    # таблица по замерам живой AW-HE42: 55 почти стоит, 70 ≈ 12°/с
+    # таблица по замерам живой AW-HE42: 55 почти стоит, 70 ≈ 0.33 кадра/с = 20.5°/с на широком угле
     s = SimPtz(speed_with_zoom=False)
     s.handle("#PTS7050")
     run(s, 3.0)
     s2 = SimPtz(speed_with_zoom=False)
     s2.handle("#PTS5550")
     run(s2, 3.0)
-    assert abs(s.pan_vel - 12) < 0.5 and abs(s2.pan_vel) < 0.1
+    assert abs(s.pan_vel - 0.33 * 62.1) < 0.5 and abs(s2.pan_vel) < 0.2
 
 
 def test_ramp_like_he42():
@@ -141,7 +141,7 @@ def test_ramp_like_he42():
     s = SimPtz(speed_with_zoom=False)
     s.handle("#PTS8050")
     t = 0.0
-    while s.pan_vel < 0.9 * 18.0 and t < 3:
+    while s.pan_vel < 0.9 * 0.50 * 62.1 and t < 3:
         s.update(0.01)
         t += 0.01
     assert 0.75 <= t <= 1.0
