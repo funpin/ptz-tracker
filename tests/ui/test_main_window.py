@@ -61,3 +61,14 @@ def test_sim_camera_not_persisted_and_last_camera_saved(qtbot, tmp_path):
     cfg = ConfigStore(tmp_path / "c.json").load()
     assert all(c.kind != "sim" for c in cfg.cameras)
     assert [c.ip for c in cfg.cameras] == ["10.0.0.12"]
+
+
+def test_found_rtsp_url_saved_without_password(qtbot, tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    w.session.found_rtsp_url = "rtsp://admin:secret@10.0.0.12/MediaInput/h264/stream_1"
+    w._update_status()
+    w.close()
+    cam = store.load().cameras[0]
+    assert cam.rtsp_url == "rtsp://10.0.0.12/MediaInput/h264/stream_1"

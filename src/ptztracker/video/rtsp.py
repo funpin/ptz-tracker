@@ -9,6 +9,7 @@ import logging
 import re
 import threading
 import time
+from typing import Callable
 from urllib.parse import quote, unquote, urlsplit
 
 import av
@@ -20,18 +21,29 @@ log = logging.getLogger(__name__)
 RECONNECT_DELAYS = (1.0, 2.0, 5.0)
 
 
+def with_credentials(url: str, username: str | None, password: str | None) -> str:
+    """Вставить логин/пароль в адрес потока (FFmpeg берёт их только из URL)."""
+    if not username:
+        return url
+    auth = quote(username, safe="") + ":" + quote(password or "", safe="") + "@"
+    return re.sub(r"^([a-z]+://)", lambda m: m.group(1) + auth, strip_credentials(url), count=1)
+
+
+def strip_credentials(url: str) -> str:
+    """Убрать логин/пароль из адреса (для сохранения в настройки)."""
+    return re.sub(r"^([a-z]+://)[^/@]*@", r"\1", url, count=1)
+
+
 def rtsp_candidates(host: str, username: str | None, password: str | None) -> list[str]:
-    """Известные варианты адресов потока Panasonic (⚠ точный проверяется диагностикой)."""
-    auth = ""
-    if username:
-        auth = quote(username, safe="") + ":" + quote(password or "", safe="") + "@"
-    return [
-        f"rtsp://{auth}{host}/MediaInput/h264",
-        f"rtsp://{auth}{host}/MediaInput/h264/stream_1",
-        f"rtsp://{auth}{host}:554/MediaInput/h264/stream_1",
-        f"rtsp://{auth}{host}/MediaInput/stream_1",
-        f"http://{auth}{host}/cgi-bin/mjpeg?resolution=640x360&framerate=30",
+    """Известные варианты адресов потока Panasonic. Рабочий подбирается перебором и запоминается."""
+    base = [
+        f"rtsp://{host}/MediaInput/h264",
+        f"rtsp://{host}/MediaInput/h264/stream_1",
+        f"rtsp://{host}:554/MediaInput/h264/stream_1",
+        f"rtsp://{host}/MediaInput/stream_1",
+        f"http://{host}/cgi-bin/mjpeg?resolution=640x360&framerate=30",
     ]
+    return [with_credentials(u, username, password) for u in base]
 
 
 def redact_url(url: str) -> str:
@@ -59,8 +71,19 @@ def _options(url: str) -> dict[str, str]:
 
 
 class RtspSource:
-    def __init__(self, url: str, open_timeout_s: float = 5.0):
-        self.url = url
+    """Приём потока. Если адресов несколько — пробует по очереди, пока один не заработает,
+    и дальше держится за него (сообщая о нём через on_found)."""
+
+    def __init__(
+        self,
+        urls: str | list[str],
+        open_timeout_s: float = 5.0,
+        on_found: Callable[[str], None] | None = None,
+    ):
+        self._urls = [urls] if isinstance(urls, str) else list(urls)
+        self._idx = 0
+        self._found = False
+        self.on_found = on_found
         self.open_timeout_s = open_timeout_s
         self._lock = threading.Lock()
         self._latest: Frame | None = None
@@ -71,6 +94,10 @@ class RtspSource:
         self._size = (0, 0)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+    @property
+    def url(self) -> str:
+        return self._urls[self._idx]
 
     def start(self) -> None:
         if self._thread:
@@ -109,11 +136,17 @@ class RtspSource:
                 attempt = 0  # поток закончился штатно (файл) — переоткрыть сразу
             except Exception as e:
                 msg = _redact_text(str(e), self.url)
+                where = f" (адрес {self._idx + 1} из {len(self._urls)})" if len(self._urls) > 1 else ""
                 with self._lock:
                     self._connected = False
                     self._latest = None
-                    self._error = f"Нет видео: {msg}"
+                    self._error = f"Нет видео{where}: {msg}"
                 log.info("Поток %s: %s", redact_url(self.url), msg)
+                if not self._found and len(self._urls) > 1:
+                    # рабочий адрес ещё не найден — сразу пробуем следующий, после полного круга — пауза
+                    self._idx = (self._idx + 1) % len(self._urls)
+                    if self._idx != 0:
+                        continue
                 delay = RECONNECT_DELAYS[min(attempt, len(RECONNECT_DELAYS) - 1)]
                 attempt += 1
                 self._stop.wait(delay)
@@ -132,6 +165,11 @@ class RtspSource:
                     return
                 img = vf.to_ndarray(format="bgr24")
                 now = time.monotonic()
+                if not self._found:
+                    self._found = True
+                    log.info("Видеопоток найден: %s", redact_url(self.url))
+                    if self.on_found:
+                        self.on_found(self.url)
                 with self._lock:
                     self._seq += 1
                     self._latest = Frame(img, now, self._seq)

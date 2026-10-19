@@ -24,6 +24,7 @@ from ptztracker.config import AppConfig, CameraConfig, ConfigStore, get_password
 from ptztracker.ui.camera_dialog import CameraDialog
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.preview import PreviewWidget
+from ptztracker.video.rtsp import strip_credentials
 
 log = logging.getLogger(__name__)
 
@@ -199,6 +200,7 @@ class MainWindow(QMainWindow):
             self.link_label.setText("Камера не выбрана")
             self.video_label.setText("")
             return
+        self._remember_rtsp_url(s)
         self.link_label.setText("● на связи" if s.online else "○ нет связи с камерой")
         self.link_label.setStyleSheet("color: #22c55e;" if s.online else "color: #ef4444;")
         st = s.frames.stats()
@@ -206,6 +208,19 @@ class MainWindow(QMainWindow):
             self.video_label.setText(f"видео {st.width}×{st.height}, {st.fps:.0f} к/с")
         else:
             self.video_label.setText(st.error or "нет видео")
+
+    def _remember_rtsp_url(self, s: CameraSession) -> None:
+        """Сохранить подобранный адрес видео (без пароля), чтобы в следующий раз открывался сразу."""
+        found = s.found_rtsp_url
+        if not found:
+            return
+        s.found_rtsp_url = None
+        url = strip_credentials(found)
+        cam = next((c for c in self.cfg.cameras if c.id == s.cfg.id), None)
+        if cam and cam.rtsp_url != url:
+            cam.rtsp_url = url
+            self._save()
+            self.statusBar().showMessage(f"Найден адрес видео: {url}", 8000)
 
     # --- горячие клавиши ---------------------------------------------
 

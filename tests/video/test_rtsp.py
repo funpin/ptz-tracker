@@ -72,3 +72,38 @@ def test_rtsp_password_not_shown_or_logged(caplog):
     assert st.error and "s3cret" not in st.error
     assert "s3cret" not in st.url
     assert "s3cret" not in caplog.text
+
+
+def test_rotates_to_next_candidate_and_reports_found(tmp_path):
+    # С камеры: первый адрес отвечает 5XX — программа должна сама найти рабочий
+    f = tmp_path / "ok.mp4"
+    _make_mp4(f)
+    found = []
+    src = RtspSource(["rtsp://127.0.0.1:9/bad", str(f)], open_timeout_s=0.5, on_found=found.append)
+    src.start()
+    try:
+        deadline = time.monotonic() + 6
+        while src.latest() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert src.latest() is not None
+        assert src.stats().url == str(f)
+        assert found == [str(f)]
+    finally:
+        src.stop()
+
+
+def test_error_mentions_which_address_is_tried():
+    src = RtspSource(["rtsp://127.0.0.1:9/a", "rtsp://127.0.0.1:9/b"], open_timeout_s=0.3)
+    src.start()
+    time.sleep(0.8)
+    st = src.stats()
+    src.stop()
+    assert "из 2" in st.error
+
+
+def test_credentials_helpers():
+    from ptztracker.video.rtsp import strip_credentials, with_credentials
+
+    assert with_credentials("rtsp://10.0.0.12/MediaInput/h264", "admin", "p@ss") == "rtsp://admin:p%40ss@10.0.0.12/MediaInput/h264"
+    assert with_credentials("rtsp://10.0.0.12/x", None, None) == "rtsp://10.0.0.12/x"
+    assert strip_credentials("rtsp://admin:p%40ss@10.0.0.12/x") == "rtsp://10.0.0.12/x"

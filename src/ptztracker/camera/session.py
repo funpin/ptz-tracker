@@ -15,7 +15,7 @@ from ptztracker.camera.scheduler import CommandScheduler, Priority
 from ptztracker.camera.speed import velocity_to_code
 from ptztracker.config import CameraConfig, get_password
 from ptztracker.video.frames import FrameSource
-from ptztracker.video.rtsp import RtspSource, rtsp_candidates
+from ptztracker.video.rtsp import RtspSource, rtsp_candidates, with_credentials
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ class CameraSession:
         self.client: CameraClient | None = None
         self.scheduler: CommandScheduler | None = None
         self.frames: FrameSource | None = None
+        self.found_rtsp_url: str | None = None  # заполняется, когда подобран рабочий адрес видео
         self._hb_stop = threading.Event()
         self._hb_thread: threading.Thread | None = None
 
@@ -56,8 +57,11 @@ class CameraSession:
         else:
             password = get_password(self.cfg.id) if self.cfg.username else None
             self.client = CameraClient(self.cfg.ip, self.cfg.username, password)
-            url = self.cfg.rtsp_url or rtsp_candidates(self.cfg.ip, self.cfg.username, password)[0]
-            self.frames = RtspSource(url)
+            # сначала сохранённый/указанный адрес, затем известные варианты
+            urls = rtsp_candidates(self.cfg.ip, self.cfg.username, password)
+            if self.cfg.rtsp_url:
+                urls.insert(0, with_credentials(self.cfg.rtsp_url, self.cfg.username, password))
+            self.frames = RtspSource(list(dict.fromkeys(urls)), on_found=self._on_rtsp_found)
         self.scheduler = CommandScheduler(self.client.send, min_interval=self.cfg.min_interval)
         self.scheduler.start()
         self.frames.start()
@@ -81,6 +85,9 @@ class CameraSession:
             self.frames.stop(timeout=0.0)
         if self._server:
             self._server.stop()
+
+    def _on_rtsp_found(self, url: str) -> None:
+        self.found_rtsp_url = url
 
     def _heartbeat(self) -> None:
         # Лёгкий запрос «камера включена?» раз в 2 с — чтобы статус связи был актуален без движения.
