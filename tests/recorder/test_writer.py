@@ -1,3 +1,4 @@
+import json
 import time
 import zipfile
 
@@ -66,7 +67,8 @@ def test_event_never_raises(tmp_path):
 
 def test_snapshot_does_not_block(tmp_path):
     bb = BlackBox(tmp_path, {}, frame_fps=1000)
-    img = np.random.default_rng(0).integers(0, 255, (360, 640, 3), np.uint8)
+    img = np.zeros((360, 640, 3), np.uint8)  # сжимается хорошо: быстрый набор не тратит память на шум
+    img[100:200, 200:300] = (0, 180, 255)
     t0 = time.monotonic()
     for i in range(1500):
         bb.frame(Frame(image=img, t_capture=t0 + i * 0.01, seq=i))
@@ -126,4 +128,37 @@ def test_track_to_json_and_redact_meta():
     assert len(j["keypoints"]) == 17 and j["keypoints"][0] == [100.1, 50.6, 0.91]
     assert all(type(v) is float for row in j["keypoints"] for v in row)
     assert redact_meta({"a": {"password": "x", "u": "rtsp://u:p@h/"}}) == {"a": {"u": "rtsp://u:***@h/"}}
+    secrets = {"cam_pwd": 1, "Passwd": 2, "api_token": 3, "client_secret": 4, "host": "h"}
+    assert redact_meta(secrets) == {"host": "h"}
+    assert redact_meta(["rtsp://admin:p@ss@10.0.0.5/x"]) == ["rtsp://admin:***@10.0.0.5/x"]
     assert "analysis" in KINDS and "note" in KINDS
+
+
+def test_bad_frame_does_not_lose_events(tmp_path):
+    bb = BlackBox(tmp_path, {}, frame_fps=1000, start_thread=False)
+    bb.event("note", i=0)
+    bb.frame(_frame(1, 10.0))
+    bb.frame(Frame(image=np.zeros((0, 0, 3), np.uint8), t_capture=10.1, seq=2))  # пустая картинка
+    bb.frame(_frame(3, 10.2))
+    bb.event("note", i=1)
+    bb.flush()  # не бросает
+    path = bb.save_snapshot("битый кадр").result(timeout=10)
+    bb.close()
+    ep = Episode.open(path)
+    assert [e["i"] for e in ep.events("note")] == [0, 1]
+    assert [s for _, s, _ in ep.frames()] == [1, 3]
+
+
+def test_large_frames_downscaled_to_640x360(tmp_path):
+    bb = BlackBox(tmp_path, {}, frame_fps=1000, start_thread=False)
+    bb.frame(_frame(1, 10.0, w=1920, h=1080))
+    bb.frame(_frame(2, 10.1, w=1000, h=1000))
+    bb.frame(_frame(3, 10.2, w=64, h=36))
+    bb.flush()
+    path = bb.save_snapshot("размер").result(timeout=10)
+    bb.close()
+    ep = Episode.open(path)
+    assert [im.shape[:2] for _, _, im in ep.frames()] == [(360, 640), (360, 360), (36, 64)]
+    with zipfile.ZipFile(path) as z:
+        index = [json.loads(line) for line in z.read("frames.jsonl").decode().splitlines()]
+    assert [(f["w"], f["h"]) for f in index] == [(640, 360), (360, 360), (64, 36)]

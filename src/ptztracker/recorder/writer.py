@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 
 FORMAT_VERSION = 1
 FRAME_QUEUE_SIZE = 2000  # при переполнении выбрасываются кадры, события — никогда
+MAX_FRAME_SIZE = (640, 360)  # кадры больше этого уменьшаются (спека §2: JPEG 640×360)
 CHUNK_S = 60.0  # постоянная запись на диск — кусками по минуте
 LOG_EVERY_S = 10.0  # ошибки записи — в лог не чаще раза в 10 с
 _PUMP_FRAMES = 10  # кадров за проход фонового потока: события не ждут кодирования всей очереди
@@ -233,38 +234,47 @@ class BlackBox:
                     events.append(self._events_q.get_nowait())
                 except queue.Empty:
                     break
-            frames: list[FrameItem] = []
-            while max_frames is None or len(frames) < max_frames:
+            if events:  # сначала события: ошибка с кадром не должна их потерять
+                with self._lock:
+                    for t, line in events:
+                        self._events.add(t, line)
+                if self.to_disk:
+                    for e in events:
+                        self._next_chunk_if_due(e[0])
+                        self._chunk_events.append(e)
+            n = 0
+            while max_frames is None or n < max_frames:
                 try:
                     fr = self._frames_q.get_nowait()
                 except queue.Empty:
                     break
+                n += 1
                 item = self._encode(fr)
-                if item is not None:
-                    frames.append(item)
-            if not events and not frames:
-                return False
-            with self._lock:
-                for t, line in events:
-                    self._events.add(t, line)
-                for t, f in frames:
-                    self._frames.add(t, f)
-            if self.to_disk:
-                for e in events:
-                    self._next_chunk_if_due(e[0])
-                    self._chunk_events.append(e)
-                for f in frames:
-                    self._next_chunk_if_due(f[0])
-                    self._chunk_frames.append(f)
-            return True
+                if item is None:
+                    continue
+                with self._lock:
+                    self._frames.add(item[0], item[1])
+                if self.to_disk:
+                    self._next_chunk_if_due(item[0])
+                    self._chunk_frames.append(item)
+            return bool(events) or n > 0
 
     def _encode(self, fr: Frame) -> FrameItem | None:
-        ok, buf = cv2.imencode(".jpg", fr.image, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
-        if not ok:
-            self._warn("кадр не закодирован", RuntimeError(f"seq={fr.seq}"))
+        """Кадр → JPEG не больше MAX_FRAME_SIZE (с сохранением пропорций). None — кадр пропущен."""
+        try:
+            img = fr.image
+            h, w = img.shape[:2]
+            scale = min(MAX_FRAME_SIZE[0] / w, MAX_FRAME_SIZE[1] / h)
+            if scale < 1.0:
+                w, h = max(1, round(w * scale)), max(1, round(h * scale))
+                img = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+            ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
+            if not ok:
+                raise RuntimeError("cv2.imencode вернул ошибку")
+            return fr.t_capture, (int(fr.seq), int(w), int(h), buf.tobytes())
+        except Exception as e:
+            self._warn(f"кадр seq={getattr(fr, 'seq', '?')} не закодирован", e)
             return None
-        h, w = fr.image.shape[:2]
-        return fr.t_capture, (int(fr.seq), int(w), int(h), buf.tobytes())
 
     # --- постоянная запись на диск ---
 

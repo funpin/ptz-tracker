@@ -34,10 +34,19 @@ def track_to_json(tr: Track) -> dict:
     }
 
 
+# ключи, значения которых не попадают в запись (по подстроке, без учёта регистра)
+SECRET_KEYS = ("pass", "pwd", "secret", "token")
+
+
+def _is_secret_key(key) -> bool:
+    k = str(key).lower()
+    return any(s in k for s in SECRET_KEYS)
+
+
 def redact_meta(value):
-    """Копия без паролей: ключи с «password» удаляются, адреса проходят redact_url."""
+    """Копия без паролей: ключи pass/pwd/secret/token удаляются, адреса проходят redact_url."""
     if isinstance(value, dict):
-        return {k: redact_meta(v) for k, v in value.items() if "password" not in str(k).lower()}
+        return {k: redact_meta(v) for k, v in value.items() if not _is_secret_key(k)}
     if isinstance(value, (list, tuple)):
         return [redact_meta(v) for v in value]
     if isinstance(value, str) and "://" in value:
@@ -57,6 +66,7 @@ def event_line(t: float, kind: str, data: dict) -> str:
     """Строка events.jsonl. Бросает TypeError/ValueError, если данные не переводятся в JSON."""
     rec = {"t": float(t), "kind": kind, **data}
     line = json.dumps(rec, ensure_ascii=False, default=_json_default)
-    if "://" in line or "password" in line.lower():
+    low = line.lower()
+    if "://" in line or any(k in low for k in SECRET_KEYS):
         line = json.dumps(redact_meta(json.loads(line)), ensure_ascii=False)
     return line

@@ -125,3 +125,16 @@ def test_stream_urls_specific_and_auto():
 def test_rtsp_source_exposes_urls():
     src = RtspSource(["rtsp://a/x", "rtsp://b/y"])
     assert src.urls == ["rtsp://a/x", "rtsp://b/y"]
+
+
+def test_redact_url_hides_password_with_at_sign():
+    from ptztracker.video.rtsp import redact_url
+
+    assert redact_url("rtsp://admin:secret@10.0.0.5/MediaInput/h264") == "rtsp://admin:***@10.0.0.5/MediaInput/h264"
+    assert redact_url("rtsp://admin:p@ss@10.0.0.5/x") == "rtsp://admin:***@10.0.0.5/x"
+    assert redact_url("http://admin:a@b@c@10.0.0.5:80/cgi-bin/mjpeg") == "http://admin:***@10.0.0.5:80/cgi-bin/mjpeg"
+    assert redact_url("http://10.0.0.5/cgi-bin/mjpeg?resolution=640x360") == "http://10.0.0.5/cgi-bin/mjpeg?resolution=640x360"
+    assert redact_url("rtsp://10.0.0.5:554/x/a@b") == "rtsp://10.0.0.5:554/x/a@b"
+    # внутри JSON адрес кончается на кавычке: соседние поля не задеваются
+    line = '{"u": "http://h:80/x", "mail": "a@b", "v": "rtsp://u:p@q@h/"}'
+    assert redact_url(line) == '{"u": "http://h:80/x", "mail": "a@b", "v": "rtsp://u:***@h/"}'

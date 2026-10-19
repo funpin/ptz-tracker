@@ -81,8 +81,12 @@ def rtsp_candidates(host: str, username: str | None, password: str | None) -> li
 
 
 def redact_url(url: str) -> str:
-    """rtsp://user:pass@host/… → rtsp://user:***@host/… (для экрана и логов)."""
-    return re.sub(r"(//[^/@:]*:)[^/@]*@", r"\1***@", url)
+    """rtsp://user:pass@host/… → rtsp://user:***@host/… (для экрана и логов).
+
+    Пароль может содержать «@», поэтому он тянется до ПОСЛЕДНЕЙ «@» перед адресом камеры.
+    Пробелы и кавычки ограничивают адрес, если он стоит внутри текста или JSON.
+    """
+    return re.sub(r"(//[^/@:\s\"']*:)[^/\s\"']*@", r"\1***@", url)
 
 
 def _redact_text(text: str, url: str) -> str:
