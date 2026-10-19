@@ -49,13 +49,14 @@ def test_rtsp_reads_local_file_as_stream(tmp_path):
 
 def test_candidates_with_auth():
     c = rtsp_candidates("10.0.0.12", "admin", "p@ss")
-    assert c[0] == "rtsp://admin:p%40ss@10.0.0.12/MediaInput/h264"
-    assert c[-1].startswith("http://")
+    # подтверждено на живой AW-HE42 (диагностика 2026-10-19): работает /MediaInput/h264/stream_1
+    assert c[0] == "rtsp://admin:p%40ss@10.0.0.12/MediaInput/h264/stream_1"
+    assert any(u.startswith("http://") for u in c)
 
 
 def test_candidates_without_auth():
     c = rtsp_candidates("10.0.0.12", None, None)
-    assert c[0] == "rtsp://10.0.0.12/MediaInput/h264"
+    assert c[0] == "rtsp://10.0.0.12/MediaInput/h264/stream_1"
     assert len(c) == 5
 
 

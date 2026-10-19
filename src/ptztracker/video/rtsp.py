@@ -35,13 +35,17 @@ def strip_credentials(url: str) -> str:
 
 
 def rtsp_candidates(host: str, username: str | None, password: str | None) -> list[str]:
-    """Известные варианты адресов потока Panasonic. Рабочий подбирается перебором и запоминается."""
+    """Известные варианты адресов потока Panasonic. Рабочий подбирается перебором и запоминается.
+
+    Порядок — по проверке на живой AW-HE42 (2026-10-19): stream_1 работает,
+    /MediaInput/h264 и /MediaInput/stream_1 отвечают 5XX, MJPEG — запасной вариант.
+    """
     base = [
-        f"rtsp://{host}/MediaInput/h264",
         f"rtsp://{host}/MediaInput/h264/stream_1",
         f"rtsp://{host}:554/MediaInput/h264/stream_1",
-        f"rtsp://{host}/MediaInput/stream_1",
         f"http://{host}/cgi-bin/mjpeg?resolution=640x360&framerate=30",
+        f"rtsp://{host}/MediaInput/h264",
+        f"rtsp://{host}/MediaInput/stream_1",
     ]
     return [with_credentials(u, username, password) for u in base]
 
