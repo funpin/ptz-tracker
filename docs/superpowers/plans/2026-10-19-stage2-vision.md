@@ -22,7 +22,7 @@
 - Модель: **YOLO11n-pose**, вход 640×640, ONNX, лежит в пакете: `src/ptztracker/models/yolo11n-pose.onnx`. Лицензия AGPL-3.0 — для внутреннего использования (§14 спеки). Детектор спрятан за интерфейсом и заменяем.
 - Провайдеры onnxruntime по порядку: `DmlExecutionProvider` → `CPUExecutionProvider`. Если GPU недоступен, работаем на CPU, а не падаем.
 - Частота анализа — не больше **15 Гц** (параметр). Плавность даёт регулятор (этап 3), а не частота детекции. Анализ работает в своём потоке; UI-поток инференс не выполняет никогда.
-- Порог уверенности детекции 0.35, NMS IoU 0.5.
+- Пороги уверенности (ByteTrack-подход, по реальному кадру с площадки — докладчик за кафедрой на общем плане даёт 0.29): детектор отдаёт всё от **0.10**; новый трек создаётся от **0.25**; существующий трек продолжается детекциями от 0.10. NMS IoU 0.5.
 - Ключевые точки — COCO-17: 0 нос, 5/6 плечи, 11/12 бёдра, 15/16 щиколотки.
 - Реальная сцена (§7 спеки): тёмная сцена, яркий экран, кафедра, головы зрителей внизу кадра. Люди внизу не должны мешать выбору цели.
 - **Основная рабочая крупность — крупно, по грудь / по пояс** (§4 спеки): человек занимает 80–90% высоты кадра, бёдер не видно. Всё в этом этапе (детекция, рамка, внешность, узнавание) обязано работать без бёдер и ног. Основа — голова и плечи.
@@ -146,7 +146,7 @@ def test_model_present_and_shapes():
   - `choose_providers(available: list[str]) -> list[str]`: `["DmlExecutionProvider","CPUExecutionProvider"]`, урезанный до того, что есть в `available`; CPU всегда последний.
   - `letterbox(img, size=640) -> tuple[np.ndarray, float, tuple[int,int]]`: возвращает (тензор `1×3×640×640` float32 0..1 RGB, масштаб, (pad_x, pad_y)); заполнение 114.
   - `decode_yolo_pose(out: np.ndarray, scale: float, pad: tuple[int,int], conf: float=0.35, iou: float=0.5) -> list[Person]`: на входе `out` формы `(1,56,N)`; строки 0–3 — cx,cy,w,h, строка 4 — score, строки 5–55 — 17×(x,y,v). Применяется `cv2.dnn.NMSBoxes`, координаты переводятся в пиксели кадра; результат сортируется по score по убыванию.
-  - `PoseDetector(model_path: Path = POSE_MODEL_PATH, conf=0.35, iou=0.5, providers: list[str]|None=None)`: `.name = "Нейросеть"`; `.device` — `"DirectML"` или `"CPU"` (что фактически получила сессия). Если создание сессии с DML бросает исключение, повторить только с CPU. Если и это не удалось — `RuntimeError` с понятным текстом.
+  - `PoseDetector(model_path: Path = POSE_MODEL_PATH, conf=0.10, iou=0.5, providers: list[str]|None=None)`: `.name = "Нейросеть"`; `.device` — `"DirectML"` или `"CPU"` (что фактически получила сессия). Если создание сессии с DML бросает исключение, повторить только с CPU. Если и это не удалось — `RuntimeError` с понятным текстом.
   - `PoseDetector.detect(frame) -> list[Person]`.
 - [ ] **Step 1: Failing tests:**
 ```python
@@ -247,7 +247,7 @@ def test_frame_meta_default_none():
     - Если область меньше 8×8 px — `None`.
   - `appearance_distance(a, b) -> float`: `cv2.compareHist(..., HISTCMP_BHATTACHARYYA)`; 0 — одинаковые, 1 — разные.
   - `@dataclass Track(id: int, box, score, keypoints, last_seen: float, hits: int, misses: int, velocity: tuple[float,float], appearance: np.ndarray|None)`.
-  - `PersonTracker(match_iou=0.3, max_missing_s=2.0, reid_max_distance=0.35, appearance_alpha=0.1)`:
+  - `PersonTracker(match_iou=0.3, max_missing_s=2.0, reid_max_distance=0.35, appearance_alpha=0.1, new_track_score=0.25)`:
     - `.update(people: list[Person], t: float, image: np.ndarray|None) -> list[Track]`: возвращает треки, увиденные в этом кадре.
     - `.tracks -> list[Track]` — все живые треки, включая временно невидимые.
     - `.select_at(x: float, y: float) -> int|None`: из треков, увиденных в последнем кадре, выбирает самый маленький по площади, чья рамка содержит точку. Цель меняется только при попадании; клик мимо ничего не меняет и возвращает `None`.
@@ -256,7 +256,7 @@ def test_frame_meta_default_none():
   - Алгоритм:
     1. Прогноз рамки по `velocity` (EMA сдвига центра, α=0.5).
     2. Жадное сопоставление пар (трек, детекция) по убыванию IoU (≥ `match_iou`). Если в паре участвует **цель** и у трека есть `appearance`, а у детекции — гистограмма с расстоянием > `reid_max_distance`, пара отклоняется.
-    3. Несопоставленные детекции становятся новыми треками.
+    3. Несопоставленные детекции со score ≥ `new_track_score` становятся новыми треками; более слабые только продолжают существующие треки (шаг 2 сопоставляет детекции любого score ≥ 0.10).
     4. Несопоставленные треки получают `misses += 1`.
     5. Трек удаляется, если `t - last_seen > max_missing_s`.
     6. **Узнавание цели.** Если цель не сопоставлена в этом кадре, а среди *новых* треков есть такой, чей `appearance` ближе всех к цели и не дальше `reid_max_distance`, цель переносится на него: `target_id` = новый id, старый трек удаляется.
