@@ -146,6 +146,8 @@ def check_rtsp(ctx: DiagContext, st: dict) -> CheckResult:
             first = src.latest()
             if first is not None:
                 break
+            if src.stats().error and not src.stats().connected and time.monotonic() - t0 > 1.0:
+                break  # адрес не открылся — не ждём весь таймаут
             time.sleep(0.05)
         row = {"url": mask(url, ctx), "opened": first is not None}
         if first is None:

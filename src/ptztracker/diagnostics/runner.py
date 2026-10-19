@@ -16,11 +16,19 @@ from ptztracker import __version__
 from ptztracker.camera import protocol as P
 from ptztracker.diagnostics.checks import ALL_CHECKS, TITLES, CheckResult, DiagContext, mask
 
-__all__ = ["DiagContext", "run_diagnostics"]
+__all__ = ["DiagContext", "default_report_dir", "run_diagnostics"]
 
 log = logging.getLogger(__name__)
 
 _MARK = {"ok": "[OK]  ", "warn": "[!]   ", "fail": "[ОШИБ]", "skip": "[—]   "}
+
+
+def default_report_dir() -> Path:
+    """Рабочий стол пользователя (если его нет — текущая папка)."""
+    import platformdirs
+
+    desktop = Path(platformdirs.user_desktop_dir())
+    return desktop if desktop.is_dir() else Path.cwd()
 
 
 class _MaskFilter(logging.Filter):

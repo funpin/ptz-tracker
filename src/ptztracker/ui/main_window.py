@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
         self.service_menu = self.menuBar().addMenu("Сервис")
         self.diag_action = QAction("Диагностика камеры…", self)
         self.service_menu.addAction(self.diag_action)
+        self.diag_action.triggered.connect(self._run_diagnostics)
 
         self.add_btn.clicked.connect(self._add_camera)
         self.edit_btn.clicked.connect(self._edit_camera)
@@ -176,6 +177,19 @@ class MainWindow(QMainWindow):
         set_password(cur.id, None)
         self._save()
         self._fill_combo(None)
+
+    def _run_diagnostics(self) -> None:
+        from ptztracker.ui.diagnostics_dialog import DiagnosticsDialog
+
+        cam = self._current_cfg()
+        if not cam or cam.kind == "sim":
+            QMessageBox.information(self, "Диагностика", "Выберите реальную камеру из списка.")
+            return
+        # на время диагностики программа не управляет камерой
+        self._activate(None)
+        password = get_password(cam.id) if cam.username else None
+        DiagnosticsDialog(cam.ip, cam.username, password, parent=self).exec()
+        self._activate(cam)
 
     # --- статус -------------------------------------------------------
 
