@@ -51,7 +51,7 @@ def test_full_diagnostics_against_sim(tmp_path, sim_env):
     rep, z = load(zip_path)
     st = {r["id"]: r["status"] for r in rep["checks"]}
     assert st["reachability"] == "ok" and st["rtsp"] == "ok" and st["queries"] == "ok"
-    assert 150 <= check(rep, "command_latency")["details"]["median_ms"] <= 600
+    assert 150 <= check(rep, "command_latency")["details"]["median_ms"] <= 1000  # сим. разгон как у HE42
     assert check(rep, "min_interval")["details"]["recommended_s"] == 0.10
     assert st["speed_probe"] == "ok" and st["zoom_probe"] == "ok"
     speeds = check(rep, "speed_probe")["details"]["runs"]
@@ -103,6 +103,6 @@ def test_diagnostics_latency_per_stream(tmp_path, sim_env):
     rep, z = load(run_diagnostics(ctx_with(tmp_path, srv.url_host, factory)))
     lat = check(rep, "command_latency")["details"]
     assert len(lat["per_stream"]) >= 2
-    assert all(150 <= r["median_ms"] <= 700 for r in lat["per_stream"])
+    assert all(150 <= r["median_ms"] <= 1000 for r in lat["per_stream"])
     assert lat["fastest"] in [r["url"] for r in lat["per_stream"]]
     assert "Быстрее всего" in z.read("report.txt").decode("utf-8")

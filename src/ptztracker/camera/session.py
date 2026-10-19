@@ -22,7 +22,8 @@ log = logging.getLogger(__name__)
 HEARTBEAT_S = 2.0
 ONE_SHOT_TTL_S = 2.0  # пресет/разовый AF, нажатые при обрыве связи, не выполняются позже
 STOP_FLUSH_S = 1.5  # сколько ждать отправки «стопов» при остановке (если камера на связи)
-SIM_START_TILT = -8.0  # чтобы в симуляторе докладчик сразу был в кадре
+SIM_START_TILT = -8.0
+SIM_VIDEO_LATENCY_S = 0.15  # как MJPEG у живой камеры  # чтобы в симуляторе докладчик сразу был в кадре
 
 
 class CameraSession:
@@ -55,7 +56,7 @@ class CameraSession:
             self._server.start()
             self.client = CameraClient(self._server.url_host)
             scene = VideoScene(self.scene_path) if self.scene_path else SyntheticStage()
-            self.frames = SimFrameSource(self.sim, scene)
+            self.frames = SimFrameSource(self.sim, scene, latency_s=SIM_VIDEO_LATENCY_S)
         else:
             password = get_password(self.cfg.id) if self.cfg.username else None
             self.client = CameraClient(self.cfg.ip, self.cfg.username, password)

@@ -15,7 +15,7 @@ def test_sim_session_manual_pan():
         s.set_pan_tilt_velocity(1, 0)
         time.sleep(0.6)
         s.set_pan_tilt_velocity(0, 0)
-        time.sleep(0.6)
+        time.sleep(2.5)  # симулятор тормозит как HE42 (~0.8 с + хвост)
         assert s.sim.pan_deg > 5
         p = s.sim.pan_deg
         time.sleep(0.3)

@@ -13,16 +13,31 @@ import time
 from collections import deque
 from typing import Callable
 
-TAU_S = 0.12  # постоянная времени разгона/торможения
+TAU_S = 0.37  # разгон/торможение живой AW-HE42: до 90% скорости ~0,85 с
+DEAD_TIME_S = 0.08  # команда начинает действовать не сразу
 PAN_LIMIT = 175.0
 TILT_MIN, TILT_MAX = -30.0, 90.0
-MAX_DEG_S = 90.0
+# Скорость pan/tilt по коду (град/с при широком угле), по замерам живой AW-HE42 (§7 спеки):
+# 55 почти стоит, 60 ≈ 0,034 fw/s, 70 ≈ 0,33 fw/s, 80 ≈ 0,50 fw/s при зуме 0x73F.
+HE42_DEG_S = {50: 0.0, 53: 0.0, 55: 0.05, 58: 0.5, 60: 1.24, 62: 2.2, 65: 4.5, 68: 8.5,
+              70: 12.0, 75: 15.0, 80: 18.0, 85: 24.0, 90: 35.0, 99: 60.0}
+_TABLE = sorted(HE42_DEG_S.items())
 ABS_MOVE_DEG_S = 60.0  # скорость перехода к абсолютной позиции / пресету
 APC_DEG_PER_UNIT = 0.0075
 HFOV_WIDE, HFOV_TELE = 62.1, 3.3
 ZOOM_RATIO_MAX = 20.0
 ZOOM_RATE = 0.4  # доля диапазона зума в секунду на максимальной скорости
 LENS_MIN, LENS_MAX = 0x555, 0xFFF
+
+
+def he42_deg_s(code: int) -> float:
+    """Скорость (град/с, со знаком) для кода 01–99 по таблице HE42 (линейно между точками)."""
+    n = 50 + abs(code - 50)
+    for (c0, v0), (c1, v1) in zip(_TABLE, _TABLE[1:]):
+        if c0 <= n <= c1:
+            v = v0 + (v1 - v0) * (n - c0) / (c1 - c0)
+            return v if code >= 50 else -v
+    return 0.0
 
 
 def _code_rate(code: int, power: float) -> float:
@@ -36,8 +51,14 @@ class SimPtz:
         speed_with_zoom: bool = True,
         min_interval: float | None = None,
         clock: Callable[[], float] = time.monotonic,
+        tau: float = TAU_S,
+        dead_time: float = DEAD_TIME_S,
     ):
         self.speed_with_zoom = speed_with_zoom
+        self.tau = tau
+        self.dead_time = dead_time
+        self._t = 0.0  # время симуляции (сумма dt), по нему отсчитывается мёртвое время
+        self._pending: list[tuple[float, str, int]] = []  # (когда вступит, ось, код)
         self.min_interval = min_interval
         self._clock = clock
         self._lock = threading.RLock()
@@ -68,9 +89,20 @@ class SimPtz:
 
     # --- физика ---------------------------------------------------------
 
+    def _set_code(self, axis: str, code: int) -> None:
+        """Скоростная команда вступает в силу через dead_time."""
+        if self.dead_time <= 0:
+            setattr(self, axis, code)
+        else:
+            self._pending.append((self._t + self.dead_time, axis, code))
+
     def update(self, dt: float) -> None:
         with self._lock:
-            a = 1.0 - math.exp(-dt / TAU_S)
+            self._t += dt
+            while self._pending and self._pending[0][0] <= self._t:
+                _, axis, code = self._pending.pop(0)
+                setattr(self, axis, code)
+            a = 1.0 - math.exp(-dt / self.tau)
             if self._target is not None:
                 tp, tt = self._target
                 want_p = max(-ABS_MOVE_DEG_S, min(ABS_MOVE_DEG_S, (tp - self.pan_deg) / max(dt, 1e-3)))
@@ -80,8 +112,8 @@ class SimPtz:
                     self._target = None
             else:
                 div = self.zoom_ratio() if self.speed_with_zoom else 1.0
-                tgt_p = MAX_DEG_S * _code_rate(self.pan_code, 2.0) / div
-                tgt_t = MAX_DEG_S * _code_rate(self.tilt_code, 2.0) / div
+                tgt_p = he42_deg_s(self.pan_code) / div
+                tgt_t = he42_deg_s(self.tilt_code) / div
                 self.pan_vel += (tgt_p - self.pan_vel) * a
                 self.tilt_vel += (tgt_t - self.tilt_vel) * a
             if self._zoom_target is not None:
@@ -142,19 +174,21 @@ class SimPtz:
         if cmd.startswith("OSE:"):
             return cmd
         if m := re.fullmatch(r"#PTS(\d\d)(\d\d)", cmd):
-            self.pan_code, self.tilt_code = self._speed_arg(m[1]), self._speed_arg(m[2])
+            p, t = self._speed_arg(m[1]), self._speed_arg(m[2])
+            self._set_code("pan_code", p)
+            self._set_code("tilt_code", t)
             self._target = None
             return f"pTS{m[1]}{m[2]}"
         if m := re.fullmatch(r"#P(\d\d)", cmd):
-            self.pan_code = self._speed_arg(m[1])
+            self._set_code("pan_code", self._speed_arg(m[1]))
             self._target = None
             return f"pS{m[1]}"
         if m := re.fullmatch(r"#T(\d\d)", cmd):
-            self.tilt_code = self._speed_arg(m[1])
+            self._set_code("tilt_code", self._speed_arg(m[1]))
             self._target = None
             return f"tS{m[1]}"
         if m := re.fullmatch(r"#Z(\d\d)", cmd):
-            self.zoom_code = self._speed_arg(m[1])
+            self._set_code("zoom_code", self._speed_arg(m[1]))
             self._zoom_target = None
             return f"zS{m[1]}"
         if cmd == "#APC":
