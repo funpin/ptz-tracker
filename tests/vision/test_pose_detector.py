@@ -22,7 +22,14 @@ def test_choose_providers():
         "CPUExecutionProvider",
     ]
     assert choose_providers(["CPUExecutionProvider"]) == ["CPUExecutionProvider"]
-    assert choose_providers(["CoreMLExecutionProvider", "CPUExecutionProvider"]) == ["CPUExecutionProvider"]
+    assert choose_providers(["AzureExecutionProvider", "CPUExecutionProvider"]) == ["CPUExecutionProvider"]
+
+
+def test_choose_providers_prefers_coreml_on_mac():
+    assert choose_providers(["CoreMLExecutionProvider", "CPUExecutionProvider"]) == [
+        "CoreMLExecutionProvider",
+        "CPUExecutionProvider",
+    ]
 
 
 def test_letterbox_shape_and_scale():
@@ -98,19 +105,19 @@ def test_missing_model_clear_error(tmp_path):
 
 
 class _FakeSess:
-    def __init__(self, real, fail_run):
-        self.real, self.fail_run = real, fail_run
+    def __init__(self, real, fail_run, provider="DmlExecutionProvider"):
+        self.real, self.fail_run, self.provider = real, fail_run, provider
 
     def run(self, *a, **k):
         if self.fail_run:
-            raise RuntimeError("DirectML: device removed")
+            raise RuntimeError(f"{self.provider}: device removed")
         return self.real.run(*a, **k)
 
     def get_inputs(self):
         return self.real.get_inputs()
 
     def get_providers(self):
-        return ["DmlExecutionProvider"] if self.fail_run else self.real.get_providers()
+        return [self.provider] if self.fail_run else self.real.get_providers()
 
 
 def test_falls_back_to_cpu_when_dml_fails_on_first_run(monkeypatch):
@@ -125,6 +132,22 @@ def test_falls_back_to_cpu_when_dml_fails_on_first_run(monkeypatch):
 
     monkeypatch.setattr(ort, "InferenceSession", fake)
     d = PoseDetector(providers=["DmlExecutionProvider", "CPUExecutionProvider"])
+    assert d.device == "CPU"
+
+
+def test_coreml_failure_falls_back_to_cpu(monkeypatch):
+    # CoreML создался, но падает при первом прогоне -> молча на CPU
+    import onnxruntime as ort
+
+    real = ort.InferenceSession
+
+    def fake(path, sess_options=None, providers=None, **kw):
+        s = real(path, sess_options=sess_options, providers=["CPUExecutionProvider"])
+        bad = bool(providers and "CoreMLExecutionProvider" in providers)
+        return _FakeSess(s, fail_run=bad, provider="CoreMLExecutionProvider")
+
+    monkeypatch.setattr(ort, "InferenceSession", fake)
+    d = PoseDetector(providers=["CoreMLExecutionProvider", "CPUExecutionProvider"])
     assert d.device == "CPU"
 
 

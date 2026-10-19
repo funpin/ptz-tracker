@@ -111,7 +111,7 @@ def test_pose_detector_on_photo_through_analyzer():
     try:
         assert wait_until(lambda: a.latest() is not None and len(a.latest().tracks) >= 3, 5)
         r = a.latest()
-        assert r.detector == "Нейросеть" and r.device in ("CPU", "DirectML") and r.infer_ms > 0
+        assert r.detector == "Нейросеть" and r.device in ("CPU", "DirectML", "CoreML") and r.infer_ms > 0
     finally:
         a.stop()
 

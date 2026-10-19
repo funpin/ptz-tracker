@@ -1,6 +1,6 @@
 """Нейросетевой детектор людей с ключевыми точками (YOLO11n-pose в ONNX).
 
-На Windows работает на видеокарте через DirectML, если не получается — на процессоре.
+На Windows работает на видеокарте через DirectML, на Mac — через CoreML; если не получается — на процессоре.
 """
 
 from __future__ import annotations
@@ -20,12 +20,16 @@ log = logging.getLogger(__name__)
 INPUT_SIZE = 640
 CPU_THREADS = 3  # рядом работают vMix/OBS — не занимать все ядра
 PAD_VALUE = 114
-_PREFERRED = ("DmlExecutionProvider", "CPUExecutionProvider")
-_DEVICE_NAMES = {"DmlExecutionProvider": "DirectML", "CPUExecutionProvider": "CPU"}
+_PREFERRED = ("DmlExecutionProvider", "CoreMLExecutionProvider", "CPUExecutionProvider")
+_DEVICE_NAMES = {
+    "DmlExecutionProvider": "DirectML",
+    "CoreMLExecutionProvider": "CoreML",
+    "CPUExecutionProvider": "CPU",
+}
 
 
 def choose_providers(available: list[str]) -> list[str]:
-    """DirectML, если есть, затем CPU (CPU всегда в конце)."""
+    """DirectML или CoreML, если есть, затем CPU (CPU всегда в конце)."""
     chosen = [p for p in _PREFERRED if p in available and p != "CPUExecutionProvider"]
     return chosen + ["CPUExecutionProvider"]
 
@@ -99,7 +103,7 @@ class PoseDetector:
 
     @staticmethod
     def _open(ort, model_path: Path, providers: list[str]):
-        """Создать сессию и сразу прогнать пустой кадр: сбои DirectML часто проявляются только при запуске."""
+        """Создать сессию и сразу прогнать пустой кадр: сбои DirectML/CoreML часто проявляются только при запуске."""
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = CPU_THREADS
         opts.inter_op_num_threads = 1
