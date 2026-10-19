@@ -117,3 +117,22 @@ def test_stream_roundtrip_and_invalid(tmp_path):
         '{"cameras": [{"id": "a", "name": "А", "ip": "10.0.0.12", "stream": "zzz"}]}', encoding="utf-8"
     )
     assert store.load().cameras[0].stream == "auto"
+
+
+def test_record_settings_defaults_roundtrip_and_fallback(tmp_path):
+    from ptztracker.config import AppConfig, record_dir
+
+    d = AppConfig()
+    assert (d.record_enabled, d.record_buffer_s, d.record_to_disk, d.record_dir) == (True, 300, False, "")
+    assert record_dir(d).name == "Записи PTZ Tracker"
+    store = ConfigStore(tmp_path / "config.json")
+    cfg = default_config()
+    cfg.record_to_disk, cfg.record_buffer_s, cfg.record_dir = True, 120, str(tmp_path / "rec")
+    store.save(cfg)
+    assert store.load() == cfg
+    assert record_dir(cfg) == tmp_path / "rec"
+    (tmp_path / "config.json").write_text(
+        '{"record_enabled": "да", "record_buffer_s": -5, "record_to_disk": 1, "record_dir": 7}', encoding="utf-8"
+    )
+    bad = store.load()
+    assert (bad.record_enabled, bad.record_buffer_s, bad.record_to_disk, bad.record_dir) == (True, 300, False, "")

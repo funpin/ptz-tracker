@@ -44,6 +44,7 @@ class _Item:
     future: Future | None = None
     errors: int = 0
     expires: float | None = None  # для разовых команд: не выполнять, если связь вернулась слишком поздно
+    submitted: float = 0.0  # когда команда встала в очередь (для записи: сколько она ждала)
 
 
 @dataclass
@@ -59,6 +60,7 @@ class CommandScheduler:
         send: Callable[[str], str],
         min_interval: float = 0.130,
         clock: Callable[[], float] = time.monotonic,
+        on_sent: Callable[[dict], None] | None = None,
     ):
         self._send = send
         self.min_interval = min_interval
@@ -72,6 +74,9 @@ class CommandScheduler:
         self._online: bool | None = None
         self.last_error: str | None = None
         self.on_state_change: Callable[[bool], None] | None = None
+        # после каждой отправки: {"cmd", "key", "priority", "queued_s", "reply", "ok"} (для записи)
+        self.on_sent = on_sent
+        self._last_on_sent_log = float("-inf")
         self._thread: threading.Thread | None = None
         self._running = False
         self._inflight: _Item | None = None
@@ -94,14 +99,15 @@ class CommandScheduler:
             if only_if_changed and self._st.last_sent.get(key) == cmd:
                 self._st.slots.pop(key, None)  # вернулись к уже отправленному — отменить ожидающую
                 return
-            expires = self._clock() + ttl if ttl is not None else None
-            self._st.slots[key] = _Item(cmd, priority, next(self._seq), key=key, expires=expires)
+            now = self._clock()
+            expires = now + ttl if ttl is not None else None
+            self._st.slots[key] = _Item(cmd, priority, next(self._seq), key=key, expires=expires, submitted=now)
             self._cond.notify()
 
     def query(self, cmd: str, timeout: float = 2.0) -> str:
         fut: Future = Future()
         with self._cond:
-            self._st.queries.append(_Item(cmd, Priority.QUERY, next(self._seq), future=fut))
+            self._st.queries.append(_Item(cmd, Priority.QUERY, next(self._seq), future=fut, submitted=self._clock()))
             self._cond.notify()
         return fut.result(timeout=timeout)
 
@@ -109,7 +115,7 @@ class CommandScheduler:
         with self._cond:
             self._st.slots.clear()
             for key, cmd in (("pt", STOP_PT), ("zoom", STOP_ZOOM), ("focus", STOP_FOCUS)):
-                self._st.slots[key] = _Item(cmd, Priority.EMERGENCY, next(self._seq), key=key)
+                self._st.slots[key] = _Item(cmd, Priority.EMERGENCY, next(self._seq), key=key, submitted=self._clock())
             self._backoff_until = 0.0
             self._cond.notify()
 
@@ -196,22 +202,41 @@ class CommandScheduler:
                 del self._st.slots[key]
 
     def _execute(self, item: _Item) -> None:
+        sent_t = self._clock()
         try:
-            self._send_and_record(item)
+            ok, reply = self._send_and_record(item)
         finally:
             with self._cond:
                 self._inflight = None
+        self._report_sent(item, sent_t, ok, reply)
 
-    def _send_and_record(self, item: _Item) -> None:
+    def _report_sent(self, item: _Item, sent_t: float, ok: bool, reply: str) -> None:
+        cb = self.on_sent
+        if cb is None:
+            return
+        try:
+            cb({"cmd": item.cmd, "key": item.key, "priority": item.priority.name,
+                "queued_s": round(sent_t - item.submitted, 4), "reply": reply, "ok": ok})
+        except Exception as e:  # запись — только наблюдатель: её сбой не мешает командам
+            now = time.monotonic()
+            if now - self._last_on_sent_log >= 10.0:
+                self._last_on_sent_log = now
+                log.warning("on_sent упал: %s", e)
+
+    def _send_and_record(self, item: _Item) -> tuple[bool, str]:
+        """Отправить команду; (успех, ответ камеры или текст ошибки)."""
         try:
             resp = self._send(item.cmd)
         except CameraUnreachable as e:
             self._on_failure(item, e, unreachable=True)
+            return False, str(e)
         except (CameraError, AuthRequired) as e:
             self._on_failure(item, e, unreachable=isinstance(e, AuthRequired))
+            return False, str(e)
         except Exception as e:  # не даём потоку умереть
             log.exception("Неожиданная ошибка отправки %s", item.cmd)
             self._on_failure(item, e, unreachable=False)
+            return False, str(e)
         else:
             with self._cond:
                 if item.key is not None:
@@ -221,6 +246,7 @@ class CommandScheduler:
             if item.future:
                 item.future.set_result(resp)
             self._set_online(True)
+            return True, resp
 
     def _on_failure(self, item: _Item, err: Exception, unreachable: bool) -> None:
         self.last_error = str(err)

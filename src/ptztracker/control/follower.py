@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import threading
 import time
@@ -17,12 +18,13 @@ from ptztracker.control.camera_model import Calibration
 from ptztracker.control.composition import Composition, measure_body
 from ptztracker.control.effort import EffortProfile
 from ptztracker.control.framing import FramingController, FramingInput, FramingOutput
+from ptztracker.recorder import NullRecorder, Recorder, safe_event
 
 log = logging.getLogger(__name__)
 
 LOOP_HZ = 25.0
 STALE_S = 0.6  # результат анализа старше — анализ встал, камеру останавливаем
-ZOOM_POLL_S = 0.5
+ZOOM_POLL_S = 0.5  # зум и (для записи) положение #APC: чаще — опрос отнимает окна у команд
 TILT_FROM_FH = 9 / 16  # скорость по вертикали (доли высоты) → эквивалент по ширине кадра 16:9
 
 
@@ -36,12 +38,16 @@ class Follower:
         composition: Composition,
         effort: EffortProfile,
         query_zoom: Callable[[], int | None],
+        recorder: Recorder | None = None,
+        query_pan_tilt: Callable[[], tuple[int, int] | None] | None = None,
     ):
         self.analyzer = analyzer
         self.scheduler = scheduler
         self.calib = calib
         self.video_latency = video_latency
         self.query_zoom = query_zoom
+        self.query_pan_tilt = query_pan_tilt
+        self.recorder: Recorder = recorder or NullRecorder()
         self.controller = FramingController(composition, effort, calib, video_latency())
         self.enabled = False
         self.last_reason: str | None = None
@@ -77,6 +83,7 @@ class Follower:
             self.enabled = True
             self.last_reason = None
         log.info("Слежение включено (цель №%s)", r.target_id)
+        safe_event(self.recorder, "follow", on=True, reason=None, target_id=r.target_id)
         self._notify()
         return True
 
@@ -92,15 +99,22 @@ class Follower:
         self.scheduler.submit("pt", P.STOP_PT, Priority.MANUAL, only_if_changed=False)
         self.scheduler.submit("zoom", P.STOP_ZOOM, Priority.MANUAL, only_if_changed=False)
         log.info("Слежение выключено: %s", reason)
+        safe_event(self.recorder, "follow", on=False, reason=reason)
         self._notify()
 
     def set_composition(self, c: Composition) -> None:
         with self._lock:
             self.controller.set_composition(c)
+        self._record_settings()
 
     def set_effort(self, e: EffortProfile) -> None:
         with self._lock:
             self.controller.set_effort(e)
+        self._record_settings()
+
+    def _record_settings(self) -> None:
+        c = self.controller
+        safe_event(self.recorder, "follow", composition=c.composition.key, effort=dataclasses.asdict(c.effort))
 
     def stop(self) -> None:
         self.disable("остановка камеры")
@@ -117,8 +131,13 @@ class Follower:
     # --- потоки ---------------------------------------------------------
 
     def _poll_zoom(self) -> None:
+        # опрос идёт, пока включено слежение или идёт запись (положение камеры — для разбора)
         while not self._stop.wait(ZOOM_POLL_S):
-            if not self.enabled:
+            try:
+                recording = bool(self.recorder.active)
+            except Exception:
+                recording = False
+            if not (self.enabled or recording):
                 continue
             try:
                 z = self.query_zoom()
@@ -127,6 +146,17 @@ class Follower:
                 z = None
             if z is not None:
                 self._zoom_pos = z
+            if recording and self.query_pan_tilt is not None:
+                self._record_position(z)
+
+    def _record_position(self, zoom: int | None) -> None:
+        try:
+            pt = self.query_pan_tilt()
+        except Exception as e:
+            log.debug("Запрос положения не удался: %s", e)
+            pt = None
+        if pt is not None:
+            safe_event(self.recorder, "position", pan=pt[0], tilt=pt[1], zoom=zoom)
 
     def _run(self) -> None:
         period = 1.0 / LOOP_HZ
@@ -138,6 +168,28 @@ class Follower:
             except Exception:
                 log.exception("Ошибка в цикле слежения")
                 self.disable("внутренняя ошибка")
+
+    def _record_tick(self, now, r, measure, zoom, out, codes, composition, effort) -> None:
+        """Такт регулятора в запись: всё, что нужно, чтобы повторить его без камеры.
+
+        Ошибка здесь не должна дойти до цикла слежения (он бы выключил слежение).
+        """
+        try:
+            if not self.recorder.active:
+                return
+            m = None
+            if measure is not None:
+                m = {"nose": [float(v) for v in measure.nose],
+                     "u": None if measure.u is None else float(measure.u), "confident": bool(measure.confident)}
+            safe_event(
+                self.recorder, "control", t=now, t_capture=r.t_capture, measure=m, zoom_pos=zoom,
+                aspect=r.frame_size[0] / max(1, r.frame_size[1]),
+                out={"pan": out.pan, "tilt": out.tilt, "zoom": out.zoom, "state": out.state,
+                     "error": list(out.error), "size_error": out.size_error},
+                codes=list(codes), composition=composition, effort=effort,
+            )
+        except Exception as e:
+            safe_event(self.recorder, "note", error=f"такт регулятора не записан: {e}")
 
     def _tick(self) -> None:
         now = time.monotonic()
@@ -171,5 +223,8 @@ class Follower:
             # отправка под замком: disable() не сможет вклиниться между проверкой enabled и submit
             self.scheduler.submit("pt", P.pan_tilt_speed(pan, tilt), Priority.TRACKING)
             self.scheduler.submit("zoom", P.zoom_speed(zc), Priority.TRACKING_ZOOM)
+            composition = self.controller.composition.key
+            effort = dataclasses.asdict(self.controller.effort)
+        self._record_tick(now, r, measure, zoom, out, (pan, tilt, zc), composition, effort)
         if diverged:
             self.disable("камера раскачивалась — она быстрее, чем ожидалось. Сервис → Калибровка камеры")

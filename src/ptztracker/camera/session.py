@@ -6,14 +6,20 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+import platform
 import threading
+from concurrent.futures import Future
+from pathlib import Path
 
+from ptztracker import __version__
 from ptztracker.camera import protocol as P
 from ptztracker.camera.client import CameraClient
 from ptztracker.camera.scheduler import CommandScheduler, Priority
 from ptztracker.camera.speed import velocity_to_code
-from ptztracker.config import CameraConfig, get_password
+from ptztracker.config import AppConfig, CameraConfig, get_password, record_dir
+from ptztracker.recorder import NullRecorder, Recorder, safe_event
 from ptztracker.video.frames import FrameSource
 from ptztracker.video.rtsp import RtspSource, stream_urls
 
@@ -35,8 +41,11 @@ class CameraSession:
         analysis: bool = True,
         scene=None,
         sim_latency: float | None = None,
+        app_cfg: AppConfig | None = None,  # настройки записи (record_*); None — по умолчанию
     ):
         self.cfg = cfg
+        self.app_cfg = app_cfg or AppConfig()
+        self.recorder: Recorder = NullRecorder()
         self.scene_path = scene_path
         self._scene = scene  # для тестов: готовая сцена симулятора
         self._sim_latency = SIM_VIDEO_LATENCY_S if sim_latency is None else sim_latency
@@ -74,13 +83,16 @@ class CameraSession:
             urls = stream_urls(self.cfg.ip, self.cfg.stream, self.cfg.username, password, self.cfg.rtsp_url)
             on_found = self._on_rtsp_found if self.cfg.stream == "auto" else None
             self.frames = RtspSource(urls, on_found=on_found)
-        self.scheduler = CommandScheduler(self.client.send, min_interval=self.cfg.min_interval)
+        self.recorder = self._make_recorder()
+        self.scheduler = CommandScheduler(
+            self.client.send, min_interval=self.cfg.min_interval, on_sent=self._on_cmd_sent
+        )
         self.scheduler.start()
         self.frames.start()
         if self.analysis:
             from ptztracker.vision.analyzer import Analyzer
 
-            self.analyzer = Analyzer(self.frames, self._detector_factory())
+            self.analyzer = Analyzer(self.frames, self._detector_factory(), recorder=self.recorder)
             self.analyzer.start()
             self._start_follower()
         self._hb_stop.clear()
@@ -107,6 +119,64 @@ class CameraSession:
             self.frames.stop(timeout=0.0)
         if self._server:
             self._server.stop()
+        rec, self.recorder = self.recorder, NullRecorder()
+        # close() дописывает постоянную запись на диск — в фоне, чтобы окно не ждало
+        threading.Thread(target=rec.close, name="blackbox-close", daemon=True).start()
+
+    # --- запись (чёрный ящик) -------------------------------------------
+
+    def save_moment(self, reason: str = "F9") -> Future[Path]:
+        """Сохранить последние минуты записи в zip (в фоне). Без записи — Future с ошибкой."""
+        try:
+            meta = getattr(self.recorder, "meta", None)
+            if isinstance(meta, dict):  # то, что выясняется уже после старта
+                meta.update(self._live_meta())
+            return self.recorder.save_snapshot(reason)
+        except Exception as e:
+            log.warning("Запись не сохранена: %s", e)
+            fut: Future[Path] = Future()
+            fut.set_exception(e)
+            return fut
+
+    def recording_meta(self) -> dict:
+        """Описание сеанса для meta.json — только простые типы JSON, без пароля."""
+        cam = dataclasses.asdict(self.cfg)
+        cam.pop("calibration", None)  # действующая калибровка — отдельным полем
+        return {
+            "app": "PTZ Tracker",
+            "version": __version__,
+            "os": platform.platform(),
+            "python": platform.python_version(),
+            "camera": cam,
+            "calibration": self.calibration().to_json(),
+            "calibrated": bool(self.cfg.calibration),
+            "record": {"buffer_s": int(self.app_cfg.record_buffer_s), "to_disk": bool(self.app_cfg.record_to_disk)},
+            **self._live_meta(),
+        }
+
+    def _live_meta(self) -> dict:
+        r = self.analyzer.latest() if self.analyzer else None
+        return {
+            "stream_kind": self.stream_kind(),
+            "analysis_detector": r.detector if r else None,
+            "analysis_device": r.device if r else None,
+        }
+
+    def _make_recorder(self) -> Recorder:
+        a = self.app_cfg
+        if not a.record_enabled:
+            return NullRecorder()
+        try:
+            from ptztracker.recorder.writer import BlackBox
+
+            return BlackBox(record_dir(a), self.recording_meta(), buffer_s=a.record_buffer_s,
+                            to_disk=a.record_to_disk)
+        except Exception as e:  # запись не должна мешать работе с камерой
+            log.warning("Запись не запущена: %s", e)
+            return NullRecorder()
+
+    def _on_cmd_sent(self, info: dict) -> None:
+        safe_event(self.recorder, "cmd", **info)
 
     def calibration(self):
         from ptztracker.control.camera_model import Calibration, default_calibration
@@ -137,6 +207,9 @@ class CameraSession:
         def query_zoom():
             return P.parse_zoom(self.scheduler.query(P.Q_ZOOM, timeout=1.0))
 
+        def query_pan_tilt():
+            return P.parse_pan_tilt(self.scheduler.query(P.Q_PAN_TILT, timeout=1.0))
+
         self.follower = Follower(
             self.analyzer,
             self.scheduler,
@@ -145,6 +218,8 @@ class CameraSession:
             COMPOSITIONS.get(self.cfg.composition, COMPOSITIONS[DEFAULT_COMPOSITION]),
             EffortProfile.at(self.cfg.effort),
             query_zoom,
+            recorder=self.recorder,
+            query_pan_tilt=query_pan_tilt,
         )
 
     def _manual(self) -> None:

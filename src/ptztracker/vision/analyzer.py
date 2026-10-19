@@ -13,6 +13,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from ptztracker.recorder import NullRecorder, Recorder, safe_event, safe_frame
+from ptztracker.recorder.events import track_to_json
 from ptztracker.video.frames import FpsMeter, FrameSource
 from ptztracker.vision.tracker import PersonTracker, Track, compute_histograms
 from ptztracker.vision.types import Detector
@@ -44,11 +46,13 @@ class Analyzer:
         detector_factory: Callable[[], Detector],
         max_fps: float = 15.0,
         tracker: PersonTracker | None = None,
+        recorder: Recorder | None = None,
     ):
         self.source = source
         self.detector_factory = detector_factory
         self.max_fps = max_fps
         self.tracker = tracker or PersonTracker()
+        self.recorder: Recorder = recorder or NullRecorder()
         self.error: str | None = None
         self._lock = threading.Lock()  # трекер и последний результат
         self._latest: AnalysisResult | None = None
@@ -82,12 +86,15 @@ class Analyzer:
             tid = self.tracker.select_at(x, y)
             if tid is not None:
                 self._refresh_target()
-            return tid
+        # x, y — чтобы повтор распознавания выбрал цель тем же щелчком
+        safe_event(self.recorder, "target", id=tid, how="click", x=round(float(x), 1), y=round(float(y), 1))
+        return tid
 
     def clear_target(self) -> None:
         with self._lock:
             self.tracker.clear_target()
             self._refresh_target()
+        safe_event(self.recorder, "target", id=None, how="reset")
 
     def _refresh_target(self) -> None:
         """Сразу отразить смену цели в последнем результате (без ожидания следующего анализа)."""
@@ -97,6 +104,22 @@ class Analyzer:
             )
 
     # --- поток анализа ------------------------------------------------
+
+    def _record(self, fr, r: AnalysisResult) -> None:
+        """Кадр и результат анализа — в запись (вне блокировки: окно не ждёт)."""
+        rec = self.recorder
+        if not rec.active:
+            return
+        safe_frame(rec, fr)
+        try:
+            tracks = [track_to_json(t) for t in r.tracks]
+        except Exception as e:
+            tracks = None
+            safe_event(rec, "note", error=f"цели не переведены в JSON: {e}")
+        safe_event(
+            rec, "analysis", seq=r.seq, t_capture=r.t_capture, frame_size=list(r.frame_size), tracks=tracks,
+            target_id=r.target_id, target_state=r.target_state, infer_ms=round(r.infer_ms, 2),
+        )
 
     def _run(self) -> None:
         try:
@@ -156,6 +179,8 @@ class Analyzer:
                     device=detector.device,
                 )
                 self.error = None
+                result = self._latest
+            self._record(fr, result)
             wait = t_start + period - time.monotonic()
             if wait > 0:
                 self._stop.wait(wait)

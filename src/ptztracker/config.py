@@ -46,6 +46,21 @@ class AppConfig:
     cameras: list[CameraConfig] = field(default_factory=list)
     last_camera_id: str | None = None
     sim_scene_path: str | None = None
+    # чёрный ящик (recorder): последние record_buffer_s секунд в памяти, F9 сохраняет их в zip
+    record_enabled: bool = True
+    record_buffer_s: int = 300
+    record_to_disk: bool = False  # постоянная запись на диск (~450 МБ/час)
+    record_dir: str = ""  # пусто — «Записи PTZ Tracker» на рабочем столе
+
+
+RECORD_DIR_NAME = "Записи PTZ Tracker"
+
+
+def record_dir(cfg: AppConfig) -> Path:
+    """Папка для записей: из настроек или «Записи PTZ Tracker» на рабочем столе."""
+    if cfg.record_dir:
+        return Path(cfg.record_dir).expanduser()
+    return Path(platformdirs.user_desktop_dir()) / RECORD_DIR_NAME
 
 
 def default_config() -> AppConfig:
@@ -110,6 +125,21 @@ def _camera_from(d) -> CameraConfig | None:
     return c
 
 
+def _fix_record_settings(cfg: AppConfig) -> None:
+    """Неправильные значения настроек записи → значения по умолчанию."""
+    d = AppConfig()
+    if not isinstance(cfg.record_enabled, bool):
+        cfg.record_enabled = d.record_enabled
+    if not isinstance(cfg.record_to_disk, bool):
+        cfg.record_to_disk = d.record_to_disk
+    if isinstance(cfg.record_buffer_s, bool) or not isinstance(cfg.record_buffer_s, (int, float)) \
+            or cfg.record_buffer_s <= 0:
+        cfg.record_buffer_s = d.record_buffer_s
+    cfg.record_buffer_s = int(cfg.record_buffer_s)
+    if not isinstance(cfg.record_dir, str):
+        cfg.record_dir = d.record_dir
+
+
 class ConfigStore:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -137,6 +167,7 @@ class ConfigStore:
             return default_config()
         if not cfg.cameras:
             cfg.cameras = default_config().cameras
+        _fix_record_settings(cfg)
         return cfg
 
     def save(self, cfg: AppConfig) -> None:
