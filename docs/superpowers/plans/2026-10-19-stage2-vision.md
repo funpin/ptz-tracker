@@ -55,6 +55,50 @@ tests/vision/…
 
 ---
 
+### Task 0: Выбор потока видео и задержка по каждому потоку (добавлено по просьбе пользователя)
+
+Пользователь включил в камере два потока: H.264(1) 1280×720p25 4 Мбит/с и H.264(2) 640×360p25 1 Мбит/с. Нужно выбирать поток в программе и измерить, у какого меньше задержка.
+
+**Files:**
+- Modify: `src/ptztracker/config.py`, `src/ptztracker/video/rtsp.py`, `src/ptztracker/camera/session.py`, `src/ptztracker/ui/main_window.py`, `src/ptztracker/diagnostics/checks.py`, `src/ptztracker/diagnostics/runner.py`
+- Test: `tests/video/test_rtsp.py`, `tests/test_config.py`, `tests/ui/test_main_window.py`, `tests/diagnostics/test_runner_sim.py`
+
+**Interfaces:**
+- `CameraConfig.stream: str = "auto"`, одно из `"auto" | "h264_1" | "h264_2" | "mjpeg"`. Неизвестное значение при загрузке заменяется на `"auto"`.
+- `STREAM_CHOICES: dict[str, str]` = {"auto": "Авто", "h264_1": "H.264 (1)", "h264_2": "H.264 (2)", "mjpeg": "JPEG (MJPEG)"}.
+- `stream_url(host, stream) -> str` для конкретного потока:
+  - `h264_1` → `rtsp://{host}/MediaInput/h264/stream_1`;
+  - `h264_2` → `rtsp://{host}/MediaInput/h264/stream_2`;
+  - `mjpeg` → `http://{host}/cgi-bin/mjpeg?resolution=640x360&framerate=25`.
+- `stream_urls(host, stream, username, password, saved_url) -> list[str]`:
+  - `auto` — как сейчас: сначала сохранённый адрес, затем кандидаты;
+  - конкретный поток — ровно один адрес, без перебора. Иначе выбор оператора молча подменялся бы другим потоком.
+- `RtspSource.urls -> list[str]` (только чтение).
+- `CameraSession` использует `stream_urls`. Найденный адрес запоминается только в режиме `auto`.
+- `MainWindow`: в группе «Камера» выпадающий список «Видео» (`self.stream_combo`) с вариантами `STREAM_CHOICES`. Смена значения сохраняется в камеру и перезапускает сессию. Для симулятора список неактивен.
+- Диагностика:
+  - `check_rtsp` пробует также `stream_url(host, "h264_2")` и оставляет открытыми до трёх работающих потоков в `st["sources"]` (список `(url, source)`); `st["source"]` — первый из них.
+  - `check_command_latency` меряет задержку на каждом открытом потоке (по 3 замера). `details.per_stream = [{url, width, height, median_ms, samples_ms}]`, `details.median_ms` — по первому потоку (совместимость), `details.fastest` — url с минимальной медианой.
+  - Порог движения масштабируется по ширине кадра: `1.5 * width / 1280` px.
+  - В report.txt — строка на каждый поток: «Задержка: <url> (<w>×<h>) ~N мс», плюс «Быстрее всего: …».
+
+- [ ] **Step 1: Failing tests:**
+```python
+def test_stream_urls_specific_and_auto():
+    assert stream_urls("h", "h264_2", "admin", "pw", None) == ["rtsp://admin:pw@h/MediaInput/h264/stream_2"]
+    assert stream_urls("h", "mjpeg", None, None, None) == ["http://h/cgi-bin/mjpeg?resolution=640x360&framerate=25"]
+    a = stream_urls("h", "auto", None, None, "rtsp://h/saved"); assert a[0] == "rtsp://h/saved" and len(a) > 1
+def test_config_stream_roundtrip_and_invalid(tmp_path): ...  # "h264_2" сохраняется; "zzz" → "auto"
+def test_stream_combo_saves_and_restarts(qtbot, tmp_path):
+    # MainWindow без симулятора; выбрать «H.264 (2)» → config stream == "h264_2", session.frames.urls == [".../stream_2"]
+def test_diagnostics_latency_per_stream(tmp_path, sim_env):
+    # per_stream ≥ 2 записей, у каждой median_ms; fastest — один из url; report.txt содержит «Быстрее всего»
+```
+- [ ] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run:** PASS + весь набор.
+- [ ] **Step 5: Commit** `feat: choose camera video stream; diagnostics measure latency per stream`
+
+---
+
 ### Task 1: Модель позы в ONNX и зависимости
 
 **Files:**
