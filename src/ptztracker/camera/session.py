@@ -26,9 +26,11 @@ SIM_START_TILT = -8.0  # чтобы в симуляторе докладчик �
 
 
 class CameraSession:
-    def __init__(self, cfg: CameraConfig, scene_path: str | None = None):
+    def __init__(self, cfg: CameraConfig, scene_path: str | None = None, analysis: bool = True):
         self.cfg = cfg
         self.scene_path = scene_path
+        self.analysis = analysis
+        self.analyzer = None
         self.sim = None
         self._server = None
         self.client: CameraClient | None = None
@@ -63,6 +65,11 @@ class CameraSession:
         self.scheduler = CommandScheduler(self.client.send, min_interval=self.cfg.min_interval)
         self.scheduler.start()
         self.frames.start()
+        if self.analysis:
+            from ptztracker.vision.analyzer import Analyzer
+
+            self.analyzer = Analyzer(self.frames, self._detector_factory())
+            self.analyzer.start()
         self._hb_stop.clear()
         self._hb_thread = threading.Thread(target=self._heartbeat, name="cam-heartbeat", daemon=True)
         self._hb_thread.start()
@@ -74,6 +81,8 @@ class CameraSession:
         таймаутах, дорабатывают в фоне (они daemon и сами завершатся).
         """
         self._hb_stop.set()
+        if self.analyzer:
+            self.analyzer.stop(timeout=0.2)  # поток daemon: если он в середине распознавания — доработает сам
         if self.scheduler:
             self.scheduler.emergency_stop()
             if self.scheduler.online:
@@ -83,6 +92,20 @@ class CameraSession:
             self.frames.stop(timeout=0.0)
         if self._server:
             self._server.stop()
+
+    def _detector_factory(self):
+        """Симулятор с синтетической сценой — точная разметка; иначе — нейросеть."""
+        if self.cfg.kind == "sim" and not self.scene_path:
+            from ptztracker.vision.sim_detector import SimDetector
+
+            return SimDetector
+
+        def make():
+            from ptztracker.vision.pose_detector import PoseDetector
+
+            return PoseDetector()
+
+        return make
 
     def _on_rtsp_found(self, url: str) -> None:
         self.found_rtsp_url = url

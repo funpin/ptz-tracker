@@ -71,7 +71,7 @@ def appearance_distance(a: np.ndarray, b: np.ndarray) -> float:
     return float(cv2.compareHist(a, b, cv2.HISTCMP_BHATTACHARYYA))
 
 
-@dataclass
+@dataclass(eq=False)  # треки сравниваются по номеру, не по содержимому (там массивы numpy)
 class Track:
     id: int
     box: tuple[float, float, float, float]
