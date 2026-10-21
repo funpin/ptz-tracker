@@ -417,7 +417,7 @@ class MainWindow(QMainWindow):
 
         try:
             # отдельное окно: клавиши в нём не управляют камерой (фильтр главного окна его не считает своим)
-            w = ReplayWindow(Episode.open(path), parent=self)
+            w = ReplayWindow(Episode.open(path), parent=self, on_escape=self.emergency_stop)
         except Exception as e:
             QMessageBox.warning(self, "Запись", f"Не удалось открыть запись {path.name}: {e}")
             return None
@@ -511,9 +511,7 @@ class MainWindow(QMainWindow):
                     self._on_composition(comp_keys[key])
                 return True
             if key == Qt.Key_Escape and et == QEvent.KeyPress:
-                self.release_all_held()
-                if self.session:
-                    self.session.emergency_stop()
+                self.emergency_stop()
                 return True
             if key in _PAN_KEYS | _ZOOM_IN_KEYS | _ZOOM_OUT_KEYS:
                 if not event.isAutoRepeat():
@@ -524,6 +522,12 @@ class MainWindow(QMainWindow):
                     self._apply_held()
                 return True
         return super().eventFilter(obj, event)
+
+    def emergency_stop(self) -> None:
+        """Esc: отпустить клавиши, выключить слежение, остановить камеру."""
+        self.release_all_held()
+        if self.session:
+            self.session.emergency_stop()
 
     def _apply_held(self) -> None:
         if not self.session:

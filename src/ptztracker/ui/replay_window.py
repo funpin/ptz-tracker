@@ -11,12 +11,14 @@ import bisect
 import time
 import zipfile
 from collections import OrderedDict
+from collections.abc import Callable
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from ptztracker.recorder.reader import Episode, _num, read_frame
+from ptztracker.recorder.replay import seen_in_frame
 from ptztracker.ui.preview import PreviewWidget
 from ptztracker.video.frames import Frame, SourceStats
 from ptztracker.vision.analyzer import AnalysisResult
@@ -25,6 +27,7 @@ from ptztracker.vision.tracker import Track
 SPEEDS = (0.25, 0.5, 1.0, 2.0, 4.0)
 TICK_MS = 30
 CONTROL_NEAR_S = 0.5  # такт регулятора дальше этого от кадра — слежения в этот момент не было
+ANALYSIS_STALE_S = 0.5  # анализ старше этого — анализа в этот момент не было, рамки не показываем
 TARGET_STATES = {"tracking": "веду", "lost": "потеряна"}
 STATE_NAMES = {"idle": "стоит", "holding": "держит", "moving": "ведёт", "diverged": "раскачка"}
 
@@ -79,11 +82,14 @@ class EpisodeFrames:
         return SourceStats(True, 0.0, w, h, None if fr is not None else "кадр записи не читается", "запись")
 
 
-def _track(d: dict) -> Track:
+def _track(d: dict, t_capture: float) -> Track:
+    last_seen = float(d["last_seen"])
+    if seen_in_frame(last_seen, t_capture):
+        last_seen = t_capture  # превью сравнивает точно: виден в кадре — рисуется скелет и курсор
     kp = np.array(d.get("keypoints") or np.zeros((17, 3)), np.float32).reshape(-1, 3)
     return Track(
         id=int(d["id"]), box=tuple(float(v) for v in d["box"][:4]), score=float(d.get("score", 0.0)),
-        keypoints=kp, last_seen=float(d["last_seen"]), hits=int(d.get("hits", 1)),
+        keypoints=kp, last_seen=last_seen, hits=int(d.get("hits", 1)),
         misses=int(d.get("misses", 0)), velocity=tuple(float(v) for v in d.get("velocity") or (0.0, 0.0)),
         created=float(d.get("created", 0.0)),
     )
@@ -92,19 +98,20 @@ def _track(d: dict) -> Track:
 def _result(i: int, e: dict) -> AnalysisResult | None:
     """Записанное событие analysis → AnalysisResult (как отдал бы Analyzer). None — событие повреждено."""
     try:
+        tc = float(e["t_capture"])
         tracks = []
         for d in e.get("tracks") or []:
             try:
-                tracks.append(_track(d))
-            except (KeyError, TypeError, ValueError, IndexError):
+                tracks.append(_track(d, tc))
+            except (KeyError, TypeError, ValueError, IndexError, OverflowError):
                 continue
         fs = e["frame_size"]
         return AnalysisResult(
-            seq=i, t_capture=float(e["t_capture"]), frame_size=(int(fs[0]), int(fs[1])), tracks=tuple(tracks),
+            seq=i, t_capture=tc, frame_size=(int(fs[0]), int(fs[1])), tracks=tuple(tracks),
             target_id=e.get("target_id"), target_state=e.get("target_state") or "none",
             infer_ms=float(e.get("infer_ms") or 0.0), fps=0.0, detector="запись", device="—",
         )
-    except (KeyError, TypeError, ValueError, IndexError):
+    except (KeyError, TypeError, ValueError, IndexError, OverflowError):
         return None
 
 
@@ -123,9 +130,13 @@ class RecordedAnalysis:
         self._latest: AnalysisResult | None = None
 
     def show(self, t: float) -> None:
-        """Последний анализ кадра, снятого не позже t (у кадра записи он с тем же t_capture)."""
+        """Последний анализ кадра, снятого не позже t (у кадра записи он с тем же t_capture).
+
+        Если он старше ANALYSIS_STALE_S, анализ тогда не шёл — None, чтобы рамки не «замерзали».
+        """
         i = bisect.bisect_right(self._t, t + 1e-6) - 1
-        self._latest = _result(i, self._events[i]) if i >= 0 else None
+        fresh = i >= 0 and t - self._t[i] <= ANALYSIS_STALE_S
+        self._latest = _result(i, self._events[i]) if fresh else None
 
     def latest(self) -> AnalysisResult | None:
         return self._latest
@@ -179,9 +190,11 @@ def control_text(e: dict | None) -> str:
 class ReplayWindow(QWidget):
     """Просмотр записи: превью с рамками, ползунок времени, ▶/⏸, скорость, коды и состояние регулятора."""
 
-    def __init__(self, episode: Episode, parent=None):
+    def __init__(self, episode: Episode, parent=None, on_escape: Callable[[], None] | None = None):
+        """on_escape — аварийный стоп камеры главного окна (Esc и здесь означает «стоп»)."""
         super().__init__(parent, Qt.Window)
         self.episode = episode
+        self._on_escape = on_escape
         self.setWindowTitle(f"Запись — {episode.path.name}")
         self.resize(1000, 680)
         self.source = EpisodeFrames(episode)
@@ -287,6 +300,15 @@ class ReplayWindow(QWidget):
         t0 = self.source.times[0]
         self.time_label.setText(f"{t - t0:5.1f} / {self.source.times[-1] - t0:.1f} с")
         self.status.setText(f"{target_text(self.analysis.latest())} · {control_text(self.controls.near(t))}")
+
+    def keyPressEvent(self, e):  # noqa: N802
+        if e.key() == Qt.Key_Escape:
+            # оператор жмёт Esc в эфире — значит «стоп камере», где бы ни был фокус
+            if self._on_escape is not None:
+                self._on_escape()
+            self.close()
+            return
+        super().keyPressEvent(e)
 
     def closeEvent(self, e):  # noqa: N802
         self._set_playing(False)

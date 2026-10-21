@@ -160,13 +160,13 @@ def test_replay_skips_damaged_events(tmp_path):
     assert res.skipped_events == 5
     assert res.codes_new == res.codes_rec  # кривой такт не сдвинул состояние регулятора
     assert len(res.t) == 200 and len(res.position) == 2
-    assert "Пропущено 5 повреждённых событий" in res.summary().text()
+    assert "Пропущено 5 повреждённых строк записи" in res.summary().text()
 
 
 def test_cli_replay_damaged_episode(tmp_path, capsys):
     path = _with_damage(tmp_path, _following_events())
     assert main(["--replay", str(path), "--out", str(tmp_path)]) == 0
-    assert "Пропущено 5 повреждённых событий" in capsys.readouterr().out
+    assert "Пропущено 5 повреждённых строк записи" in capsys.readouterr().out
 
 
 def test_replay_with_other_effort_changes_codes(tmp_path):

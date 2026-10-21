@@ -59,7 +59,7 @@ class ReplaySummary:
         if not self.calibration_ok:
             lines.append("Калибровка в записи не читается: повтор идёт по средним значениям, коды могут не совпасть.")
         if self.skipped_events:
-            lines.append(f"Пропущено {self.skipped_events} повреждённых событий.")
+            lines.append(f"Пропущено {self.skipped_events} повреждённых строк записи.")
         if self.partial_start:
             lines.append("Запись началась посреди слежения: первые такты могут не совпасть с записанными.")
         return "\n".join(lines)
@@ -311,7 +311,7 @@ def replay_controller(
             elif kind == "position":
                 z = e.get("zoom")
                 res.position.append((t, int(e["pan"]), int(e["tilt"]), None if z is None else int(z)))
-        except (KeyError, TypeError, ValueError, IndexError):
+        except (KeyError, TypeError, ValueError, IndexError, OverflowError):
             res.skipped_events += 1
     res.segments = [(a, b) for a, b in bounds]
     res.lost = _lost_intervals(res.targets, res.t_end)
@@ -333,6 +333,7 @@ def _lost_intervals(targets: list[tuple[float, int | None, str]], t_end: float) 
 
 # --- повтор через распознавание -----------------------------------------------
 
+SEEN_T_S = 1e-3  # last_seen и t_capture — одно живое значение, но после JSON могут разойтись в последних знаках
 MATCH_T_S = 0.01  # событие analysis относится к кадру, если его t_capture совпадает с моментом кадра
 AGREE_IOU = 0.5  # рамки цели «было» и «стало» — один человек
 
@@ -364,7 +365,7 @@ class AnalysisSummary:
         if self.failed_frames:
             lines.append(f"Кадров не распознано (ошибка детектора): {self.failed_frames}")
         if self.skipped_events:
-            lines.append(f"Пропущено {self.skipped_events} повреждённых событий.")
+            lines.append(f"Пропущено {self.skipped_events} повреждённых строк записи.")
         return "\n".join(lines)
 
 
@@ -399,6 +400,11 @@ class AnalysisReplay:
             agree_pct=100.0 * agree / both if both else None,
             skipped_events=self.skipped_events,
         )
+
+
+def seen_in_frame(last_seen, t_capture) -> bool:
+    """Человек виден в кадре этого анализа (а не продлён из прошлых кадров)."""
+    return abs(float(last_seen) - float(t_capture)) <= SEEN_T_S
 
 
 def _analysis_events(ep: Episode) -> tuple[list[tuple[float, dict]], int]:
@@ -443,9 +449,9 @@ def _recorded_target(e: dict | None, k: float) -> tuple[tuple[int | None, str] |
     box = None
     for tr in e.get("tracks") or []:
         try:
-            if tid is not None and tr["id"] == tid and tr["last_seen"] == e["t_capture"]:
+            if tid is not None and tr["id"] == tid and seen_in_frame(tr["last_seen"], e["t_capture"]):
                 box = tuple(float(v) * k for v in tr["box"][:4])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             continue
     return (tid, e.get("target_state") or "none"), box
 
@@ -474,7 +480,7 @@ def replay_analysis(ep: Episode, detector=None, tracker=None) -> AnalysisReplay:
     for tc, e in analysis:
         try:
             by_seq.setdefault(int(e["seq"]), []).append((tc, e))
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             res.skipped_events += 1
     click = _first_click(ep)
     pending = click is not None

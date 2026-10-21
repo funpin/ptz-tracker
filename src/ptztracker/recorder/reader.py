@@ -64,7 +64,7 @@ def read_frame(z: zipfile.ZipFile, entry: dict) -> np.ndarray | None:
 def _frame_ok(f: dict) -> bool:
     try:
         int(f["seq"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):  # seq = inf (1e999 в JSON)
         return False
     return isinstance(f.get("file"), str) and _num(f.get("t")) is not None
 

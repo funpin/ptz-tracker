@@ -45,7 +45,8 @@ class FixedDetector:
                 for b in boxes]
 
 
-def build_episode(tmp_path, n=20, click_at=0.5, click_frac=(0.75, 0.5)) -> Path:
+def build_episode(tmp_path, n=20, click_at=0.5, click_frac=(0.75, 0.5), last_seen_jitter=0.0,
+                  extra_events=()) -> Path:
     """Эпизод из people.jpg × n кадров: анализ в полном разрешении (810×1080), кадры в записи — 270×360."""
     img = cv2.imread(str(PHOTO))
     h, w = img.shape[:2]
@@ -58,11 +59,13 @@ def build_episode(tmp_path, n=20, click_at=0.5, click_frac=(0.75, 0.5)) -> Path:
         selected = t > click_t
         tracks = [{"id": tid, "box": [round(v, 1) for v in _abs_box(b, w, h)], "score": 0.9,
                    "keypoints": [[0.0, 0.0, 0.0]] * NUM_KP, "velocity": [0.0, 0.0], "hits": i + 1, "misses": 0,
-                   "last_seen": t, "created": T0}
+                   "last_seen": t + last_seen_jitter, "created": T0}
                   for tid, b in zip(REC_IDS, BOXES)]
         bb.event("analysis", t=t + 0.03, seq=100 + i, t_capture=t, frame_size=[w, h], tracks=tracks,
                  target_id=REC_IDS[1] if selected else None, target_state="tracking" if selected else "none",
                  infer_ms=20.0)
+    for kind, data in extra_events:
+        bb.event(kind, **data)
     bb.flush()
     path = bb.save_snapshot("повтор").result(timeout=10)
     bb.close()
@@ -90,6 +93,22 @@ def test_analysis_replay_on_fixture_episode(tmp_path):
     assert s.agree_pct == pytest.approx(100.0)
     text = s.text()
     assert "Смены цели: было 0, стало 0" in text and "Совпадение рамки цели" in text
+
+
+def test_recorded_target_box_tolerates_rounding(tmp_path):
+    """last_seen и t_capture — одно живое значение, но в JSON могут разойтись в последних знаках."""
+    ep = Episode.open(build_episode(tmp_path, last_seen_jitter=3e-7))
+    r = replay_analysis(ep, detector=FixedDetector())
+    assert all(b is not None for b in r.rec_box[3:])
+    assert r.summary().agree_pct == pytest.approx(100.0)
+
+
+def test_analysis_replay_skips_overflowing_seq(tmp_path):
+    bad = ("analysis", {"t": T0 + 0.1, "seq": float("inf"), "t_capture": T0 + 0.1, "frame_size": [810, 1080],
+                        "tracks": [], "target_id": None, "target_state": "none"})
+    r = replay_analysis(Episode.open(build_episode(tmp_path, extra_events=[bad])), detector=FixedDetector())
+    assert len(r.t) == 20 and r.skipped_events == 1
+    assert "повреждённых строк записи" in r.summary().text()
 
 
 def test_analysis_replay_counts_loss(tmp_path):
@@ -142,6 +161,7 @@ def test_frames_index_skips_damaged_lines(tmp_path):
         json.dumps({"t": 1.4, "w": 64, "h": 36, "file": "frames/000003.jpg"}),  # без номера
         json.dumps({"t": 1.6, "seq": 4, "w": 64, "h": 36, "file": "frames/000004.jpg"}),  # файла нет в zip
         json.dumps({"t": 1.8, "seq": 5, "w": 64, "h": 36, "file": "frames/000005.jpg"}),
+        '{"t": 2.0, "seq": 1e999, "w": 64, "h": 36, "file": "frames/000005.jpg"}',  # номер — бесконечность
     ]
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("meta.json", "{}")
@@ -150,7 +170,7 @@ def test_frames_index_skips_damaged_lines(tmp_path):
         for s in (1, 3, 5):
             z.writestr(f"frames/{s:06d}.jpg", jpg.tobytes())
     ep = Episode.open(path)
-    assert ep.bad_lines == 1 + 3  # строка events + три негодные строки frames
+    assert ep.bad_lines == 1 + 4  # строка events + четыре негодные строки frames
     assert [s for _, s, _ in ep.frames()] == [1, 5]
 
 
