@@ -135,7 +135,8 @@ def _fix_record_settings(cfg: AppConfig) -> None:
     if not isinstance(cfg.record_to_disk, bool):
         cfg.record_to_disk = d.record_to_disk
     b = cfg.record_buffer_s
-    if isinstance(b, bool) or not isinstance(b, (int, float)) or not math.isfinite(b):
+    # int проверяем отдельно: math.isfinite(10**400) бросает OverflowError, а большой int просто обрезается
+    if isinstance(b, bool) or not isinstance(b, (int, float)) or (isinstance(b, float) and not math.isfinite(b)):
         b = d.record_buffer_s
     cfg.record_buffer_s = int(min(RECORD_BUFFER_MAX_S, max(RECORD_BUFFER_MIN_S, b)))
     if not isinstance(cfg.record_dir, str):

@@ -140,7 +140,7 @@ def test_record_settings_defaults_roundtrip_and_fallback(tmp_path):
 
 @pytest.mark.parametrize("raw, expected", [
     ("Infinity", 300), ("-Infinity", 300), ("NaN", 300), ('"300"', 300), ("null", 300),
-    ("5000", 900), ("10", 60), ("450.7", 450),
+    ("5000", 900), ("10", 60), ("450.7", 450), (str(10**400), 900), ("-" + str(10**400), 60), ("1e400", 300),
 ])
 def test_record_buffer_bad_values_do_not_break_start(tmp_path, raw, expected):
     p = tmp_path / "config.json"
