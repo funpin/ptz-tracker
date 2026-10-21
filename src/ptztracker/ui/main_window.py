@@ -25,11 +25,14 @@ from ptztracker.camera.session import CameraSession
 from ptztracker.config import AppConfig, CameraConfig, ConfigStore, get_password, set_password
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
+from ptztracker.tally import atem_input_of
+from ptztracker.tally.atem import AtemTally
+from ptztracker.ui.atem_dialog import AtemDialog
 from ptztracker.ui.camera_dialog import CameraDialog
 from ptztracker.ui.follow_panel import FollowPanel
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.preview import PreviewWidget
-from ptztracker.ui.state import TrackingView, tracking_view
+from ptztracker.ui.state import TrackingView, tally_chip, tracking_view
 from ptztracker.ui.theme import FS_CAPTION, SP, C
 from ptztracker.ui.widgets import Chip, SectionHeader, VideoFrame, keycap_width, paint_keycap
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
@@ -101,7 +104,7 @@ class _ElidedChip(Chip):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None):
+    def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None, atem_port: int = 9910):
         super().__init__(parent)
         self.setWindowTitle("PTZ Tracker")
         self.resize(1640, 850)
@@ -110,6 +113,9 @@ class MainWindow(QMainWindow):
         self.use_sim = use_sim
         self.session: CameraSession | None = None
         self._held: set[int] = set()
+        self._atem_port = atem_port
+        self.atem: AtemTally | None = None
+        self._tally_shown: tuple | None = None
 
         self.preview = PreviewWidget()
         self.video_frame = VideoFrame(self.preview)
@@ -130,6 +136,8 @@ class MainWindow(QMainWindow):
 
         # верхняя строка: камера, видео, состояние связи (чипы — одним рядом, анализ последним)
         self.link_label = Chip("", "neutral")
+        self.atem_chip = Chip("", "neutral")
+        self.atem_chip.hide()
         self.video_label = _ElidedChip()
         self.analysis_label = _ElidedChip()
         self.toolbar = QToolBar("Камера")
@@ -148,7 +156,7 @@ class MainWindow(QMainWindow):
         tl.addWidget(self._caption("Видео"))
         tl.addWidget(self.stream_combo)
         tl.addStretch(1)
-        for chip in (self.link_label, self.video_label, self.analysis_label):
+        for chip in (self.atem_chip, self.link_label, self.video_label, self.analysis_label):
             tl.addWidget(chip)
         self.toolbar.addWidget(tw)
         self.addToolBar(Qt.TopToolBarArea, self.toolbar)
@@ -212,6 +220,9 @@ class MainWindow(QMainWindow):
         self.calib_action = QAction("Калибровка камеры…", self)
         self.service_menu.addAction(self.calib_action)
         self.calib_action.triggered.connect(self._run_calibration)
+        self.atem_action = QAction("ATEM…", self)
+        self.service_menu.addAction(self.atem_action)
+        self.atem_action.triggered.connect(self._edit_atem)
 
         self.add_btn.clicked.connect(self._add_camera)
         self.edit_btn.clicked.connect(self._edit_camera)
@@ -228,6 +239,7 @@ class MainWindow(QMainWindow):
         self.follow_panel.effortChanged.connect(self._on_effort)
         self._follow_timer = QTimer(self)
         self._follow_timer.timeout.connect(self._sync_follow)
+        self._follow_timer.timeout.connect(self._sync_tally)
         self._follow_timer.start(100)
         self._view_shown: TrackingView | None = None
 
@@ -236,6 +248,7 @@ class MainWindow(QMainWindow):
         self._status_timer.start(500)
 
         QApplication.instance().installEventFilter(self)
+        self._restart_atem()
         self._fill_combo(select_id="sim" if use_sim else self.cfg.last_camera_id)
 
     # --- список камер -------------------------------------------------
@@ -337,6 +350,45 @@ class MainWindow(QMainWindow):
             self._view_shown = v
             self.follow_panel.set_view(v)
             self.video_frame.set_tracking_tag(v.tag, v.color)
+
+    def _restart_atem(self) -> None:
+        """Остановить старый клиент ATEM и создать новый из cfg.atem_ip (пусто — Tally выключен)."""
+        if self.atem:
+            self.atem.stop()
+            self.atem = None
+        if self.cfg.atem_ip:
+            self.atem = AtemTally(self.cfg.atem_ip, port=self._atem_port)
+            self.atem.start()
+        self._tally_shown = None
+        self._sync_tally()
+
+    def _edit_atem(self) -> None:
+        d = AtemDialog(self.cfg.atem_ip, self)
+        if not d.exec():
+            return
+        self.cfg.atem_ip = d.ip()
+        self._save()
+        self._restart_atem()
+
+    def _sync_tally(self) -> None:
+        """Tally из снимка клиента (сеть не ждём): рамка видео и чип, обновляются только при изменении."""
+        configured = self.atem is not None
+        snap = self.atem.snapshot() if self.atem else None
+        online = bool(snap and snap.online)
+        cam = self._current_cfg()
+        inp = atem_input_of(cam) if cam else 0
+        state = snap.state(inp) if snap and inp else None
+        key = (configured, online, inp, state)
+        if key == self._tally_shown:
+            return
+        self._tally_shown = key
+        chip = tally_chip(configured, online, inp, state)
+        if chip is None:
+            self.atem_chip.hide()
+        else:
+            self.atem_chip.set(*chip)
+            self.atem_chip.show()
+        self.video_frame.set_tally(state if online else None)
 
     def emergency_stop(self) -> None:
         """Общий аварийный стоп (Esc и кнопка): отпустить клавиши, затем остановить камеру и слежение."""
@@ -579,6 +631,9 @@ class MainWindow(QMainWindow):
         QApplication.instance().removeEventFilter(self)
         self._status_timer.stop()
         self._follow_timer.stop()
+        if self.atem:
+            self.atem.stop()
+            self.atem = None
         self.release_all_held()
         if self.session:
             self.session.stop()

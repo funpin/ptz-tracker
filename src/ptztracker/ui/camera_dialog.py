@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from ptztracker.camera.client import AuthRequired, CameraClient, CameraUnreachable
 from ptztracker.camera.protocol import Q_MODEL, CameraError, parse_model
 from ptztracker.config import CameraConfig, is_valid_ip
+from ptztracker.tally import MAX_ATEM_INPUT, atem_input_of
 
 
 class _Signals(QObject):
@@ -64,6 +65,10 @@ class CameraDialog(QDialog):
         self.interval_spin.setRange(30, 1000)
         self.interval_spin.setSuffix(" мс")
         self.interval_spin.setValue(round((cfg.min_interval if cfg else 0.130) * 1000))
+        self.atem_spin = QSpinBox()
+        self.atem_spin.setRange(0, MAX_ATEM_INPUT)
+        self.atem_spin.setSpecialValueText("нет")
+        self.atem_spin.setValue(atem_input_of(cfg) if cfg else 0)
 
         form = QFormLayout()
         form.addRow("Название", self.name_edit)
@@ -72,6 +77,7 @@ class CameraDialog(QDialog):
         form.addRow("Пароль", self.pass_edit)
         form.addRow("RTSP-адрес (необязательно)", self.rtsp_edit)
         form.addRow("Мин. интервал команд", self.interval_spin)
+        form.addRow("Вход ATEM", self.atem_spin)
 
         self.test_button = QPushButton("Проверить связь")
         self.test_result = QLabel("")
@@ -123,6 +129,7 @@ class CameraDialog(QDialog):
             username=self.user_edit.text().strip() or None,
             rtsp_url=self.rtsp_edit.text().strip() or None,
             min_interval=self.interval_spin.value() / 1000,
+            atem_input=self.atem_spin.value(),
         )
 
     def password(self) -> str | None:
