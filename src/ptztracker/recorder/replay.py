@@ -4,6 +4,10 @@
 получаются новые коды pan/tilt/zoom. С теми же настройками коды совпадают с записанными — так
 проверяется, что повтор честный; с другими (effort, composition, калибровка) видно, что изменилось
 бы на этом эпизоде.
+
+Режим «распознавание»: кадры записи заново идут через детектор и PersonTracker. Цель выбирается
+тем же щелчком, что и в записи; сравниваются цель «было/стало», смены и потери — так исправления
+трекера проверяются на настоящих кадрах.
 """
 
 from __future__ import annotations
@@ -16,7 +20,8 @@ from ptztracker.control.composition import COMPOSITIONS, DEFAULT_COMPOSITION, Bo
 from ptztracker.control.effort import EffortProfile
 from ptztracker.control.follower import output_codes
 from ptztracker.control.framing import FramingController, FramingInput
-from ptztracker.recorder.reader import Episode
+from ptztracker.recorder.reader import Episode, _num
+from ptztracker.vision.tracker import _iou
 
 # follow on, записанный позже первого такта (поток слежения успел раньше enable()), — тот же запуск
 LATE_FOLLOW_ON_S = 0.2
@@ -94,9 +99,8 @@ class ReplayResult:
             max_accel_rec=self._max_accel(self.codes_rec),
             max_accel_new=self._max_accel(self.codes_new),
             out_of_soft_pct=self._out_of_soft_pct(),
-            target_losses=sum(1 for a, b in zip(self.targets, self.targets[1:])
-                              if a[2] == "tracking" and b[2] == "lost"),
-            target_switches=self._switches(),
+            target_losses=_count_losses([st for _, _, st in self.targets]),
+            target_switches=_count_switches([tid for _, tid, _ in self.targets]),
             max_code_diff=max((abs(x - y) for a, b in zip(self.codes_rec, self.codes_new) for x, y in zip(a, b)),
                               default=0),
             partial_start=self.partial_start,
@@ -143,15 +147,21 @@ class ReplayResult:
                 out += dt
         return 100.0 * out / total if total > 0 else 0.0
 
-    def _switches(self) -> int:
-        n, last = 0, None
-        for _, tid, _ in self.targets:
-            if tid is None:
-                continue
-            if last is not None and tid != last:
-                n += 1
-            last = tid
-        return n
+
+def _count_switches(ids: list[int | None]) -> int:
+    """Сколько раз номер цели сменился на другой (сброс цели между ними — не смена)."""
+    n, last = 0, None
+    for tid in ids:
+        if tid is None:
+            continue
+        if last is not None and tid != last:
+            n += 1
+        last = tid
+    return n
+
+
+def _count_losses(states: list[str]) -> int:
+    return sum(1 for a, b in zip(states, states[1:]) if a == "tracking" and b == "lost")
 
 
 def _composition(key, fallback: Composition) -> Composition:
@@ -319,3 +329,191 @@ def _lost_intervals(targets: list[tuple[float, int | None, str]], t_end: float) 
     if since is not None:
         out.append((since, max(since, t_end)))
     return out
+
+
+# --- повтор через распознавание -----------------------------------------------
+
+MATCH_T_S = 0.01  # событие analysis относится к кадру, если его t_capture совпадает с моментом кадра
+AGREE_IOU = 0.5  # рамки цели «было» и «стало» — один человек
+
+Box = tuple[float, float, float, float]
+
+
+@dataclass
+class AnalysisSummary:
+    frames: int
+    failed_frames: int
+    selected: bool  # щелчок из записи выбрал цель и в повторе
+    switches_rec: int
+    switches_new: int
+    losses_rec: int
+    losses_new: int
+    agree_pct: float | None  # % кадров, где рамка цели «стало» совпадает с записанной
+    skipped_events: int = 0
+
+    def text(self) -> str:
+        lines = [f"Кадров: {self.frames}"]
+        if not self.selected:
+            lines.append("Цель не выбрана: в записи нет щелчка по человеку или в повторе на его месте никого нет.")
+        lines += [
+            f"Смены цели: было {self.switches_rec}, стало {self.switches_new}",
+            f"Потери цели: было {self.losses_rec}, стало {self.losses_new}",
+        ]
+        if self.agree_pct is not None:
+            lines.append(f"Совпадение рамки цели с записанной: {self.agree_pct:.0f}% кадров")
+        if self.failed_frames:
+            lines.append(f"Кадров не распознано (ошибка детектора): {self.failed_frames}")
+        if self.skipped_events:
+            lines.append(f"Пропущено {self.skipped_events} повреждённых событий.")
+        return "\n".join(lines)
+
+
+@dataclass
+class AnalysisReplay:
+    # ряды по распознанным кадрам; координаты — в пикселях кадра записи
+    t: list[float] = field(default_factory=list)
+    seq: list[int] = field(default_factory=list)
+    rec: list[tuple[int | None, str] | None] = field(default_factory=list)  # записанная цель; None — нет события
+    new: list[tuple[int | None, str]] = field(default_factory=list)  # (номер, состояние) цели в повторе
+    rec_box: list[Box | None] = field(default_factory=list)
+    new_box: list[Box | None] = field(default_factory=list)
+    people: list[int] = field(default_factory=list)  # сколько людей нашёл детектор
+    click: tuple[float, float, float] | None = None  # (t, x, y) щелчка из записи, в пикселях кадра записи
+    selected_id: int | None = None
+    failed_frames: int = 0
+    skipped_events: int = 0
+
+    def summary(self) -> AnalysisSummary:
+        rec = [r for r in self.rec if r is not None]
+        both = sum(1 for a, b in zip(self.rec_box, self.new_box) if a is not None or b is not None)
+        agree = sum(1 for a, b in zip(self.rec_box, self.new_box)
+                    if a is not None and b is not None and _iou(a, b) >= AGREE_IOU)
+        return AnalysisSummary(
+            frames=len(self.t),
+            failed_frames=self.failed_frames,
+            selected=self.selected_id is not None,
+            switches_rec=_count_switches([tid for tid, _ in rec]),
+            switches_new=_count_switches([tid for tid, _ in self.new]),
+            losses_rec=_count_losses([st for _, st in rec]),
+            losses_new=_count_losses([st for _, st in self.new]),
+            agree_pct=100.0 * agree / both if both else None,
+            skipped_events=self.skipped_events,
+        )
+
+
+def _analysis_events(ep: Episode) -> tuple[list[tuple[float, dict]], int]:
+    """События analysis, отсортированные по t_capture; (события, сколько повреждённых пропущено)."""
+    out, bad = [], 0
+    for e in ep.events("analysis"):
+        try:
+            tc = float(e["t_capture"])
+            fw = float(e["frame_size"][0])
+        except (KeyError, TypeError, ValueError, IndexError):
+            bad += 1
+            continue
+        if math.isfinite(tc) and math.isfinite(fw) and fw > 0:
+            out.append((tc, e))
+        else:
+            bad += 1
+    out.sort(key=lambda te: te[0])
+    return out, bad
+
+
+def _nearest(items: list[tuple[float, dict]], t: float) -> tuple[float, dict] | None:
+    return min(items, key=lambda te: abs(te[0] - t), default=None)
+
+
+def _first_click(ep: Episode) -> tuple[float, float, float] | None:
+    """(t, x, y) первого щелчка по человеку — в пикселях кадра анализа."""
+    clicks = []
+    for e in ep.events("target"):
+        if e.get("how") != "click":
+            continue
+        t, x, y = _time(e), _num(e.get("x")), _num(e.get("y"))
+        if t is not None and x is not None and y is not None:
+            clicks.append((t, x, y))
+    return min(clicks, default=None)
+
+
+def _recorded_target(e: dict | None, k: float) -> tuple[tuple[int | None, str] | None, Box | None]:
+    """Записанная цель кадра и её рамка (пересчитанная коэффициентом k в кадр записи)."""
+    if e is None:
+        return None, None
+    tid = e.get("target_id")
+    box = None
+    for tr in e.get("tracks") or []:
+        try:
+            if tid is not None and tr["id"] == tid and tr["last_seen"] == e["t_capture"]:
+                box = tuple(float(v) * k for v in tr["box"][:4])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return (tid, e.get("target_state") or "none"), box
+
+
+def replay_analysis(ep: Episode, detector=None, tracker=None) -> AnalysisReplay:
+    """Прогоняет кадры эпизода через детектор и PersonTracker — синхронно, по порядку записи.
+
+    Так же, как Analyzer._run: детекция → гистограммы → tracker.update. Цель выбирается первым
+    записанным щелчком (`target`, how="click") в тех же координатах, пересчитанных из кадра анализа
+    в кадр записи (кадры в записи бывают уменьшены до 640×360). Щелчок применяется к состоянию
+    трекера после последнего кадра до него — как в жизни, между двумя анализами.
+    Без детектора берётся нейросеть (PoseDetector).
+    """
+    from ptztracker.video.frames import Frame
+    from ptztracker.vision.tracker import PersonTracker, compute_histograms
+
+    if detector is None:
+        from ptztracker.vision.pose_detector import PoseDetector
+
+        detector = PoseDetector()
+    tracker = tracker or PersonTracker()
+    res = AnalysisReplay()
+    analysis, bad = _analysis_events(ep)
+    res.skipped_events = getattr(ep, "bad_lines", 0) + bad
+    by_seq: dict[int, list[tuple[float, dict]]] = {}
+    for tc, e in analysis:
+        try:
+            by_seq.setdefault(int(e["seq"]), []).append((tc, e))
+        except (KeyError, TypeError, ValueError):
+            res.skipped_events += 1
+    click = _first_click(ep)
+    pending = click is not None
+    n = 0
+
+    def apply_click(img_w: int) -> None:
+        nonlocal pending
+        pending = False
+        ct, cx, cy = click
+        near = _nearest(analysis, ct)
+        k = img_w / float(near[1]["frame_size"][0]) if near else 1.0  # из кадра анализа в кадр записи
+        res.click = (ct, cx * k, cy * k)
+        res.selected_id = tracker.select_at(cx * k, cy * k)
+
+    for t, seq, img in ep.frames():
+        if pending and n > 0 and t > click[0]:
+            apply_click(img.shape[1])
+        try:
+            people = detector.detect(Frame(image=img, t_capture=t, seq=seq))
+        except Exception:
+            res.failed_frames += 1
+            continue
+        hists = compute_histograms(img, people)
+        tracker.update(people, t, img, hists)
+        n += 1
+        if pending and t >= click[0]:  # щелчок раньше первого кадра (или ровно на нём)
+            apply_click(img.shape[1])
+
+        near = _nearest(by_seq.get(seq, []), t)
+        ev = near[1] if near is not None and abs(near[0] - t) <= MATCH_T_S else None
+        k = img.shape[1] / float(ev["frame_size"][0]) if ev is not None else 1.0
+        rec, rec_box = _recorded_target(ev, k)
+        tgt = tracker.target
+        state = tracker.target_state
+        res.t.append(t)
+        res.seq.append(seq)
+        res.rec.append(rec)
+        res.rec_box.append(rec_box)
+        res.new.append((tracker.target_id, state))
+        res.new_box.append(tuple(float(v) for v in tgt.box) if tgt is not None and state == "tracking" else None)
+        res.people.append(len(people))
+    return res

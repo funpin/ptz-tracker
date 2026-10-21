@@ -24,16 +24,12 @@ def _parser() -> argparse.ArgumentParser:
     r.add_argument("--replay", metavar="PATH", help="прогнать сохранённую запись (zip) без камеры")
     r.add_argument("--mode", choices=("controller", "analysis"), default="controller",
                    help="controller — через регулятор (по умолчанию), analysis — через распознавание")
+    r.add_argument("--view", action="store_true", help="открыть запись в окне просмотра")
     return p
 
 
 def run_replay_cli(args) -> int:
-    if args.mode == "analysis":
-        print("Режим analysis появится позже. Пока есть только --mode controller.", file=sys.stderr)
-        return 2
-    from ptztracker.recorder.plots import render
     from ptztracker.recorder.reader import Episode
-    from ptztracker.recorder.replay import replay_controller
 
     src = Path(args.replay)
     try:
@@ -41,6 +37,13 @@ def run_replay_cli(args) -> int:
     except Exception as e:
         print(f"Не удалось открыть запись {src}: {e}", file=sys.stderr)
         return 2
+    if args.view:
+        return run_replay_view(ep)
+    if args.mode == "analysis":
+        return _replay_analysis_cli(src, ep)
+    from ptztracker.recorder.plots import render
+    from ptztracker.recorder.replay import replay_controller
+
     try:
         res = replay_controller(ep)
         print(f"Запись: {src} ({ep.duration:.1f} с)")
@@ -52,6 +55,33 @@ def run_replay_cli(args) -> int:
         return 1
     print(f"Графики: {png}")
     return 0
+
+
+def _replay_analysis_cli(src: Path, ep) -> int:
+    from ptztracker.recorder.replay import replay_analysis
+
+    print(f"Запись: {src} ({ep.duration:.1f} с), распознаю кадры…", flush=True)
+    try:
+        res = replay_analysis(ep)
+    except Exception as e:
+        print(f"Повтор распознавания {src} не удался: {e}", file=sys.stderr)
+        return 1
+    print(res.summary().text())
+    return 0
+
+
+def run_replay_view(ep) -> int:
+    from PySide6.QtWidgets import QApplication
+
+    from ptztracker.ui.replay_window import ReplayWindow
+    from ptztracker.ui.theme import apply_dark_theme
+
+    app = QApplication.instance() or QApplication(sys.argv[:1])
+    app.setApplicationName("PTZ Tracker")
+    apply_dark_theme(app)
+    w = ReplayWindow(ep)
+    w.show()
+    return app.exec()
 
 
 def _countdown(msg: str, seconds: float) -> None:

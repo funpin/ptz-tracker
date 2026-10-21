@@ -144,6 +144,9 @@ class MainWindow(QMainWindow):
         self.rec_settings_action = QAction("Настройки записи…", self)
         self.service_menu.addAction(self.rec_settings_action)
         self.rec_settings_action.triggered.connect(self._recording_settings)
+        self.open_replay_action = QAction("Открыть запись…", self)
+        self.service_menu.addAction(self.open_replay_action)
+        self.open_replay_action.triggered.connect(self._choose_replay)
         self._saveFinished.connect(self._on_save_finished)
         self._saved_path: Path | None = None
         self._hide_folder_timer = QTimer(self)
@@ -397,6 +400,30 @@ class MainWindow(QMainWindow):
     def _show_saved_folder(self) -> None:
         if self._saved_path is not None:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._saved_path.parent)))
+
+    def _choose_replay(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        from ptztracker.config import record_dir
+
+        path, _ = QFileDialog.getOpenFileName(self, "Открыть запись", str(record_dir(self.cfg)), "Записи (*.zip)")
+        if path:
+            self.open_replay(Path(path))
+
+    def open_replay(self, path: Path) -> QWidget | None:
+        """Окно просмотра записи; камера и слежение не затрагиваются."""
+        from ptztracker.recorder.reader import Episode
+        from ptztracker.ui.replay_window import ReplayWindow
+
+        try:
+            # отдельное окно: клавиши в нём не управляют камерой (фильтр главного окна его не считает своим)
+            w = ReplayWindow(Episode.open(path), parent=self)
+        except Exception as e:
+            QMessageBox.warning(self, "Запись", f"Не удалось открыть запись {path.name}: {e}")
+            return None
+        w.setAttribute(Qt.WA_DeleteOnClose)
+        w.show()
+        return w
 
     def _recording_settings(self) -> None:
         from ptztracker.ui.recording_dialog import RecordingDialog

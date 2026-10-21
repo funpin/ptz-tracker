@@ -18,7 +18,8 @@ class Episode:
         self.meta = meta
         self._events = events
         self._frame_index = frame_index
-        self.bad_lines = bad_lines  # строки events.jsonl, которые не читаются как JSON-объект (пропущены)
+        # повреждённые строки events.jsonl и frames.jsonl (не JSON-объект, кадр без файла/номера/времени) — пропущены
+        self.bad_lines = bad_lines
         times = [t for t in (_num(e.get("t")) for e in events + frame_index) if t is not None]
         self.duration = (max(times) - min(times)) if times else 0.0
 
@@ -28,8 +29,14 @@ class Episode:
         with zipfile.ZipFile(path) as z:
             meta = json.loads(z.read("meta.json"))
             events, bad = _jsonl(z.read("events.jsonl"))
-            frames, _ = _jsonl(z.read("frames.jsonl"))
-        return cls(path, meta, events, frames, bad)
+            raw_frames, bad_frames = _jsonl(z.read("frames.jsonl"))
+        frames = [f for f in raw_frames if _frame_ok(f)]
+        return cls(path, meta, events, frames, bad + bad_frames + len(raw_frames) - len(frames))
+
+    @property
+    def frame_index(self) -> list[dict]:
+        """Кадры записи по порядку: {"t", "seq", "file", ...}; повреждённые строки уже отброшены."""
+        return self._frame_index
 
     def events(self, kind: str | None = None) -> Iterator[dict]:
         for e in self._events:
@@ -37,11 +44,29 @@ class Episode:
                 yield e
 
     def frames(self) -> Iterator[tuple[float, int, np.ndarray]]:
-        """(t_capture, seq, картинка BGR) по порядку записи."""
+        """(t_capture, seq, картинка BGR) по порядку записи; кадры, которых нет в zip или которые не читаются, пропускаются."""
         with zipfile.ZipFile(self.path) as z:
             for f in self._frame_index:
-                data = np.frombuffer(z.read(f["file"]), np.uint8)
-                yield f["t"], f["seq"], cv2.imdecode(data, cv2.IMREAD_COLOR)
+                img = read_frame(z, f)
+                if img is not None:
+                    yield float(f["t"]), int(f["seq"]), img
+
+
+def read_frame(z: zipfile.ZipFile, entry: dict) -> np.ndarray | None:
+    """Картинка BGR кадра из открытого zip эпизода; None — файла нет или JPEG не читается."""
+    try:
+        data = np.frombuffer(z.read(entry["file"]), np.uint8)
+    except (KeyError, OSError, zipfile.BadZipFile):
+        return None
+    return cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
+
+
+def _frame_ok(f: dict) -> bool:
+    try:
+        int(f["seq"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return isinstance(f.get("file"), str) and _num(f.get("t")) is not None
 
 
 def _jsonl(data: bytes) -> tuple[list[dict], int]:

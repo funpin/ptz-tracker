@@ -229,12 +229,6 @@ def test_cli_replay(tmp_path, capsys):
     assert len(list(out.glob("*.png"))) == 1
 
 
-def test_cli_replay_analysis_mode_not_yet(tmp_path, capsys):
-    _write(tmp_path / "e.zip", [])
-    assert main(["--replay", str(tmp_path / "e.zip"), "--mode", "analysis"]) == 2
-    assert "появится позже" in capsys.readouterr().err
-
-
 def test_cli_replay_missing_file(tmp_path, capsys):
     assert main(["--replay", str(tmp_path / "нет.zip")]) == 2
     assert "не удалось открыть" in capsys.readouterr().err.lower()
