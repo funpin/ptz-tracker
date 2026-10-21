@@ -50,9 +50,10 @@ def tracking_view(
 
 
 def tally_chip(
-    atem_configured: bool, online: bool, atem_input: int, state: str | None
+    atem_configured: bool, online: bool, atem_input: int, state: str | None, *, known: bool = True
 ) -> tuple[str, str] | None:
-    """(текст, kind чипа) или None, если ATEM не настроен. state: pgm | pvw | None."""
+    """(текст, kind чипа) или None, если ATEM не настроен. state: pgm | pvw | None.
+    known=False — микшер прислал меньше флагов, чем номер входа: состояние неизвестно."""
     if not atem_configured:
         return None
     if not online:
@@ -60,6 +61,8 @@ def tally_chip(
     if atem_input == 0:
         return ("ATEM · вход не задан", "neutral")
     head = f"ATEM · вход {atem_input}"
+    if not known:
+        return (f"{head} вне диапазона", "warn")
     if state == "pgm":
         return (f"{head} · ЭФИР", "pgm")
     if state == "pvw":

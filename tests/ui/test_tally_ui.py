@@ -44,6 +44,25 @@ def test_tally_frame_red_when_camera_in_pgm(qtbot, tmp_path, atem, monkeypatch):
     assert w.atem is None
 
 
+def test_tally_chip_warns_when_input_out_of_range(qtbot, tmp_path, atem, monkeypatch):
+    monkeypatch.setattr(mw, "SIM_CAMERA", dataclasses.replace(mw.SIM_CAMERA, atem_input=5))
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cfg.atem_ip = "127.0.0.1"
+    store.save(cfg)
+    atem.set_tally((0, 1))  # микшер знает только 2 входа
+    w = MainWindow(store, use_sim=True, atem_port=atem.port)
+    qtbot.addWidget(w)
+    w.show()
+    try:
+        qtbot.waitUntil(lambda: "вне диапазона" in w.atem_chip.text(), timeout=3000)
+        assert w.atem_chip.text() == "ATEM · вход 5 вне диапазона"
+        assert w.atem_chip.kind() == "warn"
+        assert w.video_frame.tally() is None
+    finally:
+        w.close()
+
+
 def test_no_atem_no_chip(qtbot, tmp_path):
     w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
     qtbot.addWidget(w)

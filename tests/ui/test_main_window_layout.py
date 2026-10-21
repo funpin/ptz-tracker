@@ -83,3 +83,34 @@ def test_long_analysis_text_keeps_width(qtbot, tmp_path):
     assert w.minimumSizeHint().width() <= 1640
     assert w.analysis_label.toolTip() == "x" * 300
     w.close()
+
+
+def test_unavailable_message_persists(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w.session.follower = None
+    w.follow_panel.follow_btn.click()
+    assert "распознавание недоступно" in w.follow_panel.follow_btn.toolTip()
+    qtbot.wait(300)  # несколько тиков таймера слежения
+    assert "распознавание недоступно" in w.follow_panel.follow_btn.toolTip()
+    w.close()
+
+
+def test_failed_enable_keeps_swing_tile(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w.session.analyzer.clear_target()
+    w.session.follower.controller.diverged = True
+    qtbot.waitUntil(lambda: w.follow_panel.follow_btn.kind() == "swing", timeout=2000)
+    qtbot.keyClick(w, Qt.Key_Space)  # включить не выйдет: цели нет
+    qtbot.wait(300)
+    assert not w.session.follower.enabled
+    btn = w.follow_panel.follow_btn
+    assert btn.kind() == "swing"
+    assert not btn.action_btn.isHidden()  # «Калибровка…» на месте
+    w.close()
+
+
+def test_link_ok_chip_is_not_tally_green(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: w.link_label.text() == "Камера на связи", timeout=4000)
+    assert w.link_label.kind() == "neutral"  # зелёный PVW — только для Tally
+    w.close()

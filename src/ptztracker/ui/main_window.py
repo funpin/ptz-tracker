@@ -315,14 +315,18 @@ class MainWindow(QMainWindow):
         f = self._follower()
         if f is None:
             self.follow_panel.set_state(False, "распознавание недоступно")
-            self._view_shown = None
+            self._view_shown = self._current_view()  # сообщение остаётся, пока вид не изменится сам
             return
         if want:
             if not f.enable():
-                self.follow_panel.set_state(False, None)
-                self.follow_panel.show_hint("Сначала кликните по человеку на видео.")
+                v = self._current_view()
+                if v.kind == "swing":
+                    self.follow_panel.set_view(v)  # раскачка важнее подсказки: плитка и «Калибровка…» остаются
+                else:
+                    self.follow_panel.set_state(False, None)
+                    self.follow_panel.show_hint("Сначала кликните по человеку на видео.")
                 # подсказка остаётся, пока вид не изменится сам
-                self._view_shown = self._current_view()
+                self._view_shown = v
         else:
             f.disable("выключено оператором")
         self._sync_follow()
@@ -378,11 +382,12 @@ class MainWindow(QMainWindow):
         cam = self._current_cfg()
         inp = atem_input_of(cam) if cam else 0
         state = snap.state(inp) if snap and inp else None
-        key = (configured, online, inp, state)
+        known = bool(snap and inp and snap.known(inp))
+        key = (configured, online, inp, state, known)
         if key == self._tally_shown:
             return
         self._tally_shown = key
-        chip = tally_chip(configured, online, inp, state)
+        chip = tally_chip(configured, online, inp, state, known=known)
         if chip is None:
             self.atem_chip.hide()
         else:
@@ -526,7 +531,7 @@ class MainWindow(QMainWindow):
             return
         self._remember_rtsp_url(s)
         if s.online:
-            self.link_label.set("Камера на связи", "ok")
+            self.link_label.set("Камера на связи", "neutral")  # зелёный PVW — только для Tally
         else:
             self.link_label.set("Нет связи с камерой", "fault")
         self.video_label.show()

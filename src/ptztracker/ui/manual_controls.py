@@ -112,7 +112,7 @@ class ManualControls(QWidget):
         self.stop_btn = KeyButton("СТОП КАМЕРЫ", "Esc", variant="stop")
         self.stop_btn.setFixedHeight(H_STOP)
         self.stop_btn.setFocusPolicy(Qt.NoFocus)
-        self.stop_btn.clicked.connect(self.stopRequested)
+        self.stop_btn.pressed.connect(self.stopRequested)  # стоп на нажатии, без ожидания отпускания
 
         self.af_check = QCheckBox("Автофокус")
         self.af_check.setChecked(True)

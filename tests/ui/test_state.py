@@ -49,3 +49,10 @@ def test_tally_chip_variants():
     assert tally_chip(True, True, 2, None) == ("ATEM · вход 2", "neutral")
     assert tally_chip(True, False, 2, "pgm") == ("ATEM · нет связи", "neutral")
     assert tally_chip(True, True, 0, None) == ("ATEM · вход не задан", "neutral")
+
+
+def test_tally_chip_input_out_of_range():
+    # микшер прислал меньше флагов, чем номер входа: состояние неизвестно, а не «не в эфире»
+    assert tally_chip(True, True, 9, None, known=False) == ("ATEM · вход 9 вне диапазона", "warn")
+    assert tally_chip(True, True, 2, None, known=True) == ("ATEM · вход 2", "neutral")
+    assert tally_chip(True, False, 9, None, known=False) == ("ATEM · нет связи", "neutral")

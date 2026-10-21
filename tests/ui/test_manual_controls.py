@@ -72,6 +72,20 @@ def test_stop_button_emits(qtbot):
         c.stop_btn.click()
 
 
+def test_stop_button_acts_on_press_once(qtbot):
+    c, _ = make(qtbot)
+    c.show()
+    seen = []
+    c.stopRequested.connect(lambda: seen.append(1))
+    center = c.stop_btn.rect().center()
+    qtbot.mousePress(c.stop_btn, Qt.LeftButton, pos=center)
+    assert seen == [1]  # стоп на нажатии, не ждём отпускания
+    qtbot.mouseRelease(c.stop_btn, Qt.LeftButton, pos=center)
+    assert seen == [1]  # и не второй раз на отпускании
+    c.stop_btn.click()
+    assert seen == [1, 1]  # click() — одно нажатие, один стоп
+
+
 def test_stop_button_shows_esc(qtbot):
     c, _ = make(qtbot)
     assert c.stop_btn.hotkey == "Esc"
