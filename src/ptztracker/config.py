@@ -9,6 +9,7 @@ import dataclasses
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -54,6 +55,7 @@ class AppConfig:
 
 
 RECORD_DIR_NAME = "Записи PTZ Tracker"
+RECORD_BUFFER_MIN_S, RECORD_BUFFER_MAX_S = 60, 900  # в окне настроек — от 1 до 15 минут
 
 
 def record_dir(cfg: AppConfig) -> Path:
@@ -132,10 +134,10 @@ def _fix_record_settings(cfg: AppConfig) -> None:
         cfg.record_enabled = d.record_enabled
     if not isinstance(cfg.record_to_disk, bool):
         cfg.record_to_disk = d.record_to_disk
-    if isinstance(cfg.record_buffer_s, bool) or not isinstance(cfg.record_buffer_s, (int, float)) \
-            or cfg.record_buffer_s <= 0:
-        cfg.record_buffer_s = d.record_buffer_s
-    cfg.record_buffer_s = int(cfg.record_buffer_s)
+    b = cfg.record_buffer_s
+    if isinstance(b, bool) or not isinstance(b, (int, float)) or not math.isfinite(b):
+        b = d.record_buffer_s
+    cfg.record_buffer_s = int(min(RECORD_BUFFER_MAX_S, max(RECORD_BUFFER_MIN_S, b)))
     if not isinstance(cfg.record_dir, str):
         cfg.record_dir = d.record_dir
 

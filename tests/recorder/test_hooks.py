@@ -173,3 +173,24 @@ def test_recorder_failure_keeps_following(tmp_path):
         assert any(c.startswith("#APC") for c in new)  # опрос положения тоже идёт
     finally:
         s.stop()
+
+
+def test_idle_position_poll_is_rare_and_yields_to_manual(tmp_path):
+    """Слежение выкл., запись идёт: #APC не чаще раза в 2 с и не в первые 2 с после ручной команды."""
+    s = start_sim(tmp_path)
+    try:
+        assert not s.follower.enabled
+        n0 = len(s.sim.received)
+        time.sleep(5.0)
+        apc = sum(1 for c in list(s.sim.received)[n0:] if c == "#APC")
+        assert 1 <= apc <= 3, apc  # при слежении было бы ~10
+        end = time.monotonic() + 4.0
+        n1 = len(s.sim.received)
+        while time.monotonic() < end:  # оператор держит джойстик
+            s.set_pan_tilt_velocity(0.2 if int(time.monotonic() * 4) % 2 else -0.2, 0.0)
+            time.sleep(0.25)
+        s.set_pan_tilt_velocity(0.0, 0.0)
+        got = list(s.sim.received)[n1:]
+        assert not any(c in ("#APC", "#GZ") for c in got), got
+    finally:
+        s.stop()

@@ -24,7 +24,9 @@ log = logging.getLogger(__name__)
 
 LOOP_HZ = 25.0
 STALE_S = 0.6  # результат анализа старше — анализ встал, камеру останавливаем
-ZOOM_POLL_S = 0.5  # зум и (для записи) положение #APC: чаще — опрос отнимает окна у команд
+ZOOM_POLL_S = 0.5  # при слежении: зум и (для записи) положение #APC; чаще — опрос отнимает окна у команд
+IDLE_POSITION_POLL_S = 2.0  # слежение выкл., идёт запись: положение и зум реже — не мешать ручному управлению
+MANUAL_QUIET_S = 2.0  # после ручной команды столько не опрашиваем (запрос занимает окно ~130 мс)
 TILT_FROM_FH = 9 / 16  # скорость по вертикали (доли высоты) → эквивалент по ширине кадра 16:9
 
 
@@ -57,6 +59,7 @@ class Follower:
         self._zoom_pos = 0x555
         self._codes = (50, 50, 50)
         self._last_u: float | None = None
+        self._last_manual = float("-inf")
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="follower", daemon=True)
         self._zthread = threading.Thread(target=self._poll_zoom, name="follower-zoom", daemon=True)
@@ -113,8 +116,16 @@ class Follower:
         self._record_settings()
 
     def _record_settings(self) -> None:
-        c = self.controller
-        safe_event(self.recorder, "follow", composition=c.composition.key, effort=dataclasses.asdict(c.effort))
+        with self._lock:
+            comp, effort = self.controller.composition, self.controller.effort
+        try:
+            safe_event(self.recorder, "follow", composition=comp.key, effort=dataclasses.asdict(effort))
+        except Exception as e:
+            safe_event(self.recorder, "note", error=f"настройки слежения не записаны: {e}")
+
+    def note_manual(self) -> None:
+        """Сессия сообщает о ручной команде: опрос камеры ненадолго уступает оператору."""
+        self._last_manual = time.monotonic()
 
     def stop(self) -> None:
         self.disable("остановка камеры")
@@ -131,14 +142,19 @@ class Follower:
     # --- потоки ---------------------------------------------------------
 
     def _poll_zoom(self) -> None:
-        # опрос идёт, пока включено слежение или идёт запись (положение камеры — для разбора)
+        # при слежении — каждые 0,5 с; без слежения, но с записью — раз в 2 с и не сразу после ручной команды
+        last_idle_poll = float("-inf")
         while not self._stop.wait(ZOOM_POLL_S):
             try:
                 recording = bool(self.recorder.active)
             except Exception:
                 recording = False
-            if not (self.enabled or recording):
-                continue
+            if not self.enabled:
+                now = time.monotonic()
+                if (not recording or now - last_idle_poll < IDLE_POSITION_POLL_S
+                        or now - self._last_manual < MANUAL_QUIET_S):
+                    continue
+                last_idle_poll = now
             try:
                 z = self.query_zoom()
             except Exception as e:
@@ -169,7 +185,7 @@ class Follower:
                 log.exception("Ошибка в цикле слежения")
                 self.disable("внутренняя ошибка")
 
-    def _record_tick(self, now, r, measure, zoom, out, codes, composition, effort) -> None:
+    def _record_tick(self, now, r, measure, zoom, out, codes, comp: Composition, effort: EffortProfile) -> None:
         """Такт регулятора в запись: всё, что нужно, чтобы повторить его без камеры.
 
         Ошибка здесь не должна дойти до цикла слежения (он бы выключил слежение).
@@ -186,7 +202,7 @@ class Follower:
                 aspect=r.frame_size[0] / max(1, r.frame_size[1]),
                 out={"pan": out.pan, "tilt": out.tilt, "zoom": out.zoom, "state": out.state,
                      "error": list(out.error), "size_error": out.size_error},
-                codes=list(codes), composition=composition, effort=effort,
+                codes=list(codes), composition=comp.key, effort=dataclasses.asdict(effort),
             )
         except Exception as e:
             safe_event(self.recorder, "note", error=f"такт регулятора не записан: {e}")
@@ -223,8 +239,7 @@ class Follower:
             # отправка под замком: disable() не сможет вклиниться между проверкой enabled и submit
             self.scheduler.submit("pt", P.pan_tilt_speed(pan, tilt), Priority.TRACKING)
             self.scheduler.submit("zoom", P.zoom_speed(zc), Priority.TRACKING_ZOOM)
-            composition = self.controller.composition.key
-            effort = dataclasses.asdict(self.controller.effort)
-        self._record_tick(now, r, measure, zoom, out, (pan, tilt, zc), composition, effort)
+            comp, effort = self.controller.composition, self.controller.effort  # только ссылки: работа записи — вне замка
+        self._record_tick(now, r, measure, zoom, out, (pan, tilt, zc), comp, effort)
         if diverged:
             self.disable("камера раскачивалась — она быстрее, чем ожидалось. Сервис → Калибровка камеры")

@@ -258,6 +258,8 @@ class CameraSession:
     # --- ручное управление --------------------------------------------
 
     def _submit(self, key: str, cmd: str, only_if_changed: bool = True, ttl: float | None = None) -> None:
+        if self.follower:
+            self.follower.note_manual()
         self.scheduler.submit(key, cmd, Priority.MANUAL, only_if_changed=only_if_changed, ttl=ttl)
 
     def set_pan_tilt_velocity(self, vx: float, vy: float) -> None:
@@ -297,6 +299,8 @@ class CameraSession:
         self._submit("preset_store", P.preset_store(n), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
 
     def emergency_stop(self) -> None:
+        if self.follower:
+            self.follower.note_manual()
         if self.follower and self.follower.enabled:
             self.follower.disable("аварийный стоп")
         self.scheduler.emergency_stop()

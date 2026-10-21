@@ -135,4 +135,14 @@ def test_record_settings_defaults_roundtrip_and_fallback(tmp_path):
         '{"record_enabled": "да", "record_buffer_s": -5, "record_to_disk": 1, "record_dir": 7}', encoding="utf-8"
     )
     bad = store.load()
-    assert (bad.record_enabled, bad.record_buffer_s, bad.record_to_disk, bad.record_dir) == (True, 300, False, "")
+    assert (bad.record_enabled, bad.record_buffer_s, bad.record_to_disk, bad.record_dir) == (True, 60, False, "")
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("Infinity", 300), ("-Infinity", 300), ("NaN", 300), ('"300"', 300), ("null", 300),
+    ("5000", 900), ("10", 60), ("450.7", 450),
+])
+def test_record_buffer_bad_values_do_not_break_start(tmp_path, raw, expected):
+    p = tmp_path / "config.json"
+    p.write_text('{"record_buffer_s": %s}' % raw, encoding="utf-8")
+    assert ConfigStore(p).load().record_buffer_s == expected
