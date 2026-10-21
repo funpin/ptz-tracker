@@ -39,6 +39,7 @@ class CameraConfig:
     calibration: dict | None = None  # результат мастера калибровки (control.camera_model.Calibration.to_json)
     composition: str = "waist_center"  # control.composition.COMPOSITIONS
     effort: float = 0.5  # 0 — мягко, 1 — резко
+    atem_input: int = 0  # вход ATEM (1…), 0 — не задан
 
 
 @dataclass
@@ -46,6 +47,7 @@ class AppConfig:
     cameras: list[CameraConfig] = field(default_factory=list)
     last_camera_id: str | None = None
     sim_scene_path: str | None = None
+    atem_ip: str = ""  # адрес микшера ATEM, пусто — Tally выключен
 
 
 def default_config() -> AppConfig:

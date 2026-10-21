@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -117,3 +118,23 @@ def test_stream_roundtrip_and_invalid(tmp_path):
         '{"cameras": [{"id": "a", "name": "А", "ip": "10.0.0.12", "stream": "zzz"}]}', encoding="utf-8"
     )
     assert store.load().cameras[0].stream == "auto"
+
+
+def test_old_config_without_atem_fields(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"cameras": [{"id": "a", "name": "A", "ip": "10.0.0.12"}]}), encoding="utf-8")
+    cfg = ConfigStore(p).load()
+    assert cfg.atem_ip == ""
+    assert cfg.cameras[0].atem_input == 0
+
+
+def test_atem_input_of_rejects_garbage():
+    from ptztracker.tally import atem_input_of
+
+    def cam(v):
+        return CameraConfig(id="a", name="A", ip="10.0.0.12", atem_input=v)
+
+    for bad in ("3", -1, 99, 0, None, 3.0, True):
+        assert atem_input_of(cam(bad)) == 0, bad
+    assert atem_input_of(cam(3)) == 3
+    assert atem_input_of(cam(40)) == 40
