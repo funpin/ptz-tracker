@@ -91,3 +91,87 @@ def test_stream_combo_disabled_for_sim(qtbot, tmp_path):
     qtbot.addWidget(w)
     assert not w.stream_combo.isEnabled()
     w.close()
+
+
+# --- «Сохранить момент» (F9) ---------------------------------------------
+
+
+def make_rec(qtbot, tmp_path):
+    """Окно с симулятором; записи пишутся в tmp_path, а не на рабочий стол."""
+    w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
+    qtbot.addWidget(w)
+    w.cfg.record_dir = str(tmp_path / "rec")
+    w._activate(w._current_cfg())  # новый сеанс подхватывает настройки записи
+    w.show()
+    return w
+
+
+def test_f9_saves_without_disabling_follow(qtbot, tmp_path):
+    w = make_rec(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: w.preview.has_frame(), timeout=3000)
+    f = w.session.follower
+    f.enabled = True  # слежение включено; F9 не должно его трогать
+    qtbot.keyClick(w, Qt.Key_F9)
+    assert f.enabled
+    qtbot.waitUntil(lambda: "Запись сохранена" in w.statusBar().currentMessage(), timeout=10000)
+    zips = list((tmp_path / "rec").glob("*.zip"))
+    assert len(zips) == 1
+    assert zips[0].name in w.statusBar().currentMessage()
+    assert f.enabled
+    w.close()
+
+
+def test_f9_without_camera_shows_message(qtbot, tmp_path):
+    w = make_rec(qtbot, tmp_path)
+    w._activate(None)
+    w.save_moment_action.trigger()
+    assert "камер" in w.statusBar().currentMessage()
+    w.close()
+
+
+def test_f9_with_recording_off_shows_message(qtbot, tmp_path):
+    w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
+    qtbot.addWidget(w)
+    w.cfg.record_enabled = False
+    w._activate(w._current_cfg())
+    w.save_moment_action.trigger()
+    qtbot.waitUntil(lambda: "Запись выключена" in w.statusBar().currentMessage(), timeout=3000)
+    assert not w.record_label.text()
+    w.close()
+
+
+def test_save_runs_in_background(qtbot, tmp_path):
+    from concurrent.futures import Future
+
+    w = make_rec(qtbot, tmp_path)
+    fut: Future = Future()
+    w.session.save_moment = lambda reason="F9": fut  # zip ещё «пишется»
+    w.save_moment_action.trigger()
+    assert "Сохраняю" in w.statusBar().currentMessage()
+    qtbot.wait(50)  # окно отвечает, пока Future не завершён
+    assert w.isVisible()
+    fut.set_result(tmp_path / "rec" / "moment.zip")  # завершение приходит из чужого потока
+    qtbot.waitUntil(lambda: "Запись сохранена: moment.zip" in w.statusBar().currentMessage(), timeout=3000)
+    assert w.show_folder_btn.isVisible()
+    w.close()
+
+
+def test_record_indicator_shows_buffer(qtbot, tmp_path):
+    w = make_rec(qtbot, tmp_path)
+    w._update_status()
+    assert "запись 5 мин" in w.record_label.text()
+    w.close()
+
+
+def test_recording_settings_saved(qtbot, tmp_path):
+    from ptztracker.ui.recording_dialog import RecordingDialog
+
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    d = RecordingDialog(cfg)
+    qtbot.addWidget(d)
+    d.minutes.setValue(10)
+    d.to_disk.setChecked(True)
+    d.folder.setText(str(tmp_path / "x"))
+    d.apply()
+    assert (cfg.record_buffer_s, cfg.record_to_disk, cfg.record_dir) == (600, True, str(tmp_path / "x"))

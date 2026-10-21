@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QEvent, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -42,6 +43,8 @@ _ZOOM_OUT_KEYS = {Qt.Key_Minus, Qt.Key_Underscore}
 
 
 class MainWindow(QMainWindow):
+    _saveFinished = Signal(object)  # Future записи; приходит из рабочего потока, обрабатывается в Qt-потоке
+
     def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None):
         super().__init__(parent)
         self.setWindowTitle("PTZ Tracker")
@@ -119,6 +122,12 @@ class MainWindow(QMainWindow):
         self.statusBar().addWidget(self.link_label)
         self.statusBar().addWidget(self.video_label)
         self.statusBar().addWidget(self.analysis_label, 1)
+        self.record_label = QLabel()
+        self.record_label.setStyleSheet("color: #ef4444;")
+        self.show_folder_btn = QPushButton("Показать в папке")
+        self.show_folder_btn.hide()
+        self.statusBar().addWidget(self.record_label)
+        self.statusBar().addWidget(self.show_folder_btn)
         self.statusBar().addPermanentWidget(QLabel("Esc — стоп · стрелки — поворот · +/− — зум"))
 
         self.service_menu = self.menuBar().addMenu("Сервис")
@@ -128,6 +137,19 @@ class MainWindow(QMainWindow):
         self.calib_action = QAction("Калибровка камеры…", self)
         self.service_menu.addAction(self.calib_action)
         self.calib_action.triggered.connect(self._run_calibration)
+        self.save_moment_action = QAction("Сохранить момент (F9)", self)
+        self.save_moment_action.setShortcut(Qt.Key_F9)  # это не ручное управление: слежение не трогаем
+        self.service_menu.addAction(self.save_moment_action)
+        self.save_moment_action.triggered.connect(self.save_moment)
+        self.rec_settings_action = QAction("Настройки записи…", self)
+        self.service_menu.addAction(self.rec_settings_action)
+        self.rec_settings_action.triggered.connect(self._recording_settings)
+        self._saveFinished.connect(self._on_save_finished)
+        self._saved_path: Path | None = None
+        self._hide_folder_timer = QTimer(self)
+        self._hide_folder_timer.setSingleShot(True)
+        self._hide_folder_timer.timeout.connect(self.show_folder_btn.hide)
+        self.show_folder_btn.clicked.connect(self._show_saved_folder)
 
         self.add_btn.clicked.connect(self._add_camera)
         self.edit_btn.clicked.connect(self._edit_camera)
@@ -192,7 +214,7 @@ class MainWindow(QMainWindow):
         self.stream_combo.setEnabled(cam is not None and cam.kind != "sim")
         if cam is None:
             return
-        self.session = CameraSession(cam, scene_path=self.cfg.sim_scene_path)
+        self.session = CameraSession(cam, scene_path=self.cfg.sim_scene_path, app_cfg=self.cfg)
         self.session.start()
         self.preview.set_source(self.session.frames)
         self.preview.set_analyzer(self.session.analyzer)
@@ -350,6 +372,40 @@ class MainWindow(QMainWindow):
         DiagnosticsDialog(cam.ip, cam.username, password, parent=self).exec()
         self._activate(cam)
 
+    # --- запись (чёрный ящик) ------------------------------------------
+
+    def save_moment(self) -> None:
+        if self.session is None:
+            self.statusBar().showMessage("Нечего сохранять: камера не выбрана.", 5000)
+            return
+        self.statusBar().showMessage("Сохраняю запись…")
+        fut = self.session.save_moment("F9")
+        fut.add_done_callback(self._saveFinished.emit)  # рабочий поток → сигнал → Qt-поток
+
+    def _on_save_finished(self, fut) -> None:
+        try:
+            path = fut.result()
+        except Exception as e:
+            log.warning("Запись не сохранена: %s", e)
+            self.statusBar().showMessage(f"Запись не сохранена: {e}", 10000)
+            return
+        self._saved_path = Path(path)
+        self.statusBar().showMessage(f"Запись сохранена: {self._saved_path.name}", 10000)
+        self.show_folder_btn.show()
+        self._hide_folder_timer.start(10000)
+
+    def _show_saved_folder(self) -> None:
+        if self._saved_path is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._saved_path.parent)))
+
+    def _recording_settings(self) -> None:
+        from ptztracker.ui.recording_dialog import RecordingDialog
+
+        d = RecordingDialog(self.cfg, parent=self)
+        if d.exec():
+            d.apply()
+            self._save()
+
     # --- статус -------------------------------------------------------
 
     def _update_status(self) -> None:
@@ -357,7 +413,11 @@ class MainWindow(QMainWindow):
         if not s:
             self.link_label.setText("Камера не выбрана")
             self.video_label.setText("")
+            self.record_label.setText("")
             return
+        self.record_label.setText(
+            f"● запись {s.app_cfg.record_buffer_s // 60} мин" if s.recorder.active else ""
+        )
         self._remember_rtsp_url(s)
         self.link_label.setText("● на связи" if s.online else "○ нет связи с камерой")
         self.link_label.setStyleSheet("color: #22c55e;" if s.online else "color: #ef4444;")
@@ -463,6 +523,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, e):  # noqa: N802
         QApplication.instance().removeEventFilter(self)
         self._status_timer.stop()
+        self._hide_folder_timer.stop()
         self._follow_timer.stop()
         self.release_all_held()
         if self.session:
