@@ -4,6 +4,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from ptztracker.ui.theme import FONT_FAMILY, C, qcolor
 from ptztracker.video.frames import FrameSource
 from ptztracker.vision.types import (
     KP_L_ANKLE,
@@ -17,9 +18,9 @@ from ptztracker.vision.types import (
     KP_R_SHOULDER,
 )
 
-TARGET_COLOR = QColor(59, 130, 246)
-LOST_COLOR = QColor(245, 158, 11)
-OTHER_COLOR = QColor(255, 255, 255, 170)
+TARGET_COLOR = qcolor(C.ON)
+LOST_COLOR = qcolor(C.LOST)
+OTHER_COLOR = qcolor(C.TEXT, 170)
 SKELETON = [
     (KP_L_SHOULDER, KP_R_SHOULDER),
     (KP_L_SHOULDER, KP_L_HIP),
@@ -167,14 +168,14 @@ class PreviewWidget(QWidget):
 
     def paintEvent(self, e):  # noqa: N802
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(18, 20, 26))
+        p.fillRect(self.rect(), qcolor(C.BG))
         if self._image is not None:
             p.setRenderHint(QPainter.SmoothPixmapTransform)
             p.drawImage(self._image_rect(), self._image)
             self._paint_overlay(p)
             return
-        p.setPen(QColor(200, 205, 215))
-        f = QFont()
+        p.setPen(qcolor(C.TEXT_DIM))
+        f = QFont(FONT_FAMILY)
         f.setPointSize(18)
         p.setFont(f)
         text = "Нет видео"
@@ -192,14 +193,14 @@ class PreviewWidget(QWidget):
             return
         cx, cy, dead, soft = z
         rect = self._image_rect()
-        for (hw, hh), color in ((soft, QColor(245, 158, 11, 200)), (dead, QColor(34, 197, 94, 220))):
+        for (hw, hh), color in ((soft, qcolor(C.LOST, 200)), (dead, qcolor(C.ON, 220))):
             pen = QPen(color, 1.5)
             pen.setStyle(Qt.DashLine)
             p.setPen(pen)
             p.setBrush(Qt.NoBrush)
             p.drawRect(QRectF(rect.x() + (cx - hw) * rect.width(), rect.y() + (cy - hh) * rect.height(),
                               2 * hw * rect.width(), 2 * hh * rect.height()))
-        p.setBrush(QColor(34, 197, 94))
+        p.setBrush(qcolor(C.ON))
         p.setPen(Qt.NoPen)
         p.drawEllipse(QPointF(rect.x() + cx * rect.width(), rect.y() + cy * rect.height()), 3, 3)
 
@@ -232,7 +233,7 @@ class PreviewWidget(QWidget):
 
     def _label(self, p: QPainter, rect: QRectF, text: str, color: QColor) -> None:
         # подпись ВНУТРИ рамки: на крупном плане рамка почти во весь кадр
-        f = QFont()
+        f = QFont(FONT_FAMILY)
         f.setPointSize(11)
         f.setBold(True)
         p.setFont(f)
@@ -244,7 +245,7 @@ class PreviewWidget(QWidget):
         bg.setAlpha(190)
         p.setBrush(bg)
         p.drawRoundedRect(plate, 4, 4)
-        p.setPen(QColor(255, 255, 255))
+        p.setPen(qcolor(C.TEXT))
         p.drawText(plate, Qt.AlignCenter, text)
 
     def _skeleton(self, p: QPainter, kp, k: float, color: QColor) -> None:
