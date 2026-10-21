@@ -5,6 +5,7 @@ from ptztracker.tally.atem_protocol import (
     ack_packet,
     hello_packet,
     iter_commands,
+    packet_id_newer,
     parse_header,
     parse_tlin,
 )
@@ -60,3 +61,15 @@ def test_iter_commands_skips_truncated():
     assert list(iter_commands(struct.pack(">HH4s", 0, 0, b"TlIn"))) == []
     assert list(iter_commands(b"\x00\x09\x00")) == []
     assert list(iter_commands(b"")) == []
+
+
+def test_packet_id_newer_wraps_at_15_bits():
+    assert packet_id_newer(6, 5)
+    assert not packet_id_newer(5, 6)
+    assert not packet_id_newer(5, 5)
+    assert packet_id_newer(0, 0x7FFF)  # перенос: 0 после 0x7FFF
+    assert packet_id_newer(3, 0x7FFE)
+    assert not packet_id_newer(0x7FFF, 0)
+    assert not packet_id_newer(0x7FFE, 3)
+    assert packet_id_newer(0x4000, 1) and not packet_id_newer(1, 0x4000)  # половина круга
+    assert packet_id_newer(7, None)  # ещё ничего не применено

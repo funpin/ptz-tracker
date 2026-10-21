@@ -78,6 +78,21 @@ class FakeAtem:
         if send:
             self._send_tlin()
 
+    def send_tlin_raw(self, flags: tuple[int, ...], packet_id: int, resend: bool = False) -> None:
+        """TlIn с заданным номером пакета: запоздалый или повторный пакет."""
+        with self._lock:
+            client = self._client
+            self.sent_ids.add(packet_id)
+        assert client is not None, "клиент ещё не подключился"
+        fl = 0x08 | (0x20 if resend else 0)
+        self._sock.sendto(_packet(fl, SERVER_SESSION, 0, packet_id, _tlin(tuple(flags))), client)
+
+    @property
+    def last_id(self) -> int:
+        """Номер последнего отправленного пакета."""
+        with self._lock:
+            return self._next_id - 1
+
     def pause(self) -> None:
         with self._lock:
             self._paused = True

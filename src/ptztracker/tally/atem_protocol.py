@@ -22,6 +22,8 @@ HELLO_SESSION = 0x1337
 HELLO_CONNECT = 0x01  # byte12 в hello клиента
 HELLO_ACCEPTED = 0x02  # byte12 в ответе микшера
 
+PACKET_ID_MASK = 0x7FFF  # номера пакетов 15-битные, после 0x7FFF идёт 0
+
 TALLY_PGM = 0x01
 TALLY_PVW = 0x02
 
@@ -52,6 +54,15 @@ def hello_packet(session: int = HELLO_SESSION) -> bytes:
 def ack_packet(session: int, packet_id: int) -> bytes:
     """Подтверждение пакета packet_id (12 байт, свой номер 0)."""
     return _packet(FLAG_ACK, session, packet_id, 0)
+
+
+def packet_id_newer(packet_id: int, last: int | None) -> bool:
+    """Пакет packet_id новее last с учётом переноса 15 бит (окно — половина круга).
+    last=None — ещё ничего не принято: любой пакет новее."""
+    if last is None:
+        return True
+    d = (packet_id - last) & PACKET_ID_MASK
+    return 0 < d < (PACKET_ID_MASK + 1) // 2
 
 
 def parse_header(data: bytes) -> Header | None:

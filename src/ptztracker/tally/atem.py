@@ -17,6 +17,7 @@ from typing import Literal
 from ptztracker.tally.atem_protocol import (
     FLAG_ACK_REQUEST,
     FLAG_HELLO,
+    FLAG_RESEND,
     HEADER_LEN,
     HELLO_ACCEPTED,
     TALLY_PGM,
@@ -24,6 +25,7 @@ from ptztracker.tally.atem_protocol import (
     ack_packet,
     hello_packet,
     iter_commands,
+    packet_id_newer,
     parse_header,
     parse_tlin,
 )
@@ -42,7 +44,13 @@ class TallySnapshot:
     online: bool
     flags: tuple[int, ...]  # элемент i — вход i+1
 
+    def known(self, input: int) -> bool:
+        """Состояние входа известно: есть связь и вход в пределах полученных флагов."""
+        return self.online and isinstance(input, int) and 1 <= input <= len(self.flags)
+
     def state(self, input: int) -> TallyState:
+        """pgm | pvw | None. Для блокировки эфира используйте safe_to_move:
+        None из tally() значит и „не в эфире“, и „неизвестно“."""
         if not isinstance(input, int) or not 1 <= input <= len(self.flags):
             return None
         f = self.flags[input - 1]
@@ -54,6 +62,16 @@ class TallySnapshot:
 
 
 _OFFLINE = TallySnapshot(online=False, flags=())
+
+
+@dataclass
+class _RunState:
+    """Состояние одного запуска потока (локально в _run): старый поток не пишет в новый запуск."""
+
+    last_rx: float | None = None
+    synced: bool = False
+    last_tlin_id: int | None = None  # номер последнего применённого пакета с TlIn
+    stop: threading.Event | None = None  # событие этого запуска: после stop() онлайн не публикуем
 
 
 class AtemTally:
@@ -98,7 +116,15 @@ class AtemTally:
             return self._snap
 
     def tally(self, input: int) -> TallyState:
+        """«pgm» | «pvw» | None. Для блокировки эфира используйте safe_to_move:
+        None из tally() значит и „не в эфире“, и „неизвестно“."""
         return self.snapshot().state(input)
+
+    def safe_to_move(self, input: int) -> bool:
+        """Камеру можно двигать: состояние входа известно (known) и он не в эфире.
+        Нет связи, вход вне диапазона флагов или PGM — False."""
+        snap = self.snapshot()
+        return snap.known(input) and snap.state(input) != "pgm"
 
     @property
     def online(self) -> bool:
@@ -113,21 +139,21 @@ class AtemTally:
 
     def _run(self, stop: threading.Event) -> None:
         sock: socket.socket | None = None
-        self._last_rx: float | None = None
-        self._synced = False
+        st = _RunState(stop=stop)
         last_hello = float("-inf")
         fresh_socket = True  # после обрыва новая сессия идёт с нового порта
         try:
             while not stop.is_set():
                 now = time.monotonic()
-                stale = self._last_rx is None or now - self._last_rx > self.timeout_s
-                if stale and self._synced:
+                stale = st.last_rx is None or now - st.last_rx > self.timeout_s
+                if stale and st.synced:
                     log.warning("ATEM %s: нет связи", self.host)
                 if stale:
-                    self._synced = False
+                    st.synced = False
+                    st.last_tlin_id = None  # новая сессия — своя нумерация
                     fresh_socket = True
                     self._publish(_OFFLINE)
-                if not self._synced and now - last_hello >= HELLO_INTERVAL_S:
+                if not st.synced and now - last_hello >= HELLO_INTERVAL_S:
                     last_hello = now
                     if fresh_socket and sock is not None:
                         sock.close()
@@ -146,7 +172,7 @@ class AtemTally:
                     stop.wait(RECV_TIMEOUT_S)
                     continue
                 try:
-                    self._handle(sock, data)
+                    self._handle(sock, data, st)
                 except Exception:  # мусор в пакете не должен ронять поток
                     log.debug("ATEM %s: не разобран пакет %r", self.host, data[:32], exc_info=True)
         finally:
@@ -168,17 +194,23 @@ class AtemTally:
                 sock.close()
             return None
 
-    def _handle(self, sock: socket.socket, data: bytes) -> None:
-        """Разобрать пакет микшера: подтвердить, обновить флаги."""
+    def _handle(self, sock: socket.socket, data: bytes, st: _RunState) -> None:
+        """Разобрать пакет микшера: подтвердить, обновить флаги.
+
+        Подтверждаем каждый пакет, но TlIn применяем только из пакета новее последнего
+        применённого: запоздалый или повторный (FLAG_RESEND) старый TlIn откатил бы флаги
+        и дал ложное «не в эфире»."""
         h = parse_header(data)
         if h is None:
             return
         if h.flags & FLAG_HELLO:
             if len(data) > HEADER_LEN and data[HEADER_LEN] == HELLO_ACCEPTED:
                 sock.send(ack_packet(h.session, 0))
-                self._last_rx = time.monotonic()  # связь есть, но до TlIn — не online
+                st.last_rx = time.monotonic()  # связь есть, но до TlIn — не online
+                st.synced = False  # после hello микшер пришлёт полное состояние заново
+                st.last_tlin_id = None
             return
-        self._last_rx = time.monotonic()
+        st.last_rx = time.monotonic()
         if h.flags & FLAG_ACK_REQUEST:
             sock.send(ack_packet(h.session, h.packet_id))
         flags = None
@@ -187,14 +219,24 @@ class AtemTally:
                 parsed = parse_tlin(body)
                 if parsed:
                     flags = parsed
-        if flags is not None:
-            if not self._synced:
-                log.info("ATEM %s: на связи, Tally получен", self.host)
-            self._synced = True
-            self._publish(TallySnapshot(online=True, flags=flags))
+        if flags is None:
+            return
+        if not packet_id_newer(h.packet_id, st.last_tlin_id):
+            log.debug(
+                "ATEM %s: старый TlIn #%d%s пропущен (применён #%s)",
+                self.host, h.packet_id, " (повтор)" if h.flags & FLAG_RESEND else "", st.last_tlin_id,
+            )
+            return
+        st.last_tlin_id = h.packet_id
+        if not st.synced:
+            log.info("ATEM %s: на связи, Tally получен", self.host)
+        st.synced = True
+        self._publish(TallySnapshot(online=True, flags=flags), st.stop)
 
-    def _publish(self, snap: TallySnapshot) -> None:
+    def _publish(self, snap: TallySnapshot, stop: threading.Event | None = None) -> None:
         with self._lock:
+            if snap.online and stop is not None and stop.is_set():
+                return  # остановленный поток не оживляет снимок (stop() уже выставил «нет связи»)
             if snap == self._snap:
                 return
             self._snap = snap

@@ -49,6 +49,32 @@ def test_snapshot_state():
     assert TallySnapshot(online=False, flags=()).state(1) is None
 
 
+def test_snapshot_known():
+    s = TallySnapshot(online=True, flags=(0, 1, 2))
+    assert s.known(1) and s.known(3)
+    assert not s.known(0) and not s.known(4) and not s.known(-1)
+    assert not TallySnapshot(online=False, flags=(0, 1, 2)).known(1)  # нет связи — неизвестно
+
+
+def _with_snapshot(snap):
+    c = AtemTally("192.0.2.1")
+    c._snap = snap
+    return c
+
+
+def test_safe_to_move():
+    assert not AtemTally("192.0.2.1").safe_to_move(1)  # нет связи
+    c = _with_snapshot(TallySnapshot(online=True, flags=(0, 1, 2, 3)))
+    assert c.safe_to_move(1)  # не в эфире, состояние известно
+    assert c.safe_to_move(3)  # превью
+    assert not c.safe_to_move(2)  # эфир
+    assert not c.safe_to_move(4)  # оба бита — эфир
+    assert not c.safe_to_move(5)  # вход вне числа флагов — неизвестно
+    assert not c.safe_to_move(0)
+    assert c.tally(5) is None  # tally() не изменился: None и для «неизвестно»
+    assert not _with_snapshot(TallySnapshot(online=False, flags=(0,))).safe_to_move(1)
+
+
 def test_connects_and_reads_tally(atem, make_client):
     atem.set_tally((0, 1, 2))
     c = make_client()
@@ -96,6 +122,24 @@ def test_resyncs_after_pause_without_tally_change(atem, make_client):
     assert wait_for(lambda: c.online and c.tally(2) == "pgm", timeout=2.0)
     assert atem.hellos > hellos
     assert atem.hello_addrs[-1][1] != atem.hello_addrs[0][1]  # новая сессия — с нового порта
+
+
+@pytest.mark.parametrize("resend", [False, True])
+def test_stale_tlin_does_not_roll_back(atem, make_client, resend):
+    atem.set_tally((0, 0))
+    c = make_client()
+    assert wait_for(lambda: c.online)
+    old = atem.last_id
+    atem.set_tally((0, 1))  # вход 2 в эфире, пакет новее
+    assert wait_for(lambda: c.tally(2) == "pgm")
+    acked = atem.acked_count
+    atem.send_tlin_raw((0, 0), old, resend=resend)  # запоздалый старый TlIn
+    assert wait_for(lambda: atem.acked_ids.count(old) >= 2)  # подтверждён, но не применён
+    time.sleep(0.1)
+    assert c.tally(2) == "pgm"
+    assert atem.acked_count > acked
+    atem.set_tally((0, 0))  # свежий — применяется
+    assert wait_for(lambda: c.tally(2) is None and c.online)
 
 
 def test_bad_host_does_not_kill_thread():
@@ -199,3 +243,46 @@ def test_no_qt_import():
     code = "import sys, ptztracker.tally, ptztracker.tally.atem; assert 'PySide6' not in sys.modules, 'Qt'"
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
+
+
+class _NullSock:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, data):
+        self.sent.append(data)
+
+
+def _tlin_packet(packet_id, flags, resend=False):
+    from fake_atem import SERVER_SESSION, _packet, _tlin
+
+    return _packet(0x08 | (0x20 if resend else 0), SERVER_SESSION, 0, packet_id, _tlin(flags))
+
+
+def test_handle_orders_tlin_across_wraparound():
+    from ptztracker.tally.atem import _RunState
+
+    c, sock, st = AtemTally("192.0.2.1"), _NullSock(), _RunState()
+    c._handle(sock, _tlin_packet(0x7FFE, (0, 0)), st)
+    c._handle(sock, _tlin_packet(0x7FFF, (0, 1)), st)
+    assert c.tally(2) == "pgm"
+    c._handle(sock, _tlin_packet(0x0000, (0, 2)), st)  # после переноса — новее
+    assert c.tally(2) == "pvw"
+    c._handle(sock, _tlin_packet(0x7FFF, (0, 1), resend=True), st)  # повтор до переноса — старый
+    c._handle(sock, _tlin_packet(0x7FFE, (0, 0)), st)
+    assert c.tally(2) == "pvw"
+    assert len(sock.sent) == 5  # подтверждён каждый пакет
+    assert st.last_tlin_id == 0
+
+
+def test_stopped_run_cannot_publish_online():
+    import threading
+
+    from ptztracker.tally.atem import _RunState
+
+    c = AtemTally("192.0.2.1")
+    stop = threading.Event()
+    st = _RunState(stop=stop)
+    stop.set()  # поток уже остановлен, но пакет ещё дошёл
+    c._handle(_NullSock(), _tlin_packet(5, (1,)), st)
+    assert not c.online and c.tally(1) is None
