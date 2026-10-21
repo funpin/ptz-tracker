@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ptztracker.diagnostics.runner import DiagContext, default_report_dir, run_diagnostics
+from ptztracker.ui.theme import C
 
 
 class _Worker(QThread):
@@ -75,13 +76,14 @@ class DiagnosticsDialog(QDialog):
         intro.setWordWrap(True)
         self.allow_move_check = QCheckBox("Разрешить движение камеры (камера НЕ должна быть в эфире)")
         self.start_button = QPushButton("Запустить")
+        self.start_button.setDefault(True)
         self.prompt_label = QLabel("")
         f = QFont()
         f.setPointSize(16)
         f.setBold(True)
         self.prompt_label.setFont(f)
         self.prompt_label.setWordWrap(True)
-        self.prompt_label.setStyleSheet("color: #f59e0b;")
+        self.prompt_label.setStyleSheet(f"color: {C.LOST};")
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.result_label = QLabel("")
