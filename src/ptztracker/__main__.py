@@ -17,10 +17,37 @@ def _parser() -> argparse.ArgumentParser:
     d.add_argument("--password", help="пароль камеры")
     d.add_argument("--rtsp", help="адрес видеопотока, если известен")
     d.add_argument("--no-move", action="store_true", help="не двигать камеру")
-    d.add_argument("--out", help="папка для отчёта (по умолчанию — рабочий стол)")
+    d.add_argument("--out", help="папка для отчёта (по умолчанию — рабочий стол) или для графиков повтора")
     d.add_argument("--notify-port", type=int, default=31004, help=argparse.SUPPRESS)
     d.add_argument("--notify-wait", type=float, default=15.0, help=argparse.SUPPRESS)
+    r = p.add_argument_group("повтор записи (чёрного ящика)")
+    r.add_argument("--replay", metavar="PATH", help="прогнать сохранённую запись (zip) без камеры")
+    r.add_argument("--mode", choices=("controller", "analysis"), default="controller",
+                   help="controller — через регулятор (по умолчанию), analysis — через распознавание")
     return p
+
+
+def run_replay_cli(args) -> int:
+    if args.mode == "analysis":
+        print("Режим analysis появится позже. Пока есть только --mode controller.", file=sys.stderr)
+        return 2
+    from ptztracker.recorder.plots import render
+    from ptztracker.recorder.reader import Episode
+    from ptztracker.recorder.replay import replay_controller
+
+    src = Path(args.replay)
+    try:
+        ep = Episode.open(src)
+    except Exception as e:
+        print(f"Не удалось открыть запись {src}: {e}", file=sys.stderr)
+        return 2
+    res = replay_controller(ep)
+    print(f"Запись: {src} ({ep.duration:.1f} с)")
+    print(res.summary().text())
+    out_dir = Path(args.out) if args.out else src.parent
+    png = render(res, out_dir / f"{src.stem}_регулятор.png")
+    print(f"Графики: {png}")
+    return 0
 
 
 def _countdown(msg: str, seconds: float) -> None:
@@ -77,6 +104,8 @@ def run_gui(use_sim: bool) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.replay:
+        return run_replay_cli(args)
     if args.diagnose:
         if not args.ip:
             print("Укажите IP камеры: --ip 10.0.0.12", file=sys.stderr)

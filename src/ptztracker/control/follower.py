@@ -30,6 +30,20 @@ MANUAL_QUIET_S = 2.0  # после ручной команды столько н
 TILT_FROM_FH = 9 / 16  # скорость по вертикали (доли высоты) → эквивалент по ширине кадра 16:9
 
 
+def output_codes(
+    calib: Calibration, out: FramingOutput, zoom_pos: int, current: tuple[int, int, int]
+) -> tuple[int, int, int]:
+    """Скорости регулятора → коды pan/tilt/zoom камеры (с гистерезисом от текущих кодов).
+
+    Общая для слежения и повтора записи: повтор должен давать те же коды, что ушли в камеру.
+    """
+    p0, t0, z0 = current
+    pan = calib.pan.code_for(out.pan, zoom_pos, current=p0)
+    tilt = calib.pan.code_for(out.tilt * TILT_FROM_FH, zoom_pos, current=t0)
+    zc = calib.zoom.code_for(out.zoom, current=z0)
+    return pan, tilt, zc
+
+
 class Follower:
     def __init__(
         self,
@@ -231,11 +245,8 @@ class Follower:
             )
             self.output = out
             diverged = out.state == "diverged"
-            p0, t0, z0 = self._codes
-            pan = self.calib.pan.code_for(out.pan, zoom, current=p0)
-            tilt = self.calib.pan.code_for(out.tilt * TILT_FROM_FH, zoom, current=t0)
-            zc = self.calib.zoom.code_for(out.zoom, current=z0)
-            self._codes = (pan, tilt, zc)
+            self._codes = output_codes(self.calib, out, zoom, self._codes)
+            pan, tilt, zc = self._codes
             # отправка под замком: disable() не сможет вклиниться между проверкой enabled и submit
             self.scheduler.submit("pt", P.pan_tilt_speed(pan, tilt), Priority.TRACKING)
             self.scheduler.submit("zoom", P.zoom_speed(zc), Priority.TRACKING_ZOOM)
