@@ -256,12 +256,16 @@ class StateTile(QPushButton):
         why_row = QHBoxLayout()
         why_row.setSpacing(SP[1])
         self.why_label = _ElideLabel()
-        self.why_label.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION + 1}px;")
+        self.why_label.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
         self.action_btn = KeyButton("Калибровка…")
         self.action_btn.setFocusPolicy(Qt.NoFocus)
+        self.action_btn.setFixedHeight(28)
+        self.action_btn.setStyleSheet(
+            f"QPushButton {{ min-height: 0; padding: 0 8px; font-size: {FS_CAPTION + 1}px; }}"
+        )
         self.action_btn.hide()
         why_row.addWidget(self.why_label, 1)
-        why_row.addWidget(self.action_btn, 0, Qt.AlignVCenter)
+        why_row.addWidget(self.action_btn, 0, Qt.AlignBottom)
         lay.addLayout(why_row)
 
         for w in (self.caption_label, self.word_label, self._lamp, self.why_label):
@@ -285,6 +289,7 @@ class StateTile(QPushButton):
             f" font-size: {FS_STATE}px; font-weight: 800;"
         )
         self.why_label.set_full(why)
+        self.setToolTip(why)
         self.action_btn.setVisible(show_action and kind == "swing")
         self._lamp.color = color
         self._lamp.hollow = kind == "off"
@@ -344,6 +349,7 @@ class VideoFrame(QFrame):
         inner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.tracking_tag = self._make_tag()
         self.onair_tag = self._make_tag()
+        self.tracking_tag.hide()
         self.onair_tag.hide()
 
     def _make_tag(self) -> QLabel:
@@ -352,9 +358,10 @@ class VideoFrame(QFrame):
         return t
 
     @staticmethod
-    def _tag_style(bg: str, fg: str) -> str:
+    def _tag_style(bg: str, fg: str, corner: str) -> str:
         return (
-            f"background: {bg}; color: {fg}; border-radius: 4px; padding: 3px 10px;"
+            f"background: {bg}; color: {fg}; border: none; border-{corner}-radius: 8px;"
+            " padding: 4px 12px;"
             f" font-size: {FS_CAPTION}px; font-weight: 700;"
         )
 
@@ -364,10 +371,10 @@ class VideoFrame(QFrame):
     def set_tally(self, state: str | None) -> None:
         self._tally = state if state in ("pgm", "pvw") else None
         if self._tally == "pgm":
-            self.onair_tag.setStyleSheet(self._tag_style(C.PGM, C.TEXT))
+            self.onair_tag.setStyleSheet(self._tag_style(C.PGM, C.TEXT, 'bottom-left'))
             self.onair_tag.setText("ЭФИР · PGM")
         elif self._tally == "pvw":
-            self.onair_tag.setStyleSheet(self._tag_style(C.PVW, C.TEXT))
+            self.onair_tag.setStyleSheet(self._tag_style(C.PVW, C.TEXT, 'bottom-left'))
             self.onair_tag.setText("ПРЕВЬЮ · PVW")
         self.onair_tag.setVisible(self._tally is not None)
         self._place_tags()
@@ -375,14 +382,15 @@ class VideoFrame(QFrame):
 
     def set_tracking_tag(self, text: str, color: str) -> None:
         if color == C.TEXT_FAINT:  # «выкл»: нейтральный ярлык
-            self.tracking_tag.setStyleSheet(self._tag_style(C.RAISED_HI, C.TEXT))
+            self.tracking_tag.setStyleSheet(self._tag_style(C.RAISED_HI, C.TEXT, 'bottom-right'))
         else:
-            self.tracking_tag.setStyleSheet(self._tag_style(color, C.BG))
+            self.tracking_tag.setStyleSheet(self._tag_style(color, C.BG, 'bottom-right'))
         self.tracking_tag.setText(text)
+        self.tracking_tag.show()
         self._place_tags()
 
     def _place_tags(self) -> None:
-        off = self.BORDER + SP[1]
+        off = self.BORDER
         for t in (self.tracking_tag, self.onair_tag):
             t.adjustSize()
             t.raise_()

@@ -45,6 +45,19 @@ def test_state_tile_height_constant(qtbot):
     t.set_view("off", "ВЫКЛ", long, False)
     assert long in t.why_label.toolTip()
     assert t.why_label.text().count("\n") <= 1
+    assert t.why_label.text().endswith("…")
+    assert t.toolTip() == long
+    assert t.layout().minimumSize().height() <= H_STATE
+
+
+def test_state_tile_swing_reason_fits(qtbot):
+    t = StateTile()
+    qtbot.addWidget(t)
+    t.resize(348, H_STATE)
+    t.show()
+    t.set_view("swing", "РАСКАЧКА", "Слежение остановлено: камера быстрее, чем ожидалось.", True)
+    qtbot.wait(50)
+    assert not t.why_label.text().endswith("…")
 
 
 def test_state_tile_action_only_for_swing(qtbot):
@@ -85,6 +98,7 @@ def test_video_frame_tally_tag(qtbot):
     qtbot.addWidget(f)
     f.resize(400, 300)
     f.show()
+    assert f.tracking_tag.isHidden()
     assert f.onair_tag.isHidden() and f.tally() is None
     f.set_tally("pgm")
     assert f.onair_tag.text() == "ЭФИР · PGM" and f.onair_tag.isVisible()
