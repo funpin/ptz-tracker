@@ -61,9 +61,56 @@ def test_connects_and_reads_tally(atem, make_client):
 
 def test_acks_server_packets(atem, make_client):
     make_client()
-    assert wait_for(lambda: atem.acks >= 3)
-    with atem._lock:
-        assert set(atem.acked_ids) <= atem.sent_ids
+    assert wait_for(lambda: atem.acked_count >= 3)
+    assert atem.unknown_acks == 0
+    assert atem.hello_acked
+
+
+def test_not_online_before_first_tlin(make_client):
+    fake = FakeAtem(dump_on_hello=False)
+    try:
+        fake.set_tally((0, 1))
+        c = AtemTally("127.0.0.1", port=fake.port, timeout_s=0.6)
+        c.start()
+        try:
+            # hello принят, keepalive идут и подтверждаются, но Tally ещё неизвестен
+            assert wait_for(lambda: fake.hello_acked and fake.acked_count >= 3)
+            assert not c.online
+            assert c.tally(2) is None
+            fake.set_tally((0, 1))  # первый TlIn
+            assert wait_for(lambda: c.online and c.tally(2) == "pgm")
+        finally:
+            c.stop()
+    finally:
+        fake.close()
+
+
+def test_resyncs_after_pause_without_tally_change(atem, make_client):
+    atem.set_tally((0, 1))
+    c = make_client(timeout_s=0.6)
+    assert wait_for(lambda: c.tally(2) == "pgm")
+    atem.pause()
+    assert wait_for(lambda: not c.online, timeout=1.5)
+    hellos = atem.hellos
+    atem.resume()  # Tally не менялся: TlIn придёт только в ответ на новый hello
+    assert wait_for(lambda: c.online and c.tally(2) == "pgm", timeout=2.0)
+    assert atem.hellos > hellos
+    assert atem.hello_addrs[-1][1] != atem.hello_addrs[0][1]  # новая сессия — с нового порта
+
+
+def test_bad_host_does_not_kill_thread():
+    for host in (None, "", "   "):
+        c = AtemTally(host)
+        c.start()
+        assert not c.online
+        c.stop()
+    c = AtemTally(5, port=9, timeout_s=0.6)  # str(5) — кривой адрес, поток жив
+    c.start()
+    time.sleep(0.3)
+    assert c._thread is not None and c._thread.is_alive()
+    t0 = time.monotonic()
+    c.stop()
+    assert time.monotonic() - t0 < 0.5
 
 
 def test_goes_offline_and_reconnects(atem, make_client):

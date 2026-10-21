@@ -8,6 +8,7 @@ from __future__ import annotations
 import socket
 import struct
 import threading
+import time
 
 SERVER_SESSION = 0x8001
 TICK_S = 0.2
@@ -26,7 +27,11 @@ def _tlin(flags: tuple[int, ...]) -> bytes:
 
 
 class FakeAtem:
-    def __init__(self):
+    """TlIn шлёт, как настоящий ATEM: в полном состоянии после hello и при смене Tally.
+    Периодически — только пустые keepalive. dump_on_hello=False — ответ на hello без состояния."""
+
+    def __init__(self, dump_on_hello: bool = True):
+        self.dump_on_hello = dump_on_hello
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.bind(("127.0.0.1", 0))
         self._sock.settimeout(0.05)
@@ -39,6 +44,7 @@ class FakeAtem:
         self.acked_ids: list[int] = []
         self.ack_sessions: set[int] = set()
         self.hellos = 0
+        self.hello_addrs: list[tuple[str, int]] = []
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="fake-atem", daemon=True)
         self._thread.start()
@@ -48,13 +54,29 @@ class FakeAtem:
         return self._sock.getsockname()[1]
 
     @property
-    def acks(self) -> int:
+    def acked_count(self) -> int:
+        """Подтверждения пакетов сессии микшера."""
         with self._lock:
             return len(self.acked_ids)
+
+    @property
+    def unknown_acks(self) -> int:
+        """Подтверждения номеров, которых микшер не посылал."""
+        with self._lock:
+            return sum(1 for i in self.acked_ids if i not in self.sent_ids)
+
+    @property
+    def hello_acked(self) -> bool:
+        """Клиент подтвердил ответ на hello (session 0x1337)."""
+        with self._lock:
+            return 0x1337 in self.ack_sessions
 
     def set_tally(self, flags: tuple[int, ...]) -> None:
         with self._lock:
             self._flags = tuple(flags)
+            send = self._client is not None and not self._paused
+        if send:
+            self._send_tlin()
 
     def pause(self) -> None:
         with self._lock:
@@ -89,8 +111,6 @@ class FakeAtem:
 
     def _loop(self) -> None:
         next_tick = 0.0
-        import time
-
         while not self._stop.is_set():
             try:
                 data, addr = self._sock.recvfrom(2048)
@@ -119,22 +139,36 @@ class FakeAtem:
             with self._lock:
                 self._client = addr
                 self.hellos += 1
+                self.hello_addrs.append(addr)
             reply = _packet(0x10, session, 0, 0, bytes([0x02]) + bytes(7))
             self._sock.sendto(reply, addr)
+            if self.dump_on_hello:
+                self._send_tlin()
         elif flags & 0x80:
             with self._lock:
                 if session == SERVER_SESSION:
                     self.acked_ids.append(ack_id)
                 self.ack_sessions.add(session)
 
+    def _next_ids(self, n: int) -> tuple[int, ...]:
+        with self._lock:
+            ids = tuple(range(self._next_id, self._next_id + n))
+            self._next_id += n
+            self.sent_ids.update(ids)
+            return ids
+
+    def _send_tlin(self) -> None:
+        with self._lock:
+            client, flags = self._client, self._flags
+        if client is None:
+            return
+        (pid,) = self._next_ids(1)
+        self._sock.sendto(_packet(0x08, SERVER_SESSION, 0, pid, _tlin(flags)), client)
+
     def _tick(self) -> None:
         with self._lock:
             client = self._client
-            flags = self._flags
-            if client is None:
-                return
-            ids = (self._next_id, self._next_id + 1)
-            self._next_id += 2
-            self.sent_ids.update(ids)
-        self._sock.sendto(_packet(0x08, SERVER_SESSION, 0, ids[0], _tlin(flags)), client)
-        self._sock.sendto(_packet(0x08, SERVER_SESSION, 0, ids[1]), client)  # keepalive
+        if client is None:
+            return
+        (pid,) = self._next_ids(1)
+        self._sock.sendto(_packet(0x08, SERVER_SESSION, 0, pid), client)  # keepalive

@@ -64,7 +64,7 @@ class AtemTally:
         timeout_s: float = 2.0,
         on_change: Callable[[TallySnapshot], None] | None = None,
     ):
-        self.host = host
+        self.host = "" if host is None else str(host).strip()  # из конфига руками может прийти что угодно
         self.port = port
         self.timeout_s = timeout_s
         self.on_change = on_change
@@ -77,6 +77,9 @@ class AtemTally:
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
+            return
+        if not self.host:
+            log.info("Адрес ATEM не задан — Tally не запускаю")
             return
         self._stop = threading.Event()  # своё событие у каждого потока: старый не оживёт после stop()
         self._thread = threading.Thread(target=self._run, args=(self._stop,), name="atem-tally", daemon=True)
@@ -99,24 +102,38 @@ class AtemTally:
 
     @property
     def online(self) -> bool:
+        """На связи и уже получен TlIn после последнего hello: только тогда tally() можно верить."""
         return self.snapshot().online
 
     # --- поток ---------------------------------------------------------
+    #
+    # Безопасность: снимок online=True только после TlIn, полученного с последнего hello.
+    # Пустые флаги до этого означали бы «не в эфире», хотя вход может быть в PGM.
+    # Пока TlIn нет — hello раз в 1 с: микшер в ответ шлёт полное состояние.
 
     def _run(self, stop: threading.Event) -> None:
         sock: socket.socket | None = None
-        last_rx: float | None = None
+        self._last_rx: float | None = None
+        self._synced = False
         last_hello = float("-inf")
+        fresh_socket = True  # после обрыва новая сессия идёт с нового порта
         try:
             while not stop.is_set():
                 now = time.monotonic()
-                if last_rx is None or now - last_rx > self.timeout_s:
-                    if self.snapshot().online:
-                        log.warning("ATEM %s: нет связи", self.host)
+                stale = self._last_rx is None or now - self._last_rx > self.timeout_s
+                if stale and self._synced:
+                    log.warning("ATEM %s: нет связи", self.host)
+                if stale:
+                    self._synced = False
+                    fresh_socket = True
                     self._publish(_OFFLINE)
-                    if now - last_hello >= HELLO_INTERVAL_S:
-                        last_hello = now
-                        sock = self._send_hello(sock)
+                if not self._synced and now - last_hello >= HELLO_INTERVAL_S:
+                    last_hello = now
+                    if fresh_socket and sock is not None:
+                        sock.close()
+                        sock = None
+                    sock = self._send_hello(sock)
+                    fresh_socket = False
                 if sock is None:
                     stop.wait(RECV_TIMEOUT_S)
                     continue
@@ -129,10 +146,7 @@ class AtemTally:
                     stop.wait(RECV_TIMEOUT_S)
                     continue
                 try:
-                    if self._handle(sock, data):
-                        if last_rx is None or time.monotonic() - last_rx > self.timeout_s:
-                            log.info("ATEM %s: на связи", self.host)
-                        last_rx = time.monotonic()
+                    self._handle(sock, data)
                 except Exception:  # мусор в пакете не должен ронять поток
                     log.debug("ATEM %s: не разобран пакет %r", self.host, data[:32], exc_info=True)
         finally:
@@ -148,33 +162,36 @@ class AtemTally:
                 sock.connect((self.host, self.port))  # принимаем пакеты только от микшера
             sock.send(hello_packet())
             return sock
-        except OSError as e:
+        except Exception as e:  # OSError сети, а также TypeError/ValueError от кривого адреса
             log.debug("ATEM %s: hello не отправлен: %s", self.host, e)
             if sock is not None:
                 sock.close()
             return None
 
-    def _handle(self, sock: socket.socket, data: bytes) -> bool:
-        """Разобрать пакет микшера. True — пакет настоящий (связь есть)."""
+    def _handle(self, sock: socket.socket, data: bytes) -> None:
+        """Разобрать пакет микшера: подтвердить, обновить флаги."""
         h = parse_header(data)
         if h is None:
-            return False
+            return
         if h.flags & FLAG_HELLO:
             if len(data) > HEADER_LEN and data[HEADER_LEN] == HELLO_ACCEPTED:
                 sock.send(ack_packet(h.session, 0))
-                self._publish(TallySnapshot(online=True, flags=self.snapshot().flags))
-                return True
-            return False
+                self._last_rx = time.monotonic()  # связь есть, но до TlIn — не online
+            return
+        self._last_rx = time.monotonic()
         if h.flags & FLAG_ACK_REQUEST:
             sock.send(ack_packet(h.session, h.packet_id))
-        flags = self.snapshot().flags
+        flags = None
         for name, body in iter_commands(data[HEADER_LEN:]):
             if name == "TlIn":
                 parsed = parse_tlin(body)
                 if parsed:
                     flags = parsed
-        self._publish(TallySnapshot(online=True, flags=flags))
-        return True
+        if flags is not None:
+            if not self._synced:
+                log.info("ATEM %s: на связи, Tally получен", self.host)
+            self._synced = True
+            self._publish(TallySnapshot(online=True, flags=flags))
 
     def _publish(self, snap: TallySnapshot) -> None:
         with self._lock:
