@@ -46,19 +46,58 @@ _ZOOM_IN_KEYS = {Qt.Key_Plus, Qt.Key_Equal}
 _ZOOM_OUT_KEYS = {Qt.Key_Minus, Qt.Key_Underscore}
 
 
-def _keycap_label(text: str) -> QWidget:
+class _Cap(QWidget):
     """Клавиша-подсказка (только рисунок)."""
 
-    class _Cap(QWidget):
-        def paintEvent(self, e):  # noqa: N802
-            p = QPainter(self)
-            paint_keycap(p, self.width(), self.height() / 2, text)
-            p.end()
+    def __init__(self, text: str):
+        super().__init__()
+        self._text = text
+        self.setFixedSize(int(keycap_width(text)) + 1, 24)
+        self.setFocusPolicy(Qt.NoFocus)
 
-    w = _Cap()
-    w.setFixedSize(int(keycap_width(text)) + 1, 24)
-    w.setFocusPolicy(Qt.NoFocus)
-    return w
+    def paintEvent(self, e):  # noqa: N802
+        p = QPainter(self)
+        paint_keycap(p, self.width(), self.height() / 2, self._text)
+        p.end()
+
+
+def _keycap_label(text: str) -> QWidget:
+    return _Cap(text)
+
+
+class _ElidedChip(Chip):
+    """Чип со свободным текстом: ширина ограничена, длинное обрезается, полный текст — в подсказке."""
+
+    MAX_W = 320
+
+    def __init__(self):
+        self._full = ""
+        super().__init__("", "neutral")
+        self.setMaximumWidth(self.MAX_W)
+        self.setMinimumWidth(0)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._full = text
+        self.setToolTip(text if len(text) > 0 else "")
+        self._elide()
+
+    def text(self) -> str:
+        return self._full
+
+    def minimumSizeHint(self):  # noqa: N802
+        s = super().minimumSizeHint()
+        s.setWidth(min(s.width(), 40))
+        return s
+
+    def sizeHint(self):  # noqa: N802
+        s = super().sizeHint()
+        s.setWidth(min(s.width(), self.MAX_W))
+        return s
+
+    def _elide(self) -> None:
+        w = self.MAX_W - self.contentsMargins().left() - 2 * SP[1]
+        shown = self.fontMetrics().elidedText(self._full, Qt.ElideRight, w)
+        QLabel.setText(self, shown)
 
 
 class MainWindow(QMainWindow):
@@ -91,8 +130,8 @@ class MainWindow(QMainWindow):
 
         # верхняя строка: камера, видео, состояние связи (чипы — одним рядом, анализ последним)
         self.link_label = Chip("", "neutral")
-        self.video_label = Chip("", "neutral")
-        self.analysis_label = Chip("", "neutral")
+        self.video_label = _ElidedChip()
+        self.analysis_label = _ElidedChip()
         self.toolbar = QToolBar("Камера")
         self.toolbar.setMovable(False)
         self.toolbar.setContextMenuPolicy(Qt.PreventContextMenu)
@@ -109,7 +148,6 @@ class MainWindow(QMainWindow):
         tl.addWidget(self._caption("Видео"))
         tl.addWidget(self.stream_combo)
         tl.addStretch(1)
-        self.chips_layout = tl
         for chip in (self.link_label, self.video_label, self.analysis_label):
             tl.addWidget(chip)
         self.toolbar.addWidget(tw)
@@ -271,7 +309,7 @@ class MainWindow(QMainWindow):
                 self.follow_panel.set_state(False, None)
                 self.follow_panel.show_hint("Сначала кликните по человеку на видео.")
                 # подсказка остаётся, пока вид не изменится сам
-                self._view_shown = tracking_view(False, None, None, None)
+                self._view_shown = self._current_view()
         else:
             f.disable("выключено оператором")
         self._sync_follow()
@@ -280,18 +318,21 @@ class MainWindow(QMainWindow):
         f = self._follower()
         self._on_follow_requested(not (f and f.enabled))
 
-    def _sync_follow(self) -> None:
-        """Состояние слежения меняется и из других потоков (ручное управление, сбой анализа) — показать."""
+    def _current_view(self) -> TrackingView:
         f = self._follower()
         a = self.session.analyzer if self.session else None
         r = a.latest() if a else None
-        v = tracking_view(
+        return tracking_view(
             bool(f and f.enabled),
             f.last_reason if f else None,
             r.target_id if r else None,
             r.target_state if r else None,
             diverged=bool(f and getattr(f.controller, "diverged", False)),
         )
+
+    def _sync_follow(self) -> None:
+        """Состояние слежения меняется и из других потоков (ручное управление, сбой анализа) — показать."""
+        v = self._current_view()
         if v != self._view_shown:
             self._view_shown = v
             self.follow_panel.set_view(v)
@@ -429,12 +470,14 @@ class MainWindow(QMainWindow):
         if not s:
             self.link_label.set("Камера не выбрана", "neutral")
             self.video_label.setText("")
+            self.video_label.hide()
             return
         self._remember_rtsp_url(s)
         if s.online:
             self.link_label.set("Камера на связи", "ok")
         else:
             self.link_label.set("Нет связи с камерой", "fault")
+        self.video_label.show()
         st = s.frames.stats()
         if st.connected:
             self.video_label.setText(f"видео {st.width}×{st.height}, {st.fps:.0f} к/с")

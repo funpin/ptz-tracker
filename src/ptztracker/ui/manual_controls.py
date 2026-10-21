@@ -84,6 +84,13 @@ class ManualControls(QWidget):
 
         self.zoom_slider = SpringSlider(Qt.Horizontal)
         self.zoom_slider.setRange(-100, 100)
+        # пружинный: в покое нейтральный, без акцентной заливки; метка по центру
+        self.zoom_slider.setTickPosition(QSlider.TicksBelow)
+        self.zoom_slider.setTickInterval(100)
+        self.zoom_slider.setStyleSheet(
+            f"QSlider::sub-page:horizontal, QSlider::add-page:horizontal {{ background: {C.RAISED_HI};"
+            " border-radius: 3px; }"
+        )
         self.zoom_slider.setToolTip("Тяните вправо — приблизить, влево — отдалить. Отпустите — стоп.")
         self.zoom_slider.valueChanged.connect(self._on_zoom)
         self.zoom_slider.sliderReleased.connect(lambda: self.zoom_slider.setValue(0))

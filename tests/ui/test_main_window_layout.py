@@ -60,3 +60,26 @@ def test_window_fits_1640x850(qtbot, tmp_path):
     assert w.minimumSizeHint().height() <= 760
     assert w.width() <= 1640
     w.close()
+
+
+def test_hint_survives_tick_after_earlier_disable(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    select(qtbot, w)
+    qtbot.keyClick(w, Qt.Key_Space)
+    qtbot.waitUntil(lambda: w.session.follower.enabled, timeout=2000)
+    qtbot.keyClick(w, Qt.Key_Space)
+    qtbot.waitUntil(lambda: not w.session.follower.enabled, timeout=2000)
+    w.session.analyzer.clear_target()
+    qtbot.wait(300)
+    qtbot.keyClick(w, Qt.Key_Space)
+    qtbot.wait(300)
+    assert "Сначала кликните" in w.follow_panel.follow_btn.toolTip()
+    w.close()
+
+
+def test_long_analysis_text_keeps_width(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w.analysis_label.setText("x" * 300)
+    assert w.minimumSizeHint().width() <= 1640
+    assert w.analysis_label.toolTip() == "x" * 300
+    w.close()
