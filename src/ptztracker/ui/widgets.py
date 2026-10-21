@@ -302,6 +302,11 @@ class StateTile(QPushButton):
         self._lamp.update()
         self.update()
 
+    def set_why(self, text: str) -> None:
+        """Заменить только пояснение (с тем же усечением и подсказкой)."""
+        self.why_label.set_full(text)
+        self.setToolTip(text)
+
     def _toggle_lamp(self) -> None:
         self._lamp.lit = not self._lamp.lit
         self._lamp.update()
