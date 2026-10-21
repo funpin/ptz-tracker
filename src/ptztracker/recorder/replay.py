@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, fields
 
 from ptztracker.control.camera_model import Calibration, default_calibration
@@ -17,7 +18,6 @@ from ptztracker.control.follower import output_codes
 from ptztracker.control.framing import FramingController, FramingInput
 from ptztracker.recorder.reader import Episode
 
-DEFAULT_LATENCY_S = 0.15  # как в CameraSession, если для вида потока нет замера
 # follow on, записанный позже первого такта (поток слежения успел раньше enable()), — тот же запуск
 LATE_FOLLOW_ON_S = 0.2
 MAX_DT_S = 0.2  # длиннее — пауза в тактах, в долю «вне мягкой зоны» не идёт
@@ -38,6 +38,8 @@ class ReplaySummary:
     target_switches: int
     max_code_diff: int  # самое большое расхождение «было/стало» по коду
     partial_start: bool  # запись началась посреди слежения
+    calibration_ok: bool = True
+    skipped_events: int = 0
 
     def text(self) -> str:
         lines = [
@@ -49,6 +51,10 @@ class ReplaySummary:
             f"Смены цели: {self.target_switches}",
             f"Расхождение кодов «было/стало»: до {self.max_code_diff}",
         ]
+        if not self.calibration_ok:
+            lines.append("Калибровка в записи не читается: повтор идёт по средним значениям, коды могут не совпасть.")
+        if self.skipped_events:
+            lines.append(f"Пропущено {self.skipped_events} повреждённых событий.")
         if self.partial_start:
             lines.append("Запись началась посреди слежения: первые такты могут не совпасть с записанными.")
         return "\n".join(lines)
@@ -75,6 +81,8 @@ class ReplayResult:
     t_start: float = 0.0
     t_end: float = 0.0
     partial_start: bool = False
+    calibration_ok: bool = True  # False — калибровка в записи не читается, взяты средние значения
+    skipped_events: int = 0  # повреждённые события, пропущенные при повторе
     calib: Calibration | None = None
 
     def summary(self) -> ReplaySummary:
@@ -92,6 +100,8 @@ class ReplayResult:
             max_code_diff=max((abs(x - y) for a, b in zip(self.codes_rec, self.codes_new) for x, y in zip(a, b)),
                               default=0),
             partial_start=self.partial_start,
+            calibration_ok=self.calibration_ok,
+            skipped_events=self.skipped_events,
         )
 
     def _pairs(self):
@@ -164,14 +174,23 @@ def _measure(m) -> BodyMeasure | None:
                        None if m.get("u") is None else float(m["u"]), bool(m.get("confident", True)))
 
 
-def episode_calibration(ep: Episode) -> Calibration:
+def _time(e: dict) -> float | None:
+    try:
+        t = float(e["t"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return t if math.isfinite(t) else None
+
+
+def episode_calibration(ep: Episode) -> tuple[Calibration, bool]:
+    """Калибровка из meta; (средние значения, False), если её нет или она не читается."""
     d = ep.meta.get("calibration")
     if d:
         try:
-            return Calibration.from_json(d)
+            return Calibration.from_json(d), True
         except Exception:
             pass
-    return default_calibration()
+    return default_calibration(), False
 
 
 def replay_controller(
@@ -184,24 +203,34 @@ def replay_controller(
 
     Без параметров — с записанными калибровкой, композицией и характером (они пишутся в каждом такте),
     с параметрами — с новыми для всего эпизода. Регулятор сбрасывается при каждом включении слежения,
-    как в Follower.enable().
+    как в Follower.enable(). Повреждённые события пропускаются и считаются (`skipped_events`).
     """
-    calib = calib or episode_calibration(ep)
-    latency = calib.video_latency.get(ep.meta.get("stream_kind") or "", DEFAULT_LATENCY_S)
-    res = ReplayResult(calib=calib)
-    events = sorted(ep.events(), key=lambda e: e.get("t", 0.0))  # в zip события идут в порядке очереди
+    res = ReplayResult()
+    if calib is None:
+        calib, res.calibration_ok = episode_calibration(ep)
+    res.calib = calib
+    # задержка из follow on (её выставил Follower.enable); в старых записях её нет — по виду потока
+    meta_latency = calib.latency_for(ep.meta.get("stream_kind"))
+    res.skipped_events = getattr(ep, "bad_lines", 0)
+    events = []
+    for e in ep.events():
+        t = _time(e)
+        if t is None:
+            res.skipped_events += 1
+        else:
+            events.append((t, e))
+    events.sort(key=lambda te: te[0])  # в zip события идут в порядке очереди, не строго по времени
     if events:
-        res.t_start, res.t_end = events[0]["t"], events[-1]["t"]
+        res.t_start, res.t_end = events[0][0], events[-1][0]
 
-    comp = composition or COMPOSITIONS[DEFAULT_COMPOSITION]
-    eff = effort or EffortProfile.at(0.5)
-    ctrl = FramingController(comp, eff, calib, latency)
+    ctrl = FramingController(composition or COMPOSITIONS[DEFAULT_COMPOSITION], effort or EffortProfile.at(0.5),
+                             calib, meta_latency)
     codes: Codes = (50, 50, 50)
     bounds: list[list[float]] = []  # [начало, конец] каждого включения слежения
     on = False
     implicit_t: float | None = None  # слежение «включилось» по такту, а событие follow on ещё не встретилось
 
-    def start(t: float) -> None:
+    def start(t: float, latency: float) -> None:
         nonlocal codes, on
         ctrl.video_latency = latency  # как Follower.enable(): сброс регулятора и кодов
         ctrl.reset()
@@ -209,48 +238,71 @@ def replay_controller(
         bounds.append([t, t])
         on = True
 
-    for e in events:
-        kind, t = e.get("kind"), e["t"]
-        if kind == "follow" and "on" in e:  # без "on" — смена настроек: они есть в каждом такте
-            if e["on"] and on and implicit_t is not None and t - implicit_t <= LATE_FOLLOW_ON_S:
-                if len(bounds) == 1:
-                    res.partial_start = False  # первый запуск записан целиком
-            elif e["on"]:
-                start(t)
-            elif on:
+    def late_follow_on(i: int, t: float) -> dict | None:
+        """follow on, записанный чуть позже первого такта того же запуска."""
+        for t2, e2 in events[i + 1:]:
+            if t2 - t > LATE_FOLLOW_ON_S:
+                return None
+            if e2.get("kind") == "follow" and e2.get("on") is True:
+                return e2
+        return None
+
+    def latency_of(e: dict | None) -> float:
+        try:
+            v = float(e["video_latency"])
+            return v if math.isfinite(v) and v >= 0 else meta_latency
+        except (KeyError, TypeError, ValueError):
+            return meta_latency
+
+    for i, (t, e) in enumerate(events):
+        kind = e.get("kind")
+        try:
+            if kind == "follow" and "on" in e:  # без "on" — смена настроек: они есть в каждом такте
+                if e["on"] and on and implicit_t is not None and t - implicit_t <= LATE_FOLLOW_ON_S:
+                    pass  # тот же запуск: регулятор уже сброшен перед первым тактом
+                elif e["on"]:
+                    start(t, latency_of(e))
+                elif on:
+                    bounds[-1][1] = t
+                    on = False
+                implicit_t = None
+            elif kind == "control":
+                # сначала разобрать такт целиком: повреждённый не должен сдвинуть состояние регулятора
+                inp = FramingInput(now=t, t_capture=None if e.get("t_capture") is None else float(e["t_capture"]),
+                                   measure=_measure(e.get("measure")), zoom_pos=int(e.get("zoom_pos", 0x555)),
+                                   aspect=float(e.get("aspect", 16 / 9)))
+                rec = e.get("codes") or [50, 50, 50]
+                rec_codes = (int(rec[0]), int(rec[1]), int(rec[2]))
+                if not on:
+                    first = late_follow_on(i, t)
+                    start(t, latency_of(first))
+                    implicit_t = t
+                    if len(bounds) == 1 and first is None:
+                        res.partial_start = True  # запись началась посреди слежения
+                ctrl.set_composition(composition or _composition(e.get("composition"), ctrl.composition))
+                ctrl.set_effort(effort or _effort(e.get("effort"), ctrl.effort))
+                out = ctrl.step(inp)
+                codes = output_codes(calib, out, inp.zoom_pos, codes)
+                soft_x, soft_y = ctrl.effort.soft_x, ctrl.effort.soft_y
+                res.t.append(t)
+                res.err_x.append(float(out.error[0]))
+                res.err_y.append(float(out.error[1]))
+                res.size_err.append(out.size_error)
+                res.codes_rec.append(rec_codes)
+                res.codes_new.append(codes)
+                res.state.append(out.state)
+                res.zoom_pos.append(inp.zoom_pos)
+                res.out_of_soft.append(out.state in ("holding", "moving")
+                                       and (abs(out.error[0]) > soft_x or abs(out.error[1]) > soft_y))
+                res.segment.append(len(bounds) - 1)
                 bounds[-1][1] = t
-                on = False
-            implicit_t = None
-        elif kind == "control":
-            if not on:
-                start(t)
-                implicit_t = t
-                if len(bounds) == 1:
-                    res.partial_start = True  # пока не встретился follow on сразу после такта
-            ctrl.composition = composition or _composition(e.get("composition"), ctrl.composition)
-            ctrl.effort = effort or _effort(e.get("effort"), ctrl.effort)
-            zoom_pos = int(e.get("zoom_pos", 0x555))
-            out = ctrl.step(FramingInput(now=t, t_capture=e.get("t_capture"), measure=_measure(e.get("measure")),
-                                         zoom_pos=zoom_pos, aspect=float(e.get("aspect", 16 / 9))))
-            codes = output_codes(calib, out, zoom_pos, codes)
-            rec = e.get("codes") or [50, 50, 50]
-            soft_x, soft_y = ctrl.effort.soft_x, ctrl.effort.soft_y
-            res.t.append(t)
-            res.err_x.append(float(out.error[0]))
-            res.err_y.append(float(out.error[1]))
-            res.size_err.append(out.size_error)
-            res.codes_rec.append((int(rec[0]), int(rec[1]), int(rec[2])))
-            res.codes_new.append(codes)
-            res.state.append(out.state)
-            res.zoom_pos.append(zoom_pos)
-            res.out_of_soft.append(out.state in ("holding", "moving")
-                                   and (abs(out.error[0]) > soft_x or abs(out.error[1]) > soft_y))
-            res.segment.append(len(bounds) - 1)
-            bounds[-1][1] = t
-        elif kind == "analysis":
-            res.targets.append((t, e.get("target_id"), e.get("target_state") or "none"))
-        elif kind == "position":
-            res.position.append((t, int(e["pan"]), int(e["tilt"]), e.get("zoom")))
+            elif kind == "analysis":
+                res.targets.append((t, e.get("target_id"), e.get("target_state") or "none"))
+            elif kind == "position":
+                z = e.get("zoom")
+                res.position.append((t, int(e["pan"]), int(e["tilt"]), None if z is None else int(z)))
+        except (KeyError, TypeError, ValueError, IndexError):
+            res.skipped_events += 1
     res.segments = [(a, b) for a, b in bounds]
     res.lost = _lost_intervals(res.targets, res.t_end)
     return res

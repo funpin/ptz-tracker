@@ -41,11 +41,15 @@ def run_replay_cli(args) -> int:
     except Exception as e:
         print(f"Не удалось открыть запись {src}: {e}", file=sys.stderr)
         return 2
-    res = replay_controller(ep)
-    print(f"Запись: {src} ({ep.duration:.1f} с)")
-    print(res.summary().text())
-    out_dir = Path(args.out) if args.out else src.parent
-    png = render(res, out_dir / f"{src.stem}_регулятор.png")
+    try:
+        res = replay_controller(ep)
+        print(f"Запись: {src} ({ep.duration:.1f} с)")
+        print(res.summary().text())
+        out_dir = Path(args.out) if args.out else src.parent
+        png = render(res, out_dir / f"{src.stem}_регулятор.png")
+    except Exception as e:
+        print(f"Повтор записи {src} не удался: {e}", file=sys.stderr)
+        return 1
     print(f"Графики: {png}")
     return 0
 

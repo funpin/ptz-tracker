@@ -93,14 +93,16 @@ class Follower:
         except Exception as e:
             log.debug("Запрос зума при включении не удался: %s", e)
         with self._lock:
-            self.controller.video_latency = self.video_latency()
+            latency = self.video_latency()
+            self.controller.video_latency = latency
             self.controller.reset()
             self._codes = (50, 50, 50)
             self._last_u = None
             self.enabled = True
             self.last_reason = None
         log.info("Слежение включено (цель №%s)", r.target_id)
-        safe_event(self.recorder, "follow", on=True, reason=None, target_id=r.target_id)
+        # задержка видео — для повтора: регулятор вычитает её из момента кадра
+        safe_event(self.recorder, "follow", on=True, reason=None, target_id=r.target_id, video_latency=latency)
         self._notify()
         return True
 

@@ -28,16 +28,18 @@ def _write(path, events, meta=None):
     return Episode.open(write_episode(path, meta, items, []))
 
 
-def _following_events(seconds=8.0, effort=0.5, follow_on_late=0.005):
+def _following_events(seconds=8.0, effort=0.5, follow_on_late=0.005, latency=None):
     """Слежение как в Follower: такты 25 Гц, новый замер каждый второй такт, человек ходит туда-обратно.
 
     Событие follow on пишется на follow_on_late позже первого такта — как в жизни, когда поток слежения
     успевает сделать такт раньше, чем enable() записал событие.
     """
     calib, comp, eff = default_calibration(), COMPOSITIONS["waist_center"], EffortProfile.at(effort)
-    ctrl = FramingController(comp, eff, calib, calib.video_latency["sim"])
+    ctrl = FramingController(comp, eff, calib, calib.video_latency["sim"] if latency is None else latency)
     codes = (50, 50, 50)
     ev = [{"t": T0 + follow_on_late, "kind": "follow", "on": True, "reason": None, "target_id": 3}]
+    if latency is not None:
+        ev[0]["video_latency"] = latency
     t_cap, m = None, None
     for i in range(int(seconds * 25)):
         now = T0 + i * 0.04
@@ -115,6 +117,56 @@ def test_replay_reproduces_recorded_codes(tmp_path):
            if max(abs(x - y) for x, y in zip(a, b)) > 1]
     assert not bad, bad[:5]
     assert any(c[0] != 50 or c[1] != 50 for c in res.codes_new)
+
+
+def test_replay_uses_latency_recorded_at_enable(tmp_path):
+    """meta.stream_kind даёт 0,15 с, а Follower.enable() выставил 0,6 с — повтор берёт записанную."""
+    ev = _following_events(latency=0.6)
+    res = replay_controller(_write(tmp_path / "e.zip", ev))
+    assert res.codes_new == res.codes_rec
+    for e in ev:
+        e.pop("video_latency", None)  # старая запись: задержки в follow on нет
+    old = replay_controller(_write(tmp_path / "old.zip", ev))
+    assert old.codes_new != old.codes_rec
+
+
+def test_replay_flags_unreadable_calibration(tmp_path):
+    ev = _following_events(seconds=2.0)
+    ok = replay_controller(_write(tmp_path / "ok.zip", ev))
+    assert ok.calibration_ok and "Калибровка" not in ok.summary().text()
+    bad = replay_controller(_write(tmp_path / "bad.zip", ev, meta={"stream_kind": "sim", "calibration": {"pan": 5}}))
+    assert not bad.calibration_ok
+    assert "Калибровка в записи не читается" in bad.summary().text()
+
+
+def _with_damage(tmp_path, ev):
+    good = [(e["t"], event_line(e["t"], e["kind"], {k: v for k, v in e.items() if k not in ("t", "kind")}))
+            for e in ev]
+    ctl = next(i for i, (_, line) in enumerate(good) if '"control"' in line)
+    damaged = [
+        (T0 + 1.0, '{"kind": "analysis", "target_id": 3}'),  # нет t
+        (T0 + 1.0, '{"t": "вчера", "kind": "analysis"}'),  # t не число
+        (T0 + 1.5, f'{{"t": {T0 + 1.5}, "kind": "position", "tilt": 1}}'),  # нет pan
+        (T0 + 2.0, f'{{"t": {T0 + 2.001}, "kind": "control", "measure": {{"nose": "x"}}}}'),  # кривой замер
+        (T0 + 2.0, '{"t": 1002.0, "kind": "contr'),  # оборванная строка
+    ]
+    meta = {"stream_kind": "sim", "calibration": default_calibration().to_json()}
+    return write_episode(tmp_path / "e.zip", meta, good[:ctl + 5] + damaged + good[ctl + 5:], [])
+
+
+def test_replay_skips_damaged_events(tmp_path):
+    ev = _following_events()
+    res = replay_controller(Episode.open(_with_damage(tmp_path, ev)))
+    assert res.skipped_events == 5
+    assert res.codes_new == res.codes_rec  # кривой такт не сдвинул состояние регулятора
+    assert len(res.t) == 200 and len(res.position) == 2
+    assert "Пропущено 5 повреждённых событий" in res.summary().text()
+
+
+def test_cli_replay_damaged_episode(tmp_path, capsys):
+    path = _with_damage(tmp_path, _following_events())
+    assert main(["--replay", str(path), "--out", str(tmp_path)]) == 0
+    assert "Пропущено 5 повреждённых событий" in capsys.readouterr().out
 
 
 def test_replay_with_other_effort_changes_codes(tmp_path):

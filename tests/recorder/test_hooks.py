@@ -115,7 +115,8 @@ def test_sim_session_records_all_kinds(tmp_path):
     assert any(e["cmd"].startswith("#PTS") and e["ok"] for e in ep.events("cmd"))
     p = next(ep.events("position"))
     assert isinstance(p["pan"], int) and isinstance(p["tilt"], int) and isinstance(p["zoom"], int)
-    assert any(e.get("on") is True for e in ep.events("follow"))
+    on = next(e for e in ep.events("follow") if e.get("on") is True)
+    assert on["video_latency"] == 0.15  # sim
     t = next(ep.events("target"))
     assert t["how"] == "click" and t["id"] is not None and "x" in t and "y" in t
     assert ep.meta["stream_kind"] == "sim" and ep.meta["camera"]["kind"] == "sim"

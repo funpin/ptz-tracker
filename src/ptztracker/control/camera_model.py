@@ -150,6 +150,9 @@ class CameraDynamics:
         return self._state(t1)[0] - self._state(t0)[0]
 
 
+DEFAULT_VIDEO_LATENCY_S = 0.15  # задержка видео, если для этого вида потока нет замера
+
+
 @dataclass
 class Calibration:
     pan: SpeedTable
@@ -158,6 +161,10 @@ class Calibration:
     tau: float = he42.RAMP_TAU_S
     video_latency: dict[str, float] = field(default_factory=lambda: dict(he42.VIDEO_LATENCY_S))
     created: str | None = None
+
+    def latency_for(self, stream_kind: str | None) -> float:
+        """Задержка видео для вида потока (mjpeg/h264/sim), по умолчанию — DEFAULT_VIDEO_LATENCY_S."""
+        return self.video_latency.get(stream_kind or "", DEFAULT_VIDEO_LATENCY_S)
 
     def to_json(self) -> dict:
         return {

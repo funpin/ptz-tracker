@@ -126,7 +126,7 @@ class CalibrationRunner:
         time.sleep(1.2)
         if t_first is None or len(samples) < 6:
             d = default_calibration()
-            return d.video_latency.get(self.stream_kind, 0.15), d.tau
+            return d.latency_for(self.stream_kind), d.tau
         # сгладить по 3 кадрам
         sm = [(samples[i][0], statistics.mean(v for _, v in samples[i - 1 : i + 2])) for i in range(1, len(samples) - 1)]
         steady = statistics.mean(v for _, v in sm[-max(3, len(sm) // 4) :])

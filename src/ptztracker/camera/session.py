@@ -202,7 +202,7 @@ class CameraSession:
         calib = self.calibration()
 
         def latency() -> float:
-            return calib.video_latency.get(self.stream_kind(), 0.15)
+            return calib.latency_for(self.stream_kind())
 
         def query_zoom():
             return P.parse_zoom(self.scheduler.query(P.Q_ZOOM, timeout=1.0))
