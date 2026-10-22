@@ -94,7 +94,7 @@ class SimPtz:
         return ZOOM_RATIO_MAX**self.zoom
 
     def hfov_deg(self) -> float:
-        return HFOV_WIDE * (HFOV_TELE / HFOV_WIDE) ** self.zoom
+        return he42.hfov_deg(self.zoom)
 
     # --- физика ---------------------------------------------------------
 

@@ -260,7 +260,7 @@ def _calibrate(session, args, cam, data) -> int:
     if session.follower:
         session.follower.disable("калибровка")
     session.quiet_for_calibration()  # опросы положения и пульс сбивают команды мастера (камера отвечает «занята»)
-    _say("Калибровка: камера будет двигаться 1–2 минуты и вернётся на место.")
+    _say("Калибровка: камера будет двигаться 3–4 минуты и вернётся на место.")
     runner = CalibrationRunner(session.client.send, session.frames, _say, stream_kind=session.stream_kind())
     calib = runner.run().to_json()
     data["calibration"] = calib

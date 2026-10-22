@@ -30,6 +30,11 @@ class Pacer:
         self._last = time.monotonic()
         return self.client.send(cmd)
 
+    def timed_send(self, cmd: str) -> tuple[str, float]:
+        """Отправить и вернуть (ответ, момент посередине запроса) — когда камера, вероятно, его получила."""
+        body = self.send(cmd)
+        return body, (self._last + time.monotonic()) / 2
+
     def try_send(self, cmd: str) -> str | None:
         try:
             return self.send(cmd)
