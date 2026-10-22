@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="PTZ Tracker">
+  <circle cx="120" cy="120" r="104" fill="none" stroke="#E7EAF0" stroke-width="10"/>
+  <g stroke="#6C7486" stroke-width="6" stroke-linecap="round">
+    <line x1="120" y1="24" x2="120" y2="40"/><line x1="120" y1="200" x2="120" y2="216"/>
+    <line x1="24" y1="120" x2="40" y2="120"/><line x1="200" y1="120" x2="216" y2="120"/>
+  </g>
+  <g fill="none" stroke="#4C8DF6" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M72 92 V72 H92"/><path d="M148 72 H168 V92"/>
+    <path d="M168 148 V168 H148"/><path d="M92 168 H72 V148"/>
+  </g>
+  <circle cx="120" cy="106" r="17" fill="#E7EAF0"/>
+  <path d="M86 160 C88 138 102 128 120 128 C138 128 152 138 154 160 Z" fill="#E7EAF0"/>
+  <circle cx="186" cy="54" r="13" fill="#E8202A"/>
+</svg>

@@ -20,3 +20,11 @@ media/
 .DS_Store
 Thumbs.db
 *.egg-info/
+
+# Данные с площадки: отчёты диагностики, записи чёрного ящика, настройки с паролями
+ptz-diag-*.zip
+ПТЗ_*.zip
+config.json
+.env
+.env.*
+!.env.example

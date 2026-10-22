@@ -24,9 +24,18 @@ def test_ci_workflow():
     assert "jobs:" in text and "windows-2022" in text and "pyinstaller" in text
 
 
-def test_readme_has_diagnostics_section():
+def operator_guide() -> str:
+    return (ROOT / "docs" / "OPERATOR.md").read_text(encoding="utf-8")
+
+
+def test_readme_links_operator_guide_and_license():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "Диагностика камеры на площадке" in text and "PTZTracker-diag.exe" in text
+    assert "docs/OPERATOR.md" in text and "AGPL" in text
+
+
+def test_guide_has_diagnostics_section():
+    text = operator_guide()
+    assert "Диагностика камеры" in text and "PTZTracker-diag.exe" in text
 
 
 def test_spec_bundles_model_and_onnxruntime():
@@ -34,11 +43,11 @@ def test_spec_bundles_model_and_onnxruntime():
     assert "yolo11n-pose.onnx" in text and '"onnxruntime"' in text
 
 
-def test_readme_has_target_selection():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "Выбор человека" in text and "AGPL" in text
+def test_guide_has_target_selection():
+    text = operator_guide()
+    assert "Кликните по докладчику" in text and "ЦЕЛЬ ПОТЕРЯНА" in text
 
 
-def test_readme_has_following_and_calibration():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "### Слежение" in text and "Калибровка" in text and "пульт" in text.lower()
+def test_guide_has_following_calibration_and_f9():
+    text = operator_guide()
+    assert "## 3. Слежение" in text and "Калибровка" in text and "пульт" in text.lower() and "F9" in text
