@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ptztracker import __version__
 from ptztracker.api.backend import start_window_api
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import AppConfig, CameraConfig, ConfigStore, get_password, set_password
@@ -39,6 +41,7 @@ from ptztracker.ui.preview import PreviewWidget
 from ptztracker.ui.state import TrackingView, tally_chip, tracking_view
 from ptztracker.ui.theme import FS_CAPTION, SP, C
 from ptztracker.ui.widgets import Chip, SectionHeader, VideoFrame, keycap_width, paint_keycap
+from ptztracker.updates import CHECK_INTERVAL_S, UpdateChecker, UpdateInfo
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
 
 log = logging.getLogger(__name__)
@@ -110,16 +113,32 @@ class _ElidedChip(Chip):
         QLabel.setText(self, shown)
 
 
+class _ClickableChip(Chip):
+    """Чип, на который можно нажать (значок «Доступна X.Y.Z»)."""
+
+    clicked = Signal()
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton and self.rect().contains(e.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(e)
+
+
 class MainWindow(QMainWindow):
     _saveFinished = Signal(object)  # Future записи; приходит из рабочего потока, обрабатывается в Qt-потоке
 
-    def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None, atem_port: int = 9910):
+    def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None, atem_port: int = 9910,
+                 checker_factory: Callable[[str], UpdateChecker] | None = UpdateChecker):
         super().__init__(parent)
         self.setWindowTitle("PTZ Tracker")
         self.resize(1640, 850)
         self.store = store
         self.cfg: AppConfig = store.load()
         self.use_sim = use_sim
+        # проверка новой версии: в --sim сеть не трогаем; в тестах подставляют фальшивку
+        self._checker_factory = None if use_sim and checker_factory is UpdateChecker else checker_factory
+        self._checker: UpdateChecker | None = None
+        self._update_info: UpdateInfo | None = None
         self.session: CameraSession | None = None
         self._held: set[int] = set()
         self._atem_port = atem_port
@@ -151,6 +170,11 @@ class MainWindow(QMainWindow):
         self.analysis_label = _ElidedChip()
         self.record_label = Chip("", "fault")  # «● запись N мин»: чёрный ящик пишет последние минуты
         self.record_label.hide()
+        self.update_chip = _ClickableChip("", "accent")
+        self.update_chip.setToolTip("Открыть страницу релиза на GitHub")
+        self.update_chip.setCursor(Qt.PointingHandCursor)
+        self.update_chip.hide()
+        self.update_chip.clicked.connect(self._open_release_page)
         self.toolbar = QToolBar("Камера")
         self.toolbar.setMovable(False)
         self.toolbar.setContextMenuPolicy(Qt.PreventContextMenu)
@@ -167,7 +191,7 @@ class MainWindow(QMainWindow):
         tl.addWidget(self._caption("Видео"))
         tl.addWidget(self.stream_combo)
         tl.addStretch(1)
-        for chip in (self.atem_chip, self.link_label, self.video_label, self.analysis_label, self.record_label):
+        for chip in (self.update_chip, self.atem_chip, self.link_label, self.video_label, self.analysis_label, self.record_label):
             tl.addWidget(chip)
         self.toolbar.addWidget(tw)
         self.addToolBar(Qt.TopToolBarArea, self.toolbar)
@@ -269,6 +293,11 @@ class MainWindow(QMainWindow):
         self.atem_action = QAction("ATEM…", self)
         self.service_menu.addAction(self.atem_action)
         self.atem_action.triggered.connect(self._edit_atem)
+        self.check_updates_action = QAction("Проверять обновления", self)
+        self.check_updates_action.setCheckable(True)
+        self.check_updates_action.setChecked(self.cfg.check_updates)
+        self.service_menu.addAction(self.check_updates_action)
+        self.check_updates_action.toggled.connect(self._on_check_updates_toggled)
 
         self.add_btn.clicked.connect(self._add_camera)
         self.edit_btn.clicked.connect(self._edit_camera)
@@ -299,6 +328,7 @@ class MainWindow(QMainWindow):
         self._restart_atem()
         self._fill_combo(select_id="sim" if use_sim else self.cfg.last_camera_id)
         self._api = start_window_api(self)
+        QTimer.singleShot(3000, self._start_update_check)
 
     # --- список камер -------------------------------------------------
 
@@ -406,6 +436,40 @@ class MainWindow(QMainWindow):
 
     def refresh_status(self) -> None:
         self._update_status()
+
+    # --- новая версия -------------------------------------------------
+
+    def _start_update_check(self) -> None:
+        """Одна проверка в фоне; не чаще раза в сутки и только если не отключена в меню."""
+        if self._checker is not None or self._checker_factory is None or not self.cfg.check_updates:
+            return
+        if time.time() - self.cfg.last_update_check < CHECK_INTERVAL_S:
+            return
+        self._checker = self._checker_factory(__version__)
+        self._checker.start()
+
+    def _poll_update_check(self) -> None:
+        """Из таймера состояния: читаем снимок, сеть не ждём."""
+        c = self._checker
+        if c is None or not c.done:
+            return
+        self._checker = None
+        if c.ok:
+            self.cfg.last_update_check = time.time()
+            self._save()
+        info = c.result
+        if info is not None:
+            self._update_info = info
+            self.update_chip.set(f"Доступна {info.version}", "accent")
+            self.update_chip.show()
+
+    def _open_release_page(self) -> None:
+        if self._update_info is not None:
+            QDesktopServices.openUrl(QUrl(self._update_info.html_url))
+
+    def _on_check_updates_toggled(self, on: bool) -> None:
+        self.cfg.check_updates = on
+        self._save()
 
     def save_config(self) -> None:
         self._save()
@@ -658,6 +722,7 @@ class MainWindow(QMainWindow):
     # --- статус -------------------------------------------------------
 
     def _update_status(self) -> None:
+        self._poll_update_check()
         s = self.session
         if not s:
             self.link_label.set("Камера не выбрана", "neutral")

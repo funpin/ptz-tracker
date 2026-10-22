@@ -59,6 +59,8 @@ class AppConfig:
     api_port: int = 8765
     api_token: str = ""
     atem_ip: str = ""  # адрес микшера ATEM, пусто — Tally выключен
+    check_updates: bool = True  # раз в сутки спрашивать GitHub, не вышла ли новая версия
+    last_update_check: float = 0.0  # когда проверяли в последний раз (секунды с 1970)
 
 
 RECORD_DIR_NAME = "Записи PTZ Tracker"
@@ -161,6 +163,17 @@ def _fix_api_settings(cfg: AppConfig) -> None:
         cfg.api_token = d.api_token
 
 
+def _fix_update_settings(cfg: AppConfig) -> None:
+    d = AppConfig()
+    if not isinstance(cfg.check_updates, bool):
+        cfg.check_updates = d.check_updates
+    t = cfg.last_update_check
+    if isinstance(t, bool) or not isinstance(t, (int, float)) or not math.isfinite(t) or t < 0:
+        cfg.last_update_check = d.last_update_check
+    else:
+        cfg.last_update_check = float(t)
+
+
 def ensure_api_token(cfg: AppConfig) -> bool:
     """Создать токен API, если его ещё нет. True — токен новый (конфиг нужно сохранить)."""
     if cfg.api_token:
@@ -198,6 +211,7 @@ class ConfigStore:
             cfg.cameras = default_config().cameras
         _fix_record_settings(cfg)
         _fix_api_settings(cfg)
+        _fix_update_settings(cfg)
         return cfg
 
     def save(self, cfg: AppConfig) -> None:

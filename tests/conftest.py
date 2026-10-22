@@ -22,3 +22,13 @@ def _ephemeral_api_port(request, monkeypatch):
         return cfg
 
     monkeypatch.setattr(ConfigStore, "load", load_ephemeral)
+
+
+@pytest.fixture(autouse=True)
+def _no_update_check(request, monkeypatch):
+    """Окна в тестах не ходят на GitHub: проверку версии подставляют сами тесты."""
+    if request.node.path.parent.name != "ui" or request.node.path.name == "test_update_chip.py":
+        return
+    from ptztracker.ui import main_window
+
+    monkeypatch.setattr(main_window.MainWindow, "_start_update_check", lambda self: None)
