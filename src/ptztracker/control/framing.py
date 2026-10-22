@@ -18,6 +18,7 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
+from ptztracker.camera import he42
 from ptztracker.camera import protocol as P
 from ptztracker.control.camera_model import Calibration, CameraDynamics, zoom_ln
 from ptztracker.control.composition import BodyMeasure, Composition
@@ -37,7 +38,8 @@ WATCHDOG_REVERSALS, WATCHDOG_WINDOW_S = 3, 6.0
 WATCHDOG_MOVING_V = 0.03  # fw/s: медленнее камера стоит (коды 50–59) — смена знака команды не разворот
 WATCHDOG_ERR_FRACTION = 1.0  # пик ошибки между разворотами больше всей мягкой зоны
 WATCHDOG_GROWTH = 1.0  # пик не меньше прошлого (в долях): затухающее качание — не раскачка
-WATCHDOG_APC_MIN_STEP = 3  # единиц #APC за полупериод: меньше — камера на деле не ехала
+WATCHDOG_APC_MIN_DEG = 0.02  # за полупериод меньше — камера не ехала (0,03 fw/s за 0,5 с на теле — ~0,05°)
+WATCHDOG_APC_MIN_STEP = max(1, math.ceil(WATCHDOG_APC_MIN_DEG / he42.APC_DEG_PER_UNIT))  # в единицах #APC
 TILT_FROM_FH = 9 / 16  # скорость по вертикали (доли высоты) → эквивалент по ширине кадра 16:9
 LENS_END_MARGIN = 8
 LOST_STOP_S = 0.5
@@ -100,12 +102,17 @@ class SwingWatch:
 
     def reset(self) -> None:
         self.flips: list[float] = []  # моменты засчитанных разворотов за окно WATCHDOG_WINDOW_S
+        self.stand_flips: list[float] = []  # развороты камеры, пока человек стоит (по ним — «рыскание»)
         self._dir = 0  # направление команды, пока она за порогом WATCHDOG_MOVING_V
         self._turn_t: float | None = None  # прошлый разворот (засчитанный или нет)
         self._peak = 0.0  # пик |ошибки| с прошлого разворота
         self._prev_peak: float | None = None
         self._apc: list[tuple[float, int]] = []  # ответы #APC: (момент, положение)
         self._prev_move: int | None = None  # смещение камеры по #APC за прошлый полупериод
+        # где был человек при двух прошлых разворотах (позапрошлый — разворот в ту же сторону)
+        self._turn_targets: tuple[float | None, float | None] = (None, None)
+        self._travel = 0.0  # сколько камера проехала по командам с прошлого разворота (доли кадра)
+        self._t: float | None = None
 
     def camera_at(self, t: float, pos: int) -> None:
         """Ответ #APC по этой оси (единицы камеры)."""
@@ -118,13 +125,10 @@ class SwingWatch:
         pts = [p for ts, p in self._apc if t0 <= ts <= t1]
         return pts[-1] - pts[0] if len(pts) >= 2 else None
 
-    def _counts(self, d: int, v_track: float, soft: float, move: int | None) -> bool:
+    def _camera_turned(self, d: int, v_track: float, move: int | None) -> bool:
+        """Разворот настоящий: новое направление дал не доворот за зумом, и #APC (если есть) это подтверждает."""
         if v_track * self.fw_per_unit * d <= WATCHDOG_MOVING_V:
             return False  # развернул доворот за зумом
-        if self._peak <= WATCHDOG_ERR_FRACTION * soft:
-            return False
-        if self._prev_peak is not None and self._peak < WATCHDOG_GROWTH * self._prev_peak:
-            return False
         if move is not None:
             if abs(move) < WATCHDOG_APC_MIN_STEP:
                 return False  # камера за полупериод не сдвинулась
@@ -133,9 +137,30 @@ class SwingWatch:
                 return False  # камера ехала в ту же сторону — не развернулась
         return True
 
-    def update(self, now: float, v_cmd: float, err: float, soft: float, zoom_feed: float = 0.0) -> None:
-        """Такт регулятора: команда оси, ошибка, мягкая зона; zoom_feed — часть команды от доворота за зумом."""
+    def _counts(self, d: int, v_track: float, soft: float, move: int | None) -> bool:
+        if not self._camera_turned(d, v_track, move):
+            return False
+        if self._peak <= WATCHDOG_ERR_FRACTION * soft:
+            return False
+        return self._prev_peak is None or self._peak >= WATCHDOG_GROWTH * self._prev_peak
+
+    @property
+    def swinging(self) -> bool:
+        return len(self.flips) >= WATCHDOG_REVERSALS or len(self.stand_flips) >= WATCHDOG_REVERSALS
+
+    def update(
+        self, now: float, v_cmd: float, err: float, soft: float, zoom_feed: float = 0.0,
+        target: float | None = None, dead: float = 0.0,
+    ) -> None:
+        """Такт регулятора: команда оси, ошибка, мягкая зона; zoom_feed — часть команды от доворота за зумом.
+
+        target — где человек «в мире» (в долях кадра при текущем зуме), dead — мёртвая зона: если между
+        разворотами камеры человек сдвинулся меньше неё, он стоит, а камера ходит туда-сюда сама.
+        """
         self._peak = max(self._peak, abs(err))
+        if self._t is not None:
+            self._travel += abs(v_cmd) * max(0.0, now - self._t)
+        self._t = now
         v = v_cmd * self.fw_per_unit
         d = 1 if v > WATCHDOG_MOVING_V else (-1 if v < -WATCHDOG_MOVING_V else 0)
         if d and self._dir and d != self._dir:
@@ -143,10 +168,22 @@ class SwingWatch:
             move = self._camera_move(start, now)
             if self._counts(d, v_cmd - zoom_feed, soft, move):
                 self.flips.append(now)
+            # Человек стоит, а камера ходит туда-сюда: разворот считается при любой ошибке. Положение человека
+            # сравнивается с разворотом в ту же сторону (период назад): ошибка модели камеры при качании
+            # (например, неверная задержка видео) в одной фазе одинакова и вычитается.
+            same_phase = self._turn_targets[0]
+            stood = target is not None and same_phase is not None and abs(target - same_phase) < dead
+            if not stood:
+                self.stand_flips = []  # человек сдвинулся: развороты за ним — не рыскание
+            elif self._travel > soft and self._camera_turned(d, v_cmd - zoom_feed, move):
+                self.stand_flips.append(now)  # камера за полупериод проехала больше мягкой зоны
             self._prev_peak, self._peak, self._turn_t, self._prev_move = self._peak, 0.0, now, move
+            self._travel = 0.0
+            self._turn_targets = (self._turn_targets[1], target)
         if d:
             self._dir = d
         self.flips = [t for t in self.flips if now - t <= WATCHDOG_WINDOW_S]
+        self.stand_flips = [t for t in self.stand_flips if now - t <= WATCHDOG_WINDOW_S]
 
 
 class _Axis:
@@ -265,7 +302,8 @@ class _Axis:
         if abs(self.v_cmd) < 1e-9:
             self.v_cmd = 0.0
         self.v_cmd = float(self.v_cmd)  # из ключевых точек приходят numpy-числа
-        self.watch.update(now, self.v_cmd, self.err, soft, float(zoom_feed))
+        target = None if not active or self.world is None else (self.world + self.v_world * (now - self.t_meas)) * k_now
+        self.watch.update(now, self.v_cmd, self.err, soft, float(zoom_feed), target, dead)
         self.dyn.command(now, self.v_cmd / k_now)  # камера даёт fw/s при текущем зуме → в мировые единицы
         return self.v_cmd
 
@@ -342,7 +380,7 @@ class FramingController:
                 self._u = u_now if self._u is None else self._u + U_SMOOTH * (u_now - self._u)
                 self._u_t = now
 
-        if not self.diverged and (len(self.x.watch.flips) >= WATCHDOG_REVERSALS or len(self.y.watch.flips) >= WATCHDOG_REVERSALS):
+        if not self.diverged and (self.x.watch.swinging or self.y.watch.swinging):
             self.diverged = True  # раскачка — дальше только остановка, до reset()
         active = (self._t_seen is not None and now - self._t_seen <= NO_TARGET_S) and not self.diverged
         dead_y = e.dead_y * inp.aspect / (16 / 9)

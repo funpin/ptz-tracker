@@ -1,7 +1,13 @@
+import gzip
+import json
+import math
+from pathlib import Path
+
 from loop import CTRL_DT, run, sign_changes
 
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
+from ptztracker.control.framing import SwingWatch
 
 AX = COMPOSITIONS["waist_center"].anchor[0]
 E = EffortProfile.at(0.5)
@@ -90,8 +96,6 @@ def test_tilt_follows_vertical():
 
 
 # --- устойчивость (финальное ревью этапа 3) -------------------------------------
-
-import math  # noqa: E402
 
 
 def test_robust_when_camera_faster_than_model():
@@ -223,20 +227,15 @@ def test_no_zoom_in_while_walking():
 
 # --- сторож раскачки: только настоящие развороты (часть 1, задача 2) ---------------
 
-import gzip  # noqa: E402
-import json  # noqa: E402
-from pathlib import Path  # noqa: E402
-
-from ptztracker.control.framing import WATCHDOG_REVERSALS, SwingWatch  # noqa: E402
-
 SOFT = E.soft_x
 
 
-def _square_swing(w, v, amp, grow=1.15, half=1.0, T=8.0, zoom_feed=None, apc=None, apc_dt=0.5):
+def _square_swing(w, v, amp, grow=1.15, half=1.0, T=8.0, zoom_feed=None, apc=None, apc_dt=0.5, target=None):
     """Команда ±v со сменой знака каждые half с; ошибка того же знака, её пик растёт в grow раз за полупериод.
 
-    zoom_feed(v) — какая часть команды пришла от доворота за зумом; apc(t) — положение камеры по #APC.
-    Возвращает момент, когда засчитано WATCHDOG_REVERSALS разворотов (None — сторож молчит).
+    zoom_feed(v) — какая часть команды пришла от доворота за зумом; apc(t) — положение камеры по #APC;
+    target(t) — где человек «в мире» (мёртвая зона — E.dead_x). Возвращает момент, когда сторож решил
+    «раскачка» (None — молчит).
     """
     t, next_apc = 0.0, 0.0
     while t < T:
@@ -247,8 +246,9 @@ def _square_swing(w, v, amp, grow=1.15, half=1.0, T=8.0, zoom_feed=None, apc=Non
         if apc is not None and t >= next_apc - 1e-9:
             next_apc += apc_dt
             w.camera_at(t, apc(t))
-        w.update(t, sgn * v, err, SOFT, 0.0 if zoom_feed is None else zoom_feed(sgn * v))
-        if len(w.flips) >= WATCHDOG_REVERSALS:
+        w.update(t, sgn * v, err, SOFT, 0.0 if zoom_feed is None else zoom_feed(sgn * v),
+                 None if target is None else target(t), E.dead_x)
+        if w.swinging:
             return t
         t = round(t + CTRL_DT, 6)
     return None
@@ -298,7 +298,50 @@ def test_watchdog_still_catches_real_divergence_x2():
             tr = run(lambda t: AX + 0.2 * min(t, 3.0), T=25, speed_factor=rho, cmd_delay=0.13, apc_period=apc)
             i = next((i for i, s in enumerate(tr.state) if s == "diverged"), None)
             assert i is not None, (rho, apc)
+            assert tr.t[i] <= {2.0: 20.0, 3.0: 10.0}[rho], (rho, apc, tr.t[i])  # замер: 18,2 и 5,8 с
             assert all(p == 0 for p in tr.pan[i + 25 :]), (rho, apc)
+
+
+def test_watchdog_counts_hunting_while_person_stands():
+    """Человек стоит (между разворотами в одну сторону сдвинулся меньше мёртвой зоны), а камера ходит
+    туда-сюда больше мягкой зоны за полупериод — раскачка при любой ошибке (Review Focus 2)."""
+    still = lambda t: 0.1  # noqa: E731
+    assert _square_swing(SwingWatch(), v=0.3, amp=0.3 * SOFT, grow=1.0, target=still) is not None
+    # человек ходит туда-сюда сам (сдвиг за период больше мёртвой зоны) — камера идёт за ним
+    assert _square_swing(SwingWatch(), v=0.3, amp=0.3 * SOFT, grow=1.0, target=lambda t: 0.04 * t) is None
+    # камера за полупериод проезжает меньше мягкой зоны — это доводка, а не рыскание
+    assert _square_swing(SwingWatch(), v=0.15, amp=0.3 * SOFT, grow=1.0, target=still) is None
+    # неизвестно, где человек — только основное правило
+    assert _square_swing(SwingWatch(), v=0.3, amp=0.3 * SOFT, grow=1.0) is None
+
+
+def _walk_then_stand(t):
+    return AX + 0.3 * min(t, 4) - 0.3 * max(0.0, min(t - 12, 4))
+
+
+def test_watchdog_stops_hunting_on_standing_person():
+    """«Резко», задержка видео у регулятора 0 при настоящей 0,15 (часть 0, B4): человек дошёл и стоит, наезд
+    раскачивает наклон ±0,12 кадра с периодом ~3 с без конца. Сторож останавливает (замер: 31 с, качание с 23 с).
+    С верной задержкой качания нет — сторож молчит."""
+    for apc in (None, 0.5):
+        bad = run(_walk_then_stand, T=40, effort=1.0, ctrl_latency=0.0, cmd_delay=0.13, apc_period=apc)
+        i = next((i for i, s in enumerate(bad.state) if s == "diverged"), None)
+        assert i is not None and 22 < bad.t[i] <= 36, apc
+        assert all(p == 0 and q == 0 for p, q in zip(bad.pan[i + 25 :], bad.tilt[i + 25 :])), apc
+        good = run(_walk_then_stand, T=40, effort=1.0, cmd_delay=0.13, apc_period=apc)
+        assert "diverged" not in good.state, apc
+
+
+def test_watchdog_quiet_on_settle_and_lectern_sway():
+    """Остановка после ходьбы (перелёт и медленный возврат) и покачивание у кафедры — не раскачка."""
+    for eff in (0.0, 0.5, 1.0):
+        for speed in (0.1, 0.25, 0.35):
+            tr = run(lambda t, speed=speed: walk_then_stop(t, speed), T=15, effort=eff, cmd_delay=0.13)
+            assert "diverged" not in tr.state, (eff, speed)
+    for eff, amp, period in ((0.0, 0.06, 3.0), (0.5, 0.025, 2.5), (0.5, 0.03, 3.0), (0.5, 0.04, 2.0),
+                             (1.0, 0.025, 2.5)):
+        tr = run(lambda t, a=amp, p=period: AX + a * math.sin(2 * math.pi * t / p), T=20, effort=eff, cmd_delay=0.13)
+        assert "diverged" not in tr.state, (eff, amp, period)
 
 
 def test_watchdog_quiet_with_apc_when_calibration_close():
@@ -312,37 +355,40 @@ PART0 = Path(__file__).resolve().parents[1] / "data" / "watchdog" / "part0_swing
 REAL_SWING = "cal1_e10_walk"  # B4: «Резко» с задержкой видео 0 из мастера
 
 
-def test_watchdog_part0_false_alarms_gone():
-    """Повтор 10 первых «РАСКАЧЕК» части 0 (сим, 90 с, docs/field/2026-10-22-part0-analysis.md, B1/B3).
-
-    В файле — такты записей до первой раскачки: команды pan/tilt и ошибка регулятора, ушедшие в камеру
-    команды зума и ответы #APC. Сторож с новыми правилами молчит на всех девяти ложных тревогах.
-    Ошибка записана старым регулятором, у которого модель зума врала (B2), — испытание жёстче нынешнего.
-
-    Десятая (B4) — затухающее качание наклона: пики ошибки 1,17 → 0,90 → 0,71 мягкой зоны, ниже неё
-    после первого разворота. По новым правилам это не раскачка; причину (задержка 0 из мастера) лечит задача 3.
-    """
-    from ptztracker.control.camera_model import CameraDynamics
-
+def _replay_part0():
+    """Повтор выжимки записей части 0 через сторож: {прогон: момент срабатывания} (только сработавшие)."""
     segs = json.loads(gzip.decompress(PART0.read_bytes()))
     assert len(segs) == 10
     tripped = {}
     for s in segs:
-        zd = CameraDynamics(s["dead_time"], s["tau"])
-        zq, pq = list(s["zoom"]), list(s["pos"])
+        pq = list(s["pos"])
         lag = s["dead_time"] + s["tau"]
         wx, wy = SwingWatch(lag=lag), SwingWatch(fw_per_unit=9 / 16, lag=lag)
-        for t, pan, tilt, ex, ey, sx, sy in s["ticks"]:
-            while zq and zq[0][0] <= t:
-                zd.command(*zq.pop(0))
+        for t, pan, tilt, ex, ey, sx, sy, tx, ty, dx, dy in s["ticks"]:
             while pq and pq[0][0] <= t:
                 tp, p, q = pq.pop(0)
                 wx.camera_at(tp, p)
                 wy.camera_at(tp, q)
-            wx.update(t, pan, ex, sx)
-            wy.update(t, tilt, ey, sy)
-            if max(len(wx.flips), len(wy.flips)) >= WATCHDOG_REVERSALS:
+            wx.update(t, pan, ex, sx, target=tx, dead=dx)
+            wy.update(t, tilt, ey, sy, target=ty, dead=dy)
+            if wx.swinging or wy.swinging:
                 tripped[s["run"]] = t
                 break
-    false_alarms = {k: v for k, v in tripped.items() if k != REAL_SWING}
-    assert not false_alarms
+    return tripped
+
+
+def test_watchdog_part0_false_alarms_gone():
+    """Повтор 10 первых «РАСКАЧЕК» части 0 (сим, 90 с, docs/field/2026-10-22-part0-analysis.md, B1/B3).
+
+    Выжимку собирает tools/extract_swing_fixture.py (формат — там): такты записей до первой раскачки
+    (команды pan/tilt, ошибка, зоны, где человек «в мире»), ответы #APC. Сторож молчит на девяти ложных
+    тревогах. Ошибка записана старым регулятором, у которого модель зума врала (B2), — испытание жёстче нынешнего.
+    Доворот за зумом в записях не выделен (0): это условие проверяет test_watchdog_ignores_reversals_during_zoom.
+
+    Десятая (B4, наклон, «Резко», задержка видео 0) до остановки успела дать только два разворота быстрее
+    0,03 fw/s (третий — 0,036 доли высоты/с = 0,02 fw/s, камера на этом коде стоит), поэтому её здесь не поймать
+    ни одним правилом с этим порогом. Такое же качание в долгую ловит «человек стоит, камера ходит» —
+    test_watchdog_stops_hunting_on_standing_person.
+    """
+    tripped = _replay_part0()
+    assert not {k: v for k, v in tripped.items() if k != REAL_SWING}

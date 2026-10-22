@@ -168,6 +168,17 @@ def test_enable_reads_zoom_immediately():
         s.stop()
 
 
+def test_enable_clears_stale_apc_sample():
+    s = sim_session()
+    try:
+        select_person(s)
+        s.follower._pan_tilt, s.follower._pan_tilt_t = (0x8000, 0x8000), 1.0  # ответ #APC прошлого включения
+        assert s.follower.enable()
+        assert s.follower._pan_tilt_t != 1.0  # сторожу нового включения — только новые ответы
+    finally:
+        s.stop()
+
+
 def test_preset_recall_not_cancelled_by_follow_stop():
     s = sim_session()
     try:
