@@ -4,40 +4,41 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QSlider,
     QVBoxLayout,
+    QWidget,
 )
 
 from ptztracker.control.composition import COMPOSITIONS
+from ptztracker.ui.state import TrackingView, tracking_view
+from ptztracker.ui.theme import FS_CAPTION, SP, C
+from ptztracker.ui.widgets import KeyButton, SectionHeader, StateTile
 
-_ON_STYLE = "QPushButton { background: #16a34a; color: white; font-weight: bold; font-size: 15px; padding: 10px; }"
-_OFF_STYLE = "QPushButton { font-weight: bold; font-size: 15px; padding: 10px; }"
 
+class FollowPanel(QWidget):
+    """Плитка слежения, композиция кадра и характер движения."""
 
-class FollowPanel(QGroupBox):
-    """Включение слежения, композиция кадра и характер движения."""
-
-    followRequested = Signal(bool)  # оператор нажал кнопку: True — включить
+    followRequested = Signal(bool)  # оператор нажал плитку: True — включить
     compositionChanged = Signal(str)
-    effortChanged = Signal(float)  # 0..1, по отпусканию ползунка
+    effortChanged = Signal(float)  # 0..1, применяется сразу при любом изменении
+    calibrateRequested = Signal()  # кнопка «Калибровка…» в плитке при раскачке
 
     def __init__(self, parent=None):
-        super().__init__("Слежение", parent)
-        self.follow_btn = QPushButton()
-        self.follow_btn.setCheckable(True)
-        self.follow_btn.setFocusPolicy(Qt.NoFocus)  # пробел обрабатывает окно, а не кнопка
+        super().__init__(parent)
+        self.follow_btn = StateTile()
         self.follow_btn.clicked.connect(lambda checked: self.followRequested.emit(checked))
+        self.follow_btn.actionClicked.connect(self.calibrateRequested)
+        self.status_label = self.follow_btn.why_label
 
         self.comp_group = QButtonGroup(self)
         self.comp_group.setExclusive(True)
-        self.comp_buttons: dict[str, QPushButton] = {}
+        self.comp_buttons: dict[str, KeyButton] = {}
         grid = QGridLayout()
+        grid.setSpacing(SP[0])
         for i, (key, comp) in enumerate(COMPOSITIONS.items()):
-            b = QPushButton(f"{i + 1} · {comp.title}")
+            b = KeyButton(comp.title, str(i + 1), variant="choice")
             b.setCheckable(True)
             b.setFocusPolicy(Qt.NoFocus)
             b.clicked.connect(lambda _=False, k=key: self.compositionChanged.emit(k))
@@ -52,37 +53,34 @@ class FollowPanel(QGroupBox):
         # иначе ползунок показывал бы не то, что действует
         self.effort_slider.valueChanged.connect(lambda v: self.effortChanged.emit(v / 100))
         erow = QHBoxLayout()
+        erow.setSpacing(SP[1])
         erow.addWidget(QLabel("Мягко"))
         erow.addWidget(self.effort_slider, 1)
         erow.addWidget(QLabel("Резко"))
 
-        self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
         self.calib_label = QLabel("")
         self.calib_label.setWordWrap(True)
-        self.calib_label.setStyleSheet("color: #f59e0b;")
+        self.calib_label.setStyleSheet(f"color: {C.LOST}; font-size: {FS_CAPTION}px;")
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(SP[1])
         lay.addWidget(self.follow_btn)
+        lay.addWidget(SectionHeader("Кадр"))
         lay.addLayout(grid)
         lay.addLayout(erow)
-        lay.addWidget(self.status_label)
         lay.addWidget(self.calib_label)
         self.set_state(False, None)
 
+    def set_view(self, v: TrackingView) -> None:
+        self.follow_btn.set_view(v.kind, v.word, v.why, v.show_calibrate)
+        self.follow_btn.setChecked(v.kind in ("on", "lost"))
+
     def set_state(self, enabled: bool, reason: str | None) -> None:
-        self.follow_btn.setChecked(enabled)
-        self.follow_btn.setText("● СЛЕЖЕНИЕ ВКЛ  (пробел)" if enabled else "СЛЕЖЕНИЕ ВЫКЛ  (пробел)")
-        self.follow_btn.setStyleSheet(_ON_STYLE if enabled else _OFF_STYLE)
-        if enabled:
-            self.status_label.setText("Камера ведёт цель. Любое ручное действие или Esc выключат слежение.")
-        elif reason:
-            self.status_label.setText(f"Выключено: {reason}")
-        else:
-            self.status_label.setText("")
+        self.set_view(tracking_view(enabled, reason, None, None))
 
     def show_hint(self, text: str) -> None:
-        self.status_label.setText(text)
+        self.follow_btn.set_why(text)
 
     def set_composition(self, key: str) -> None:
         if key in self.comp_buttons:
@@ -95,5 +93,6 @@ class FollowPanel(QGroupBox):
 
     def set_calibrated(self, calibrated: bool) -> None:
         self.calib_label.setText(
-            "" if calibrated else "Камера не откалибрована — Сервис → Калибровка (2 мин). Работаю по средним значениям."
+            "" if calibrated else "Камера не откалибрована: Сервис → Калибровка (2 мин)"
         )
+        self.calib_label.setVisible(not calibrated)

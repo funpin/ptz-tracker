@@ -5,13 +5,12 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QEvent, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtGui import QAction, QDesktopServices, QPainter
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
     QCheckBox,
     QComboBox,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -19,6 +18,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -28,11 +28,17 @@ from ptztracker.camera.session import CameraSession
 from ptztracker.config import AppConfig, CameraConfig, ConfigStore, get_password, set_password
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
+from ptztracker.tally import atem_input_of
+from ptztracker.tally.atem import AtemTally
 from ptztracker.ui.agent_panel import AgentPanel
+from ptztracker.ui.atem_dialog import AtemDialog
 from ptztracker.ui.camera_dialog import CameraDialog
 from ptztracker.ui.follow_panel import FollowPanel
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.preview import PreviewWidget
+from ptztracker.ui.state import TrackingView, tally_chip, tracking_view
+from ptztracker.ui.theme import FS_CAPTION, SP, C
+from ptztracker.ui.widgets import Chip, SectionHeader, VideoFrame, keycap_width, paint_keycap
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
 
 log = logging.getLogger(__name__)
@@ -40,67 +46,151 @@ log = logging.getLogger(__name__)
 SIM_CAMERA = CameraConfig(id="sim", name="Симулятор", ip="sim", kind="sim")
 KEY_PAN_SPEED = 0.4
 KEY_ZOOM_SPEED = 0.5
+SIDE_WIDTH = 372
+_HOTKEYS = [
+    ("Пробел", "слежение"), ("1–5", "кадр"), ("← → ↑ ↓", "поворот"), ("+ −", "зум"), ("Esc", "стоп"),
+    ("F9", "сохранить момент"),
+]
 _PAN_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
 _ZOOM_IN_KEYS = {Qt.Key_Plus, Qt.Key_Equal}
 _ZOOM_OUT_KEYS = {Qt.Key_Minus, Qt.Key_Underscore}
 
 
+class _Cap(QWidget):
+    """Клавиша-подсказка (только рисунок)."""
+
+    def __init__(self, text: str):
+        super().__init__()
+        self._text = text
+        self.setFixedSize(int(keycap_width(text)) + 1, 24)
+        self.setFocusPolicy(Qt.NoFocus)
+
+    def paintEvent(self, e):  # noqa: N802
+        p = QPainter(self)
+        paint_keycap(p, self.width(), self.height() / 2, self._text)
+        p.end()
+
+
+def _keycap_label(text: str) -> QWidget:
+    return _Cap(text)
+
+
+class _ElidedChip(Chip):
+    """Чип со свободным текстом: ширина ограничена, длинное обрезается, полный текст — в подсказке."""
+
+    MAX_W = 320
+
+    def __init__(self):
+        self._full = ""
+        super().__init__("", "neutral")
+        self.setMaximumWidth(self.MAX_W)
+        self.setMinimumWidth(0)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._full = text
+        self.setToolTip(text if len(text) > 0 else "")
+        self._elide()
+
+    def text(self) -> str:
+        return self._full
+
+    def minimumSizeHint(self):  # noqa: N802
+        s = super().minimumSizeHint()
+        s.setWidth(min(s.width(), 40))
+        return s
+
+    def sizeHint(self):  # noqa: N802
+        s = super().sizeHint()
+        s.setWidth(min(s.width(), self.MAX_W))
+        return s
+
+    def _elide(self) -> None:
+        w = self.MAX_W - self.contentsMargins().left() - 2 * SP[1]
+        shown = self.fontMetrics().elidedText(self._full, Qt.ElideRight, w)
+        QLabel.setText(self, shown)
+
+
 class MainWindow(QMainWindow):
     _saveFinished = Signal(object)  # Future записи; приходит из рабочего потока, обрабатывается в Qt-потоке
 
-    def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None):
+    def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None, atem_port: int = 9910):
         super().__init__(parent)
         self.setWindowTitle("PTZ Tracker")
-        self.resize(1400, 820)
+        self.resize(1640, 850)
         self.store = store
         self.cfg: AppConfig = store.load()
         self.use_sim = use_sim
         self.session: CameraSession | None = None
         self._held: set[int] = set()
+        self._atem_port = atem_port
+        self.atem: AtemTally | None = None
+        self._tally_shown: tuple | None = None
 
         self.preview = PreviewWidget()
+        self.video_frame = VideoFrame(self.preview)
         self.camera_combo = QComboBox()
         self.add_btn = QPushButton("Добавить")
         self.edit_btn = QPushButton("Изменить")
         self.del_btn = QPushButton("Удалить")
-        cam_box = QGroupBox("Камера")
-        cl = QVBoxLayout(cam_box)
-        cl.addWidget(self.camera_combo)
-        row = QHBoxLayout()
         for b in (self.add_btn, self.edit_btn, self.del_btn):
-            row.addWidget(b)
-        cl.addLayout(row)
+            b.setProperty("variant", "ghost")
         self.stream_combo = QComboBox()
         for key, label in STREAM_CHOICES.items():
             self.stream_combo.addItem(label, key)
         self.stream_combo.setToolTip(
             "Какой поток камеры показывать и анализировать. Меньшее разрешение — обычно меньше задержка."
         )
-        srow = QHBoxLayout()
-        srow.addWidget(QLabel("Видео"))
-        srow.addWidget(self.stream_combo, 1)
-        cl.addLayout(srow)
         self.controls = ManualControls()
-
         self.follow_panel = FollowPanel()
-        target_box = QGroupBox("Цель")
-        tl = QVBoxLayout(target_box)
+
+        # верхняя строка: камера, видео, состояние связи (чипы — одним рядом, анализ последним)
+        self.link_label = Chip("", "neutral")
+        self.atem_chip = Chip("", "neutral")
+        self.atem_chip.hide()
+        self.video_label = _ElidedChip()
+        self.analysis_label = _ElidedChip()
+        self.record_label = Chip("", "fault")  # «● запись N мин»: чёрный ящик пишет последние минуты
+        self.record_label.hide()
+        self.toolbar = QToolBar("Камера")
+        self.toolbar.setMovable(False)
+        self.toolbar.setContextMenuPolicy(Qt.PreventContextMenu)
+        self.toolbar.setFloatable(False)
+        tw = QWidget()
+        tl = QHBoxLayout(tw)
+        tl.setContentsMargins(SP[1], SP[0], SP[1], SP[0])
+        tl.setSpacing(SP[1])
+        tl.addWidget(self._caption("Камера"))
+        tl.addWidget(self.camera_combo)
+        for b in (self.add_btn, self.edit_btn, self.del_btn):
+            tl.addWidget(b)
+        tl.addSpacing(SP[2])
+        tl.addWidget(self._caption("Видео"))
+        tl.addWidget(self.stream_combo)
+        tl.addStretch(1)
+        for chip in (self.atem_chip, self.link_label, self.video_label, self.analysis_label, self.record_label):
+            tl.addWidget(chip)
+        self.toolbar.addWidget(tw)
+        self.addToolBar(Qt.TopToolBarArea, self.toolbar)
+
+        # раздел «Цель»
         self.target_label = QLabel("Цель: не выбрана — кликните по человеку на видео")
         self.target_label.setWordWrap(True)
         self.reset_target_btn = QPushButton("Сбросить цель")
-        self.skeleton_check = QCheckBox("Показывать скелет")
+        self.reset_target_btn.setProperty("variant", "ghost")
+        self.skeleton_check = QCheckBox("Скелет")
         trow = QHBoxLayout()
         trow.addWidget(self.reset_target_btn)
         trow.addWidget(self.skeleton_check)
-        tl.addWidget(self.target_label)
-        tl.addLayout(trow)
+        trow.addStretch(1)
 
         side = QWidget()
         sl = QVBoxLayout(side)
-        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setContentsMargins(SP[1], 0, SP[1], 0)
+        sl.setSpacing(SP[1])
         sl.addWidget(self.follow_panel)
-        sl.addWidget(target_box)
-        sl.addWidget(cam_box)
+        sl.addWidget(SectionHeader("Цель"))
+        sl.addWidget(self.target_label)
+        sl.addLayout(trow)
         sl.addWidget(self.controls)
         self.agent_panel = AgentPanel()  # разрешения агенту: по умолчанию выключены, не сохраняются
         sl.addWidget(self.agent_panel)
@@ -112,28 +202,34 @@ class MainWindow(QMainWindow):
         side_scroll.setWidgetResizable(True)
         side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         side_scroll.setFrameShape(QScrollArea.NoFrame)
-        side_scroll.setFixedWidth(362)
-        side.setFixedWidth(345)
+        side_scroll.setFixedWidth(SIDE_WIDTH)
 
         central = QWidget()
         hl = QHBoxLayout(central)
-        hl.addWidget(self.preview, 1)
+        hl.addWidget(self.video_frame, 1)
         hl.addWidget(side_scroll)
         self.setCentralWidget(central)
 
-        self.link_label = QLabel()
-        self.video_label = QLabel()
-        self.analysis_label = QLabel()
-        self.statusBar().addWidget(self.link_label)
-        self.statusBar().addWidget(self.video_label)
-        self.statusBar().addWidget(self.analysis_label, 1)
-        self.record_label = QLabel()
-        self.record_label.setStyleSheet("color: #ef4444;")
+        # строка состояния: справа клавиши и подпись
+        sb = self.statusBar()
+        sb.setSizeGripEnabled(False)
+        keys = QWidget()
+        kl = QHBoxLayout(keys)
+        kl.setContentsMargins(0, 0, 0, 0)
+        kl.setSpacing(SP[1])
+        for key, what in _HOTKEYS:
+            kl.addWidget(_keycap_label(key))
+            kl.addWidget(self._caption(what))
+            kl.addSpacing(SP[1])
+        self.credit_label = QLabel("by funpin.ru & Claude")
+        self.credit_label.setStyleSheet(f"color: {C.TEXT_FAINT};")
+        sb.addPermanentWidget(keys)
+        sb.addPermanentWidget(self.credit_label)
+        # чёрный ящик: «Показать в папке» после F9 — слева в строке состояния
         self.show_folder_btn = QPushButton("Показать в папке")
+        self.show_folder_btn.setProperty("variant", "ghost")
         self.show_folder_btn.hide()
-        self.statusBar().addWidget(self.record_label)
-        self.statusBar().addWidget(self.show_folder_btn)
-        self.statusBar().addPermanentWidget(QLabel("Esc — стоп · стрелки — поворот · +/− — зум"))
+        sb.addWidget(self.show_folder_btn)
 
         self.service_menu = self.menuBar().addMenu("Сервис")
         self.diag_action = QAction("Диагностика камеры…", self)
@@ -158,6 +254,9 @@ class MainWindow(QMainWindow):
         self._hide_folder_timer.setSingleShot(True)
         self._hide_folder_timer.timeout.connect(self.show_folder_btn.hide)
         self.show_folder_btn.clicked.connect(self._show_saved_folder)
+        self.atem_action = QAction("ATEM…", self)
+        self.service_menu.addAction(self.atem_action)
+        self.atem_action.triggered.connect(self._edit_atem)
 
         self.add_btn.clicked.connect(self._add_camera)
         self.edit_btn.clicked.connect(self._edit_camera)
@@ -168,12 +267,15 @@ class MainWindow(QMainWindow):
         self.skeleton_check.toggled.connect(self._on_skeleton)
         self.preview.targetClicked.connect(lambda _id: self._update_status())
         self.follow_panel.followRequested.connect(self._on_follow_requested)
+        self.follow_panel.calibrateRequested.connect(self._run_calibration)
+        self.controls.stopRequested.connect(self.emergency_stop)
         self.follow_panel.compositionChanged.connect(self._on_composition)
         self.follow_panel.effortChanged.connect(self._on_effort)
         self._follow_timer = QTimer(self)
         self._follow_timer.timeout.connect(self._sync_follow)
+        self._follow_timer.timeout.connect(self._sync_tally)
         self._follow_timer.start(100)
-        self._follow_shown = (False, None)
+        self._view_shown: TrackingView | None = None
         # API агента: оператор сам включил/выключил слежение (пробел, кнопка) — слежение теперь его
         self.on_operator_follow: Callable[[bool], None] | None = None
 
@@ -182,6 +284,7 @@ class MainWindow(QMainWindow):
         self._status_timer.start(500)
 
         QApplication.instance().installEventFilter(self)
+        self._restart_atem()
         self._fill_combo(select_id="sim" if use_sim else self.cfg.last_camera_id)
         self._api = start_window_api(self)
 
@@ -238,7 +341,7 @@ class MainWindow(QMainWindow):
         self.follow_panel.set_effort(cam.effort)
         self.follow_panel.set_calibrated(cam.calibration is not None)
         self.follow_panel.set_state(False, None)
-        self._follow_shown = (False, None)
+        self._view_shown = None
         self.controls.bind(self.session)
         if cam.kind != "sim":
             self.cfg.last_camera_id = cam.id
@@ -258,11 +361,18 @@ class MainWindow(QMainWindow):
         f = self._follower()
         if f is None:
             self.follow_panel.set_state(False, "распознавание недоступно")
+            self._view_shown = self._current_view()  # сообщение остаётся, пока вид не изменится сам
             return
         if want:
             if not f.enable():
-                self.follow_panel.set_state(False, None)
-                self.follow_panel.show_hint("Сначала кликните по человеку на видео.")
+                v = self._current_view()
+                if v.kind == "swing":
+                    self.follow_panel.set_view(v)  # раскачка важнее подсказки: плитка и «Калибровка…» остаются
+                else:
+                    self.follow_panel.set_state(False, None)
+                    self.follow_panel.show_hint("Сначала кликните по человеку на видео.")
+                # подсказка остаётся, пока вид не изменится сам
+                self._view_shown = v
         else:
             f.disable("выключено оператором")
         self._sync_follow()
@@ -292,13 +402,71 @@ class MainWindow(QMainWindow):
         f = self._follower()
         self._on_follow_requested(not (f and f.enabled))
 
+    def _current_view(self) -> TrackingView:
+        f = self._follower()
+        a = self.session.analyzer if self.session else None
+        r = a.latest() if a else None
+        return tracking_view(
+            bool(f and f.enabled),
+            f.last_reason if f else None,
+            r.target_id if r else None,
+            r.target_state if r else None,
+            diverged=bool(f and getattr(f.controller, "diverged", False)),
+        )
+
     def _sync_follow(self) -> None:
         """Состояние слежения меняется и из других потоков (ручное управление, сбой анализа) — показать."""
-        f = self._follower()
-        state = (bool(f and f.enabled), f.last_reason if f else None)
-        if state != self._follow_shown:
-            self._follow_shown = state
-            self.follow_panel.set_state(*state)
+        v = self._current_view()
+        if v != self._view_shown:
+            self._view_shown = v
+            self.follow_panel.set_view(v)
+            self.video_frame.set_tracking_tag(v.tag, v.color)
+
+    def _restart_atem(self) -> None:
+        """Остановить старый клиент ATEM и создать новый из cfg.atem_ip (пусто — Tally выключен)."""
+        if self.atem:
+            self.atem.stop()
+            self.atem = None
+        if self.cfg.atem_ip:
+            self.atem = AtemTally(self.cfg.atem_ip, port=self._atem_port)
+            self.atem.start()
+        self._tally_shown = None
+        self._sync_tally()
+
+    def _edit_atem(self) -> None:
+        d = AtemDialog(self.cfg.atem_ip, self)
+        if not d.exec():
+            return
+        self.cfg.atem_ip = d.ip()
+        self._save()
+        self._restart_atem()
+
+    def _sync_tally(self) -> None:
+        """Tally из снимка клиента (сеть не ждём): рамка видео и чип, обновляются только при изменении."""
+        configured = self.atem is not None
+        snap = self.atem.snapshot() if self.atem else None
+        online = bool(snap and snap.online)
+        cam = self._current_cfg()
+        inp = atem_input_of(cam) if cam else 0
+        state = snap.state(inp) if snap and inp else None
+        known = bool(snap and inp and snap.known(inp))
+        key = (configured, online, inp, state, known)
+        if key == self._tally_shown:
+            return
+        self._tally_shown = key
+        chip = tally_chip(configured, online, inp, state, known=known)
+        if chip is None:
+            self.atem_chip.hide()
+        else:
+            self.atem_chip.set(*chip)
+            self.atem_chip.show()
+        self.video_frame.set_tally(state if online else None)
+
+    @staticmethod
+    def _caption(text: str) -> QLabel:
+        lab = QLabel(text)
+        lab.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
+        return lab
 
     def _on_composition(self, key: str) -> None:
         cam = self._current_cfg()
@@ -480,16 +648,22 @@ class MainWindow(QMainWindow):
     def _update_status(self) -> None:
         s = self.session
         if not s:
-            self.link_label.setText("Камера не выбрана")
+            self.link_label.set("Камера не выбрана", "neutral")
             self.video_label.setText("")
             self.record_label.setText("")
+            self.record_label.hide()
+            self.video_label.hide()
             return
         self.record_label.setText(
-            f"● запись {s.app_cfg.record_buffer_s // 60} мин" if s.recorder.active else ""
+            f"запись {s.app_cfg.record_buffer_s // 60} мин" if s.recorder.active else ""
         )
+        self.record_label.setVisible(s.recorder.active)
         self._remember_rtsp_url(s)
-        self.link_label.setText("● на связи" if s.online else "○ нет связи с камерой")
-        self.link_label.setStyleSheet("color: #22c55e;" if s.online else "color: #ef4444;")
+        if s.online:
+            self.link_label.set("Камера на связи", "neutral")  # зелёный PVW — только для Tally
+        else:
+            self.link_label.set("Нет связи с камерой", "fault")
+        self.video_label.show()
         st = s.frames.stats()
         if st.connected:
             self.video_label.setText(f"видео {st.width}×{st.height}, {st.fps:.0f} к/с")
@@ -513,10 +687,10 @@ class MainWindow(QMainWindow):
             self.target_label.setStyleSheet("")
         elif r.target_state == "tracking":
             self.target_label.setText(f"Цель: №{r.target_id} — веду")
-            self.target_label.setStyleSheet("color: #60a5fa; font-weight: bold;")
+            self.target_label.setStyleSheet(f"color: {C.ON}; font-weight: bold;")
         else:
             self.target_label.setText(f"Цель: №{r.target_id} — потеряна")
-            self.target_label.setStyleSheet("color: #f59e0b; font-weight: bold;")
+            self.target_label.setStyleSheet(f"color: {C.LOST}; font-weight: bold;")
 
     def _remember_rtsp_url(self, s: CameraSession) -> None:
         """Сохранить подобранный адрес видео (без пароля), чтобы в следующий раз открывался сразу."""
@@ -566,7 +740,8 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def emergency_stop(self) -> None:
-        """Esc: снять разрешение агенту, отпустить клавиши, выключить слежение, остановить камеру."""
+        """Общий аварийный стоп (Esc и кнопка «Стоп»): снять разрешение агенту, отпустить клавиши,
+        выключить слежение, остановить камеру."""
         self.agent_panel.revoke()
         self.release_all_held()
         if self.session:
@@ -602,6 +777,9 @@ class MainWindow(QMainWindow):
         self._status_timer.stop()
         self._hide_folder_timer.stop()
         self._follow_timer.stop()
+        if self.atem:
+            self.atem.stop()
+            self.atem = None
         self.release_all_held()
         if self.session:
             self.session.stop()

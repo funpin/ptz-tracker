@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -162,3 +163,23 @@ def test_api_settings_defaults_token_and_fallback(tmp_path):
     p.write_text('{"api_enabled": "yes", "api_port": 99999, "api_token": 5}', encoding="utf-8")
     cfg = ConfigStore(p).load()
     assert (cfg.api_enabled, cfg.api_port, cfg.api_token) == (True, 8765, "")
+
+
+def test_old_config_without_atem_fields(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"cameras": [{"id": "a", "name": "A", "ip": "10.0.0.12"}]}), encoding="utf-8")
+    cfg = ConfigStore(p).load()
+    assert cfg.atem_ip == ""
+    assert cfg.cameras[0].atem_input == 0
+
+
+def test_atem_input_of_rejects_garbage():
+    from ptztracker.tally import atem_input_of
+
+    def cam(v):
+        return CameraConfig(id="a", name="A", ip="10.0.0.12", atem_input=v)
+
+    for bad in ("3", -1, 99, 0, None, 3.0, True):
+        assert atem_input_of(cam(bad)) == 0, bad
+    assert atem_input_of(cam(3)) == 3
+    assert atem_input_of(cam(40)) == 40

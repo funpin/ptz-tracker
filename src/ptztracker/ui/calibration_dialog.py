@@ -41,6 +41,7 @@ class CalibrationDialog(QDialog):
         intro.setWordWrap(True)
         self.off_air_check = QCheckBox("Камера НЕ в эфире — можно двигать")
         self.start_button = QPushButton("Начать калибровку")
+        self.start_button.setDefault(True)
         self.start_button.setEnabled(False)
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)

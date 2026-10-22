@@ -41,6 +41,7 @@ class CameraConfig:
     calibration: dict | None = None  # результат мастера калибровки (control.camera_model.Calibration.to_json)
     composition: str = "waist_center"  # control.composition.COMPOSITIONS
     effort: float = 0.5  # 0 — мягко, 1 — резко
+    atem_input: int = 0  # вход ATEM (1…), 0 — не задан
 
 
 @dataclass
@@ -57,6 +58,7 @@ class AppConfig:
     api_enabled: bool = True
     api_port: int = 8765
     api_token: str = ""
+    atem_ip: str = ""  # адрес микшера ATEM, пусто — Tally выключен
 
 
 RECORD_DIR_NAME = "Записи PTZ Tracker"

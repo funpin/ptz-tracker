@@ -134,7 +134,7 @@ class WindowBackend:
         if not panel.control_allowed:
             raise ApiError(403, "Оператор не разрешил управление агенту (флажок в окне программы).")
         if need_off_air and not panel.not_on_air:
-            raise ApiError(403, "Оператор не отметил «Камера НЕ в эфире — агент может двигать камеру»: "
+            raise ApiError(403, "Оператор не отметил «Камера НЕ в эфире»: "
                                 "агент может только выключить слежение.")
         s = self.w.session
         if s is None or s.follower is None:

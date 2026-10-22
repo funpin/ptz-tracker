@@ -10,6 +10,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QVBoxLayout
 
+from ptztracker.ui.theme import C
+
 
 def revokes_agent(on: bool, reason: str | None) -> bool:
     """Выключение слежения, после которого агент теряет управление: раскачка или аварийный стоп."""
@@ -26,7 +28,7 @@ class AgentPanel(QGroupBox):
         self.control_allowed = False
         self.not_on_air = False
         self.allow_check = QCheckBox("Разрешить управление агенту")
-        self.off_air_check = QCheckBox("Камера НЕ в эфире — агент может двигать камеру")
+        self.off_air_check = QCheckBox("Камера НЕ в эфире")
         for c in (self.allow_check, self.off_air_check):
             c.setFocusPolicy(Qt.NoFocus)  # пробел и стрелки обрабатывает окно
         self.allow_check.setToolTip(
@@ -40,7 +42,7 @@ class AgentPanel(QGroupBox):
         )
         self.api_label = QLabel("")
         self.api_label.setWordWrap(True)
-        self.api_label.setStyleSheet("color: #9ca3af;")
+        self.api_label.setStyleSheet(f"color: {C.TEXT_DIM};")
         lay = QVBoxLayout(self)
         lay.addWidget(self.allow_check)
         lay.addWidget(self.off_air_check)
@@ -74,4 +76,4 @@ class AgentPanel(QGroupBox):
 
     def set_api_status(self, text: str, error: bool = False) -> None:
         self.api_label.setText(text)
-        self.api_label.setStyleSheet("color: #ef4444;" if error else "color: #9ca3af;")
+        self.api_label.setStyleSheet(f"color: {C.FAULT if error else C.TEXT_DIM};")
