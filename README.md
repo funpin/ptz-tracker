@@ -18,7 +18,7 @@
   <img alt="Python 3.12–3.13" src="https://img.shields.io/badge/Python-3.12–3.13-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white">
   <img alt="PySide6" src="https://img.shields.io/badge/PySide6-Qt%206-41CD52?style=flat-square&amp;logo=qt&amp;logoColor=white">
   <img alt="ONNX Runtime" src="https://img.shields.io/badge/ONNX%20Runtime-DirectML%20%7C%20CoreML-005CED?style=flat-square&amp;logo=onnx&amp;logoColor=white">
-  <img alt="YOLO11n-pose" src="https://img.shields.io/badge/YOLO11n--pose-AGPL--3.0-111111?style=flat-square">
+  <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-A42E2B?style=flat-square"></a>
 </p>
 
 ---
@@ -70,4 +70,8 @@ CI на Windows прогоняет линтер и быстрый набор и 
 
 ## Лицензия
 
-Модель распознавания YOLO11n-pose (Ultralytics) распространяется под AGPL-3.0. Если программу передают третьим лицам, модель нужно заменить моделью под Apache-2.0 (RTMO / RTMDet + RTMPose); меняется только `vision/pose_detector.py`.
+PTZ Tracker распространяется под [GNU AGPL-3.0](LICENSE). Вы можете свободно использовать, изучать, менять и распространять программу, если ваши изменения и производные работы — в том числе доступные пользователям по сети — тоже открыты под AGPL-3.0.
+
+В программу входит модель распознавания YOLO11n-pose ([Ultralytics](https://github.com/ultralytics/ultralytics), AGPL-3.0) — `src/ptztracker/models/yolo11n-pose.onnx`. Если нужна другая лицензия, модель можно заменить моделью под Apache-2.0 (RTMO / RTMDet + RTMPose): меняется только `vision/pose_detector.py`.
+
+© 2026 funpin
