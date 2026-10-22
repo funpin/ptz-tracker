@@ -279,9 +279,12 @@ def replay_controller(
             elif kind == "control":
                 # сначала разобрать такт целиком: повреждённый не должен сдвинуть состояние регулятора
                 zt = e.get("zoom_pos_t")  # в старых записях нет: модель зума без поправки по #GZ
+                pt, ptt = e.get("pan_tilt"), e.get("pan_tilt_t")  # в старых нет: сторож — по одним командам
                 inp = FramingInput(now=t, t_capture=None if e.get("t_capture") is None else float(e["t_capture"]),
                                    measure=_measure(e.get("measure")), zoom_pos=int(e.get("zoom_pos", 0x555)),
-                                   aspect=float(e.get("aspect", 16 / 9)), zoom_pos_t=None if zt is None else float(zt))
+                                   aspect=float(e.get("aspect", 16 / 9)), zoom_pos_t=None if zt is None else float(zt),
+                                   pan_tilt=None if pt is None else (int(pt[0]), int(pt[1])),
+                                   pan_tilt_t=None if ptt is None else float(ptt))
                 rec = e.get("codes") or [50, 50, 50]
                 rec_codes = (int(rec[0]), int(rec[1]), int(rec[2]))
                 if not on:

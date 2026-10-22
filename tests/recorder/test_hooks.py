@@ -115,6 +115,10 @@ def test_sim_session_records_all_kinds(tmp_path):
     assert any(e["cmd"].startswith("#PTS") and e["ok"] for e in ep.events("cmd"))
     p = next(ep.events("position"))
     assert isinstance(p["pan"], int) and isinstance(p["tilt"], int) and isinstance(p["zoom"], int)
+    # ответ #APC уходит и в регулятор (сторож раскачки сверяет развороты): такт пишет, какое положение видел
+    seen = [e for e in ep.events("control") if e.get("pan_tilt") is not None]
+    assert seen and all(isinstance(e["pan_tilt_t"], float) for e in seen)
+    assert {tuple(e["pan_tilt"]) for e in seen} <= {(q["pan"], q["tilt"]) for q in ep.events("position")}
     on = next(e for e in ep.events("follow") if e.get("on") is True)
     assert on["video_latency"] == 0.15  # sim
     t = next(ep.events("target"))

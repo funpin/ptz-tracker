@@ -14,6 +14,7 @@ from ptztracker.control.framing import FramingController, FramingInput
 
 CTRL_DT = 0.04  # 25 Гц
 MEAS_DT = 1 / 14  # анализ 14 к/с
+APC_PER_FW = 8000  # единиц #APC на ширину кадра при зуме старта (как у симулятора на широком угле)
 
 
 @dataclass
@@ -45,6 +46,7 @@ def run(
     zoom_cmd_delay: float | None = None,  # зум ждёт в очереди отдельно (за поворотом); None — как cmd_delay
     zoom_speed_factor: float = 1.0,  # зум камеры быстрее таблицы калибровки в столько раз
     gz_period: float | None = None,  # опрос #GZ: положение зума уходит регулятору (None — не опрашивать)
+    apc_period: float | None = None,  # опрос #APC: положение pan/tilt уходит регулятору (None — не опрашивать)
     zoom_pos: int = 0x73F,
     controller_hook=None,
 ) -> Trace:
@@ -62,6 +64,7 @@ def run(
     zqueued = []  # (когда дойдёт до камеры, zoom)
     zdelay = cmd_delay if zoom_cmd_delay is None else zoom_cmd_delay
     gz_pos, gz_t, next_gz = zoom_pos, None, 0.0
+    apc, apc_t, next_apc = None, None, 0.0
     while t < T:
         if t >= next_meas:
             next_meas += MEAS_DT
@@ -79,7 +82,12 @@ def run(
             next_gz += gz_period
             gz_t = t
             gz_pos = round(zoom_pos + cam_z.position(t) / math.log(he42.ZOOM_RATIO) * (P.LENS_MAX - P.LENS_MIN))
-        out = ctrl.step(FramingInput(now=t, t_capture=t_cap, measure=measure, zoom_pos=gz_pos, zoom_pos_t=gz_t))
+        if apc_period is not None and t >= next_apc - 1e-9:
+            next_apc += apc_period
+            apc_t = t
+            apc = (round(0x8000 + cam_x.position(t) * APC_PER_FW), round(0x8000 + cam_y.position(t) * APC_PER_FW))
+        out = ctrl.step(FramingInput(now=t, t_capture=t_cap, measure=measure, zoom_pos=gz_pos, zoom_pos_t=gz_t,
+                                     pan_tilt=apc, pan_tilt_t=apc_t))
         if controller_hook:
             controller_hook(t, ctrl, out)
         queued.append((t + cmd_delay, out.pan, out.tilt))

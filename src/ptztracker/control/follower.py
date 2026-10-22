@@ -18,7 +18,7 @@ from ptztracker.camera.scheduler import CommandScheduler, Priority
 from ptztracker.control.camera_model import Calibration
 from ptztracker.control.composition import Composition, measure_body
 from ptztracker.control.effort import EffortProfile
-from ptztracker.control.framing import FramingController, FramingInput, FramingOutput
+from ptztracker.control.framing import TILT_FROM_FH, FramingController, FramingInput, FramingOutput
 from ptztracker.recorder import NullRecorder, Recorder, safe_event
 
 log = logging.getLogger(__name__)
@@ -28,7 +28,6 @@ STALE_S = 0.6  # результат анализа старше — анализ
 ZOOM_POLL_S = 0.5  # при слежении: зум и (для записи) положение #APC; чаще — опрос отнимает окна у команд
 IDLE_POSITION_POLL_S = 2.0  # слежение выкл., идёт запись: положение и зум реже — не мешать ручному управлению
 MANUAL_QUIET_S = 2.0  # после ручной команды столько не опрашиваем (запрос занимает окно ~130 мс)
-TILT_FROM_FH = 9 / 16  # скорость по вертикали (доли высоты) → эквивалент по ширине кадра 16:9
 _ZOOM_CMD = re.compile(r"#Z(\d\d)")
 
 
@@ -82,6 +81,9 @@ class Follower:
         self._lock = threading.Lock()
         self._zoom_pos = 0x555
         self._zoom_pos_t: float | None = None  # когда пришёл ответ #GZ с _zoom_pos
+        # последний ответ #APC (опрос идёт при записи): сторож раскачки сверяет по нему развороты камеры
+        self._pan_tilt: tuple[int, int] | None = None
+        self._pan_tilt_t: float | None = None
         # Номер включения слежения и с каким номером отправлена каждая команда зума слежения: команда,
         # поставленная до выключения, но ушедшая уже после нового включения, — не для нового регулятора
         self._gen = 0
@@ -116,6 +118,7 @@ class Follower:
             latency = self.video_latency()
             self.controller.video_latency = latency
             self.controller.reset()
+            self._pan_tilt = self._pan_tilt_t = None  # сторожу нового включения — только новые ответы #APC
             self._gen += 1
             self._zoom_cmd_gen.clear()
             self._codes = (50, 50, 50)
@@ -255,6 +258,8 @@ class Follower:
             log.debug("Запрос положения не удался: %s", e)
             pt = None
         if pt is not None:
+            with self._lock:
+                self._pan_tilt, self._pan_tilt_t = (int(pt[0]), int(pt[1])), time.monotonic()
             safe_event(self.recorder, "position", pan=pt[0], tilt=pt[1], zoom=zoom)
 
     def _run(self) -> None:
@@ -268,7 +273,8 @@ class Follower:
                 log.exception("Ошибка в цикле слежения")
                 self.disable("внутренняя ошибка")
 
-    def _record_tick(self, now, r, measure, zoom, zoom_t, out, codes, comp: Composition, effort: EffortProfile) -> None:
+    def _record_tick(self, now, r, measure, zoom, zoom_t, apc, apc_t, out, codes, comp: Composition,
+                     effort: EffortProfile) -> None:
         """Такт регулятора в запись: всё, что нужно, чтобы повторить его без камеры.
 
         Ошибка здесь не должна дойти до цикла слежения (он бы выключил слежение).
@@ -282,6 +288,7 @@ class Follower:
                      "u": None if measure.u is None else float(measure.u), "confident": bool(measure.confident)}
             safe_event(
                 self.recorder, "control", t=now, t_capture=r.t_capture, measure=m, zoom_pos=zoom, zoom_pos_t=zoom_t,
+                pan_tilt=None if apc is None else list(apc), pan_tilt_t=apc_t,
                 aspect=r.frame_size[0] / max(1, r.frame_size[1]),
                 out={"pan": out.pan, "tilt": out.tilt, "zoom": out.zoom, "state": out.state,
                      "error": list(out.error), "size_error": out.size_error},
@@ -310,9 +317,11 @@ class Follower:
             if not self.enabled:
                 return
             zoom, zoom_t = self._zoom_pos, self._zoom_pos_t
+            apc, apc_t = self._pan_tilt, self._pan_tilt_t
             out = self.controller.step(
                 FramingInput(now=now, t_capture=r.t_capture, measure=measure, zoom_pos=zoom,
-                             aspect=r.frame_size[0] / max(1, r.frame_size[1]), zoom_pos_t=zoom_t)
+                             aspect=r.frame_size[0] / max(1, r.frame_size[1]), zoom_pos_t=zoom_t,
+                             pan_tilt=apc, pan_tilt_t=apc_t)
             )
             self.output = out
             diverged = out.state == "diverged"
@@ -321,6 +330,6 @@ class Follower:
             # отправка под замком: disable() не сможет вклиниться между проверкой enabled и submit
             self._submit_tracking(pan, tilt, zc)
             comp, effort = self.controller.composition, self.controller.effort  # только ссылки: работа записи — вне замка
-        self._record_tick(now, r, measure, zoom, zoom_t, out, (pan, tilt, zc), comp, effort)
+        self._record_tick(now, r, measure, zoom, zoom_t, apc, apc_t, out, (pan, tilt, zc), comp, effort)
         if diverged:
             self.disable("камера раскачивалась — она быстрее, чем ожидалось. Сервис → Калибровка камеры")
