@@ -115,19 +115,22 @@ Z = 0x73F
 UNITS_PER_FW = he42.hfov_deg((Z - P.LENS_MIN) / (P.LENS_MAX - P.LENS_MIN)) / he42.APC_DEG_PER_UNIT
 
 
-def _drive(adapter, true_factor, T=20.0, code=70, frozen=lambda t: False, apc_noise=lambda i: 0, zoom=lambda t: Z):
-    """Камера едет ровно кодом code (pan и tilt) в true_factor раз быстрее таблицы; #APC раз в 0,5 с."""
+def _drive(adapter, true_factor, T=20.0, code=70, frozen=lambda t: False, apc_noise=lambda i: 0, zoom=lambda t: Z,
+           t_cmd=0.0, seen=None):
+    """Камера едет ровно кодом code (pan и tilt, команда в t_cmd) в true_factor раз быстрее таблицы; #APC раз в 0,5 с."""
     calib = adapter.calib
     v = calib.pan.speed(code, Z) * true_factor
     from ptztracker.control.camera_model import CameraDynamics
 
     cam = CameraDynamics(calib.dead_time, calib.tau)
-    cam.command(0.0, v)
-    adapter.pt_sent(0.0, code, code, Z)
+    cam.command(t_cmd, v)
+    adapter.pt_sent(t_cmd, code, code, Z)
     for i in range(1, int(T / 0.5) + 1):
         t = 0.5 * i
         pos = round(0x8000 + cam.position(t) * UNITS_PER_FW) + apc_noise(i)
         adapter.pan_tilt_measured(t, pos, pos, zoom(t), frozen=frozen(t))
+        if seen is not None:
+            seen.append(calib.pan_scale)
 
 
 def test_adapter_converges_and_clamps():
@@ -176,18 +179,31 @@ def test_calibration_codes_use_scale():
     assert calib.zoom_code(0.1) == calib.zoom.code_for(0.2)
 
 
-def test_calibration_json_keeps_scale():
+def test_calibration_json_has_no_scale_and_validates():
+    """Поправка хранится только в CameraConfig.speed_scale: в JSON калибровки её нет, а старый JSON с ней
+    читается (ключ пропускается). set_speed_scale пропускает мусор и ограничивает пределами."""
     from ptztracker.control.camera_model import Calibration
 
     calib = default_calibration()
     calib.pan_scale, calib.zoom_scale = 1.3, 0.8
-    back = Calibration.from_json(calib.to_json())
-    assert back.speed_scale == {"pan": 1.3, "tilt": 1.0, "zoom": 0.8}
-    old = calib.to_json()
-    del old["speed_scale"]  # калибровка старой версии
-    assert Calibration.from_json(old).speed_scale == {"pan": 1.0, "tilt": 1.0, "zoom": 1.0}
-    bad = Calibration.from_json({**calib.to_json(), "speed_scale": {"pan": "x", "tilt": 9.0, "zoom": -1}})
+    d = calib.to_json()
+    assert "speed_scale" not in d
+    assert Calibration.from_json({**d, "speed_scale": {"pan": 1.7}}).speed_scale == {"pan": 1.0, "tilt": 1.0, "zoom": 1.0}
+    bad = default_calibration()
+    bad.set_speed_scale({"pan": "x", "tilt": 9.0, "zoom": -1})
     assert bad.speed_scale == {"pan": 1.0, "tilt": SCALE_MAX, "zoom": 1.0}
+    bad.set_speed_scale([1, 2])  # не словарь — ничего не меняет
+    assert bad.speed_scale == {"pan": 1.0, "tilt": SCALE_MAX, "zoom": 1.0}
+
+
+def test_adapter_ignores_early_glitch():
+    """Сбой #APC (−300 единиц) на втором ответе, пока история отношений не набралась: поправка не уходит
+    (без этого — 0,79). Первые ADAPT_MIN_RATIOS − 1 отношений только копятся."""
+    calib = default_calibration()
+    # камера уже едет ровно: первый же отрезок годен, и сбой — первое отношение в истории
+    seen = []
+    _drive(SpeedAdapter(calib), 1.0, T=10.0, apc_noise=lambda i: -300 if i == 2 else 0, t_cmd=-5.0, seen=seen)
+    assert all(abs(v - 1.0) < 0.02 for v in seen), seen
 
 
 def test_session_applies_saved_speed_scale():

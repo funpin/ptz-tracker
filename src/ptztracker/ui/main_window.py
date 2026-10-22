@@ -360,6 +360,7 @@ class MainWindow(QMainWindow):
     def _activate(self, cam: CameraConfig | None) -> None:
         self.agent_panel.revoke()  # смена камеры: агент теряет управление
         self.release_all_held()
+        self._speed_scale_saved_t = float("-inf")  # «раз в минуту» — для каждой камеры заново
         if self.session:
             self.session.stop()
             self.session = None

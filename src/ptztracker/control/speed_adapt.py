@@ -54,6 +54,11 @@ ADAPT_ZOOM_STEADY_LN = 0.03
 # по часам). Быстрее — успевает до раскачки при ×2; медленнее — меньше шума (см. DECISIONS).
 ADAPT_TAU_S = 1.0
 ADAPT_MEDIAN_N = 5  # поправка идёт к медиане последних отношений: один выброс её не уводит
+# Начало: пока отношений меньше ADAPT_MIN_RATIOS и ни один отрезок не длиннее ADAPT_MIN_EVIDENCE_S, медиана
+# берётся вместе с текущей поправкой (история дополняется ею до трёх): один сбой #APC на коротком отрезке —
+# ещё не «медиана». Один длинный отрезок (≥ 1,5 с) — уже надёжный замер: при ×2 он единственный до раскачки (тест).
+ADAPT_MIN_RATIOS = 3
+ADAPT_MIN_EVIDENCE_S = 1.5
 _KEEP_CMDS_S = 5.0
 AXES = ("pan", "tilt", "zoom")
 
@@ -147,7 +152,7 @@ class SpeedAdapter:
             "tilt": _Axis(calib.dead_time, calib.tau, min_deg),
             "zoom": _Axis(calib.dead_time, calib.tau, ADAPT_MIN_ZOOM_LN),
         }
-        self._ratios: dict[str, list[float]] = {a: [] for a in AXES}
+        self._ratios: dict[str, list[tuple[float, float]]] = {a: [] for a in AXES}
         self._zoom_at_apc: int | None = None
 
     def reset(self) -> None:
@@ -187,8 +192,12 @@ class SpeedAdapter:
 
     def _apply(self, axis: str, log_ratio: float, dt: float) -> None:
         hist = self._ratios[axis]
-        hist.append(max(math.log(SCALE_MIN), min(math.log(SCALE_MAX), log_ratio)))
+        hist.append((max(math.log(SCALE_MIN), min(math.log(SCALE_MAX), log_ratio)), dt))
         del hist[:-ADAPT_MEDIAN_N]
         cur = math.log(getattr(self.calib, f"{axis}_scale"))
-        new = cur + (statistics.median(hist) - cur) * (1 - math.exp(-dt / ADAPT_TAU_S))
+        vals = [r for r, _ in hist]
+        if len(vals) < ADAPT_MIN_RATIOS and max(d for _, d in hist) < ADAPT_MIN_EVIDENCE_S:
+            vals += [cur] * max(0, ADAPT_MIN_RATIOS - len(vals))
+        target = statistics.median(vals)
+        new = cur + (target - cur) * (1 - math.exp(-dt / ADAPT_TAU_S))
         setattr(self.calib, f"{axis}_scale", min(SCALE_MAX, max(SCALE_MIN, math.exp(new))))

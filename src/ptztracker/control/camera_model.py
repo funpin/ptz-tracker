@@ -176,7 +176,8 @@ class Calibration:
     video_latency: dict[str, float] = field(default_factory=lambda: dict(he42.VIDEO_LATENCY_S))
     created: str | None = None
     # Поправка таблиц по ходу слежения (control.speed_adapt): камера быстрее таблицы в столько раз.
-    # Таблицы не меняются; скорость камеры и код для скорости — только через методы ниже.
+    # Таблицы не меняются; скорость камеры и код для скорости — только через методы ниже. В to_json поправки
+    # нет: единственное место хранения — CameraConfig.speed_scale (настройки), в записи — каждый такт control.
     pan_scale: float = 1.0
     tilt_scale: float = 1.0
     zoom_scale: float = 1.0
@@ -228,12 +229,11 @@ class Calibration:
             "tau": self.tau,
             "video_latency": dict(self.video_latency),
             "created": self.created,
-            "speed_scale": dict(self.speed_scale),
         }
 
     @classmethod
     def from_json(cls, d: dict) -> Calibration:
-        c = cls(
+        return cls(
             pan=SpeedTable.from_json(d["pan"]),
             zoom=ZoomTable([tuple(p) for p in d["zoom"]]),
             dead_time=float(d.get("dead_time", he42.DEAD_TIME_S)),
@@ -242,8 +242,6 @@ class Calibration:
             or dict(he42.VIDEO_LATENCY_S),
             created=d.get("created"),
         )
-        c.set_speed_scale(d.get("speed_scale"))
-        return c
 
 
 def default_calibration(safety: float = 1.0) -> Calibration:

@@ -366,3 +366,37 @@ def test_speed_scale_saved_at_most_once_a_minute(qtbot, tmp_path):
     assert store.load().cameras[0].speed_scale["pan"] == 1.6
     w.close()
     assert store.load().cameras[0].speed_scale["pan"] == 1.6
+
+
+def test_new_calibration_resets_speed_scale(qtbot, tmp_path, monkeypatch):
+    """Мастер калибровки дал новую таблицу: прежняя поправка скорости к ней не относится — сбрасывается
+    и в настройках, и в новом слежении."""
+    from ptztracker.control.camera_model import default_calibration
+
+    class FakeDialog:
+        def __init__(self, factory, on_saved, parent=None):
+            self.on_saved = on_saved
+
+        def exec(self):
+            self.on_saved(default_calibration().to_json())
+
+    monkeypatch.setattr("ptztracker.ui.calibration_dialog.CalibrationDialog", FakeDialog)
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cfg.cameras[0].speed_scale = {"pan": 1.4, "tilt": 1.0, "zoom": 1.0}
+    store.save(cfg)
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    assert w.session.follower.calib.pan_scale == 1.4
+    w._run_calibration()
+    assert store.load().cameras[0].speed_scale is None
+    assert w.session.follower.calib.pan_scale == 1.0
+    w.close()
+
+
+def test_camera_switch_resets_speed_scale_timer(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w._speed_scale_saved_t = 123.0
+    w._activate(w._current_cfg())
+    assert w._speed_scale_saved_t == float("-inf")
+    w.close()
