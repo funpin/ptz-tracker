@@ -202,12 +202,24 @@ class MainWindow(QMainWindow):
         side_scroll.setWidgetResizable(True)
         side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         side_scroll.setFrameShape(QScrollArea.NoFrame)
-        side_scroll.setFixedWidth(SIDE_WIDTH)
+
+        # «СТОП КАМЕРЫ» закреплён под прокруткой: аварийная кнопка всегда на виду
+        self.controls.layout().removeWidget(self.controls.stop_btn)
+        side_col = QWidget()
+        side_col.setFixedWidth(SIDE_WIDTH)
+        cl = QVBoxLayout(side_col)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(SP[0])
+        cl.addWidget(side_scroll, 1)
+        stop_row = QHBoxLayout()
+        stop_row.setContentsMargins(SP[1], 0, SP[1], SP[0])  # стиль делает кнопку выше H_STOP на рамку
+        stop_row.addWidget(self.controls.stop_btn)
+        cl.addLayout(stop_row)
 
         central = QWidget()
         hl = QHBoxLayout(central)
         hl.addWidget(self.video_frame, 1)
-        hl.addWidget(side_scroll)
+        hl.addWidget(side_col)
         self.setCentralWidget(central)
 
         # строка состояния: справа клавиши и подпись

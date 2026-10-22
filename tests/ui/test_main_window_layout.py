@@ -114,3 +114,26 @@ def test_link_ok_chip_is_not_tally_green(qtbot, tmp_path):
     qtbot.waitUntil(lambda: w.link_label.text() == "Камера на связи", timeout=4000)
     assert w.link_label.kind() == "neutral"  # зелёный PVW — только для Tally
     w.close()
+
+
+def test_stop_button_visible_without_scrolling(qtbot, tmp_path):
+    # аварийная кнопка не прячется за прокруткой правой панели при окне 1640×850 (с боевой темой)
+    from PySide6.QtWidgets import QApplication
+
+    from ptztracker.ui.theme import apply_dark_theme
+
+    app = QApplication.instance()
+    old_style, old_pal = app.styleSheet(), app.palette()
+    apply_dark_theme(app)
+    w = make(qtbot, tmp_path)
+    w.resize(1640, 850)
+    qtbot.waitExposed(w)
+    qtbot.wait(1500)  # статус и подсказки обновятся по таймеру и могут добавить строки
+    b = w.controls.stop_btn
+    assert b.isVisible()
+    try:
+        assert b.visibleRegion().boundingRect().size() == b.size()
+    finally:
+        w.close()
+        app.setStyleSheet(old_style)
+        app.setPalette(old_pal)
