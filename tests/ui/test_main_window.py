@@ -189,15 +189,15 @@ def test_calibration_silences_polling_and_resumes(qtbot, tmp_path, monkeypatch):
             self.factory(lambda m: None)  # как рабочий поток мастера
             s = w.session
             seen["quiet"] = s._quiet
-            seen["follower_stopped"] = s.follower._stop.is_set()
-            seen["heartbeat_stopped"] = s._hb_stop.is_set()
+            seen["polling_paused"] = s.follower.polling_paused
 
     monkeypatch.setattr("ptztracker.ui.calibration_dialog.CalibrationDialog", FakeDialog)
     w = make(qtbot, tmp_path)
     s = w.session
-    old_follower = s.follower
+    follower = s.follower
     w._run_calibration()
-    assert seen == {"quiet": True, "follower_stopped": True, "heartbeat_stopped": True}
-    assert not s._quiet and not s._hb_stop.is_set()
-    assert s.follower is not old_follower and not s.follower._stop.is_set()
+    assert seen == {"quiet": True, "polling_paused": True}
+    assert not s._quiet and not follower.polling_paused
+    assert s.follower is follower and follower._thread.is_alive() and follower._zthread.is_alive()
+    assert w.preview._follower is follower
     w.close()

@@ -74,6 +74,7 @@ class Follower:
         self._codes = (50, 50, 50)
         self._last_u: float | None = None
         self._last_manual = float("-inf")
+        self.polling_paused = False  # калибровка: опросы зума и положения молчат, поток живёт
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="follower", daemon=True)
         self._zthread = threading.Thread(target=self._poll_zoom, name="follower-zoom", daemon=True)
@@ -143,6 +144,14 @@ class Follower:
         """Сессия сообщает о ручной команде: опрос камеры ненадолго уступает оператору."""
         self._last_manual = time.monotonic()
 
+    def pause_polling(self) -> None:
+        """На время калибровки: слежение выключено, камеру не опрашиваем (объект и потоки остаются)."""
+        self.disable("калибровка")
+        self.polling_paused = True
+
+    def resume_polling(self) -> None:
+        self.polling_paused = False
+
     def stop(self) -> None:
         self.disable("остановка камеры")
         self._stop.set()
@@ -165,6 +174,8 @@ class Follower:
                 recording = bool(self.recorder.active)
             except Exception:
                 recording = False
+            if self.polling_paused:
+                continue
             if not self.enabled:
                 now = time.monotonic()
                 if (not recording or now - last_idle_poll < IDLE_POSITION_POLL_S

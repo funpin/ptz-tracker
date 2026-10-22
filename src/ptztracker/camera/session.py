@@ -131,28 +131,21 @@ class CameraSession:
         threading.Thread(target=rec.close, name="blackbox-close", daemon=True).start()
 
     def quiet_for_calibration(self) -> None:
-        """Остановить фоновые опросы (пульс, положение камеры), чтобы они не занимали окно команд мастера.
+        """Выключить слежение и приостановить фоновые опросы (пульс, положение камеры) на время калибровки.
 
+        Иначе они занимают окно команд мастера и камера отвечает «занята». Следящий объект остаётся тот же.
         Ждёт 0,6 с, пока уйдут уже отправленные команды, — вызывать из рабочего потока, не из Qt.
         """
         self._quiet = True
-        self._hb_stop.set()
         if self.follower:
-            self.follower.stop()
+            self.follower.pause_polling()
         time.sleep(QUIET_PAUSE_S)
 
     def resume_after_calibration(self) -> None:
-        """Вернуть пульс и слежение после quiet_for_calibration (с актуальной калибровкой)."""
-        if not self._quiet or not self.scheduler:
-            return
+        """Вернуть пульс и опросы после quiet_for_calibration."""
         self._quiet = False
-        if self._hb_thread:
-            self._hb_thread.join(HEARTBEAT_S)
-        self._hb_stop.clear()
-        self._hb_thread = threading.Thread(target=self._heartbeat, name="cam-heartbeat", daemon=True)
-        self._hb_thread.start()
-        if self.analyzer:
-            self._start_follower()
+        if self.follower:
+            self.follower.resume_polling()
 
     # --- запись (чёрный ящик) -------------------------------------------
 
@@ -278,7 +271,8 @@ class CameraSession:
     def _heartbeat(self) -> None:
         # Лёгкий запрос «камера включена?» раз в 2 с — чтобы статус связи был актуален без движения.
         while True:
-            self.scheduler.submit("heartbeat", P.Q_POWER, Priority.QUERY, only_if_changed=False)
+            if not self._quiet:
+                self.scheduler.submit("heartbeat", P.Q_POWER, Priority.QUERY, only_if_changed=False)
             if self._hb_stop.wait(HEARTBEAT_S):
                 return
 

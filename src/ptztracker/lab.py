@@ -52,8 +52,19 @@ def _say(msg: str) -> None:
     print(_scrub(msg), flush=True)
 
 
+def _scrub_value(v):
+    if isinstance(v, str):
+        return _scrub(v)
+    if isinstance(v, dict):
+        return {k: _scrub_value(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_scrub_value(x) for x in v]
+    return v
+
+
 def _result(**data) -> None:
-    print(_scrub("RESULT " + json.dumps(data, ensure_ascii=False, default=str)), flush=True)
+    # значения чистим до json.dumps: пароль с кавычками или не-ASCII в JSON выглядел бы иначе
+    print("RESULT " + json.dumps(_scrub_value(data), ensure_ascii=False, default=str), flush=True)
 
 
 def _parse_select(text: str | None) -> tuple[float, float] | None:
