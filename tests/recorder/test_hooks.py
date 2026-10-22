@@ -56,7 +56,7 @@ def test_scheduler_reports_sent_commands():
     clock.t += 0.05
     assert s.pump() == "#PTS6050"
     assert sent == [
-        {"cmd": "#PTS6050", "key": "pt", "priority": "TRACKING", "queued_s": sent[0]["queued_s"],
+        {"t": clock.t, "cmd": "#PTS6050", "key": "pt", "priority": "TRACKING", "queued_s": sent[0]["queued_s"],
          "reply": "PTS6050", "ok": True}
     ]
     assert abs(sent[0]["queued_s"] - 0.05) < 1e-9

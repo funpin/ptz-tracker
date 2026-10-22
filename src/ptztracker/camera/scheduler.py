@@ -28,8 +28,8 @@ UNREACHABLE_BACKOFF_AFTER = 3
 UNREACHABLE_BACKOFF_S = 1.0
 # Окно для зума при слежении (часть 0, раздел A: зум ждал за поворотом до 2,4 с). Зум, ждущий дольше
 # ZOOM_WINDOW_AFTER_S, уходит раньше поворота, если поворот почти не изменился (< PT_SMALL_CHANGE кодов
-# по обеим осям) или если зум останавливает/разворачивает уже отправленный зум. Поворот уступает
-# не больше одного окна подряд.
+# по обеим осям), если это отъезд (человек у края кадра) или если зум останавливает/разворачивает уже
+# отправленный зум. Поворот уступает не больше одного окна подряд.
 ZOOM_WINDOW_AFTER_S = 0.3
 PT_SMALL_CHANGE = 2
 _PT_RE = re.compile(r"#PTS(\d\d)(\d\d)")
@@ -87,7 +87,7 @@ class CommandScheduler:
         self._online: bool | None = None
         self.last_error: str | None = None
         self.on_state_change: Callable[[bool], None] | None = None
-        # после каждой отправки: {"cmd", "key", "priority", "queued_s", "reply", "ok"} — запись, модель зума
+        # после каждой отправки: {"t", "cmd", "key", "priority", "queued_s", "reply", "ok"} — запись, модель зума
         self._sent_listeners: list[Callable[[dict], None]] = [on_sent] if on_sent else []
         self._last_on_sent_log = float("-inf")
         self._thread: threading.Thread | None = None
@@ -232,7 +232,7 @@ class CommandScheduler:
                 or zoom.priority != Priority.TRACKING_ZOOM or self._pt_yielded
                 or now - zoom.waiting_since < ZOOM_WINDOW_AFTER_S):
             return False
-        return self._pt_small_change(best.cmd) or self._zoom_halts(zoom.cmd)
+        return self._pt_small_change(best.cmd) or self._zoom_urgent(zoom.cmd)
 
     def _pt_small_change(self, cmd: str) -> bool:
         new, old = _PT_RE.fullmatch(cmd), _PT_RE.fullmatch(self._st.last_sent.get("pt", ""))
@@ -240,12 +240,15 @@ class CommandScheduler:
             return False
         return all(abs(int(a) - int(b)) < PT_SMALL_CHANGE for a, b in zip(new.groups(), old.groups()))
 
-    def _zoom_halts(self, cmd: str) -> bool:
-        """Команда останавливает или разворачивает зум, который камера сейчас выполняет."""
-        new, old = _ZOOM_RE.fullmatch(cmd), _ZOOM_RE.fullmatch(self._st.last_sent.get("zoom", ""))
-        if not (new and old) or int(old[1]) == 50:
+    def _zoom_urgent(self, cmd: str) -> bool:
+        """Отъезд или остановка/разворот зума, который камера сейчас выполняет: ждать поворот нельзя."""
+        new = _ZOOM_RE.fullmatch(cmd)
+        if not new:
             return False
-        return (int(new[1]) - 50) * (int(old[1]) - 50) <= 0
+        if int(new[1]) < 50:
+            return True  # отъезд — человек у края кадра
+        old = _ZOOM_RE.fullmatch(self._st.last_sent.get("zoom", ""))
+        return bool(old) and int(old[1]) > 50 and int(new[1]) <= 50
 
     def _drop_expired(self, now: float) -> None:
         for key, item in list(self._st.slots.items()):
@@ -265,7 +268,8 @@ class CommandScheduler:
     def _report_sent(self, item: _Item, sent_t: float, ok: bool, reply: str) -> None:
         if not self._sent_listeners:
             return
-        info = {"cmd": item.cmd, "key": item.key, "priority": item.priority.name,
+        # t — начало отправки (часы планировщика): запись берёт его временем события, модель зума — моментом команды
+        info = {"t": sent_t, "cmd": item.cmd, "key": item.key, "priority": item.priority.name,
                 "queued_s": round(sent_t - item.submitted, 4), "reply": reply, "ok": ok}
         for cb in list(self._sent_listeners):
             try:

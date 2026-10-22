@@ -82,6 +82,10 @@ class Follower:
         self._lock = threading.Lock()
         self._zoom_pos = 0x555
         self._zoom_pos_t: float | None = None  # когда пришёл ответ #GZ с _zoom_pos
+        # Номер включения слежения и с каким номером отправлена каждая команда зума слежения: команда,
+        # поставленная до выключения, но ушедшая уже после нового включения, — не для нового регулятора
+        self._gen = 0
+        self._zoom_cmd_gen: dict[str, int] = {}
         self._codes = (50, 50, 50)
         self._last_u: float | None = None
         self._last_manual = float("-inf")
@@ -112,6 +116,8 @@ class Follower:
             latency = self.video_latency()
             self.controller.video_latency = latency
             self.controller.reset()
+            self._gen += 1
+            self._zoom_cmd_gen.clear()
             self._codes = (50, 50, 50)
             self._last_u = None
             self.enabled = True
@@ -189,10 +195,20 @@ class Follower:
         code = sent_zoom_code(info)
         if code is None:
             return
-        t = time.monotonic()
+        t = float(info.get("t", time.monotonic()))  # начало отправки — по часам планировщика (monotonic)
         with self._lock:
-            if self.enabled:
-                self.controller.zoom_sent(t, self.calib.zoom.rate(code))
+            if not self.enabled:
+                return
+            if info.get("priority") == Priority.TRACKING_ZOOM.name and self._zoom_cmd_gen.get(info["cmd"]) != self._gen:
+                return  # команда прежнего включения слежения
+            self.controller.zoom_sent(t, self.calib.zoom.rate(code))
+
+    def _submit_tracking(self, pan: int, tilt: int, zc: int) -> None:
+        """Коды слежения → в очередь (вызывать под self._lock)."""
+        self.scheduler.submit("pt", P.pan_tilt_speed(pan, tilt), Priority.TRACKING)
+        zcmd = P.zoom_speed(zc)
+        self._zoom_cmd_gen[zcmd] = self._gen
+        self.scheduler.submit("zoom", zcmd, Priority.TRACKING_ZOOM)
 
     def _notify(self) -> None:
         cb = self.on_change
@@ -303,8 +319,7 @@ class Follower:
             self._codes = output_codes(self.calib, out, zoom, self._codes)
             pan, tilt, zc = self._codes
             # отправка под замком: disable() не сможет вклиниться между проверкой enabled и submit
-            self.scheduler.submit("pt", P.pan_tilt_speed(pan, tilt), Priority.TRACKING)
-            self.scheduler.submit("zoom", P.zoom_speed(zc), Priority.TRACKING_ZOOM)
+            self._submit_tracking(pan, tilt, zc)
             comp, effort = self.controller.composition, self.controller.effort  # только ссылки: работа записи — вне замка
         self._record_tick(now, r, measure, zoom, zoom_t, out, (pan, tilt, zc), comp, effort)
         if diverged:

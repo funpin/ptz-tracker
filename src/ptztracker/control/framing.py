@@ -46,6 +46,9 @@ NO_TARGET_S = 0.3
 ZOOM_ACCEL = 0.5  # ln/с²
 ZOOM_IN_AFTER_HOLD_S = 1.0
 U_SMOOTH = 0.3
+# Поправка модели зума по ответу #GZ: доля расхождения за один ответ и предел одной поправки (ln).
+# Соответствие #GZ → масштаб живьём не мерялось (he42.ZOOM_RATIO) — замер не должен перебивать модель целиком.
+GZ_GAIN, GZ_MAX_STEP = 0.3, 0.15
 
 
 @dataclass(frozen=True)
@@ -239,12 +242,12 @@ class FramingController:
         self.zdyn.command(t, rate)
 
     def _zoom_measured(self, t: float, pos: int) -> None:
-        """Ответ #GZ: подправить положение модели зума (масштаб k считается от первого ответа после reset)."""
+        """Ответ #GZ: подтянуть модель зума к замеру (масштаб k считается от первого ответа после reset)."""
         ln = zoom_ln(pos)
         if self._gz_ref is None:
             self._gz_ref = ln - self.zdyn.position(t)
             return
-        self.zdyn.shift((ln - self._gz_ref) - self.zdyn.position(t))
+        self.zdyn.shift(_limit(GZ_GAIN * ((ln - self._gz_ref) - self.zdyn.position(t)), GZ_MAX_STEP))
 
     def step(self, inp: FramingInput) -> FramingOutput:
         now = inp.now

@@ -343,3 +343,22 @@ def test_zoom_stop_gets_window_while_pan_changes(env):
     zoom_after, pt_wait = _run_tracking(s, clock, pan_step=3, zoom_cmd="#Z50")
     assert zoom_after is not None and zoom_after <= 0.3 + 2 * 0.130 + 0.01
     assert pt_wait <= 2 * 0.130 + 0.01
+
+
+def test_zoom_out_gets_window_while_pan_changes(env):
+    """Отъезд (у края кадра) срочен: уходит за 0,3 с + окно, даже когда pt меняется сильно; pt — не дольше окна сверху."""
+    s, clock, _ = env
+    zoom_after, pt_wait = _run_tracking(s, clock, pan_step=3, zoom_cmd="#Z26", zoom_at=0.5)
+    assert zoom_after is not None and 0.3 - 1e-6 <= zoom_after <= 0.3 + 2 * 0.130 + 0.01
+    assert pt_wait <= 2 * 0.130 + 0.01
+
+
+def test_sent_info_carries_send_time(env):
+    """Модели зума нужен момент начала отправки, а не момент, когда слушатель получил ответ."""
+    s, clock, _ = env
+    got = []
+    s.add_sent_listener(got.append)
+    s.submit("zoom", "#Z60", Priority.TRACKING_ZOOM)
+    clock.t = 123.0
+    s.pump()
+    assert got[0]["t"] == 123.0

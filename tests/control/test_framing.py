@@ -178,12 +178,36 @@ def test_zoom_model_follows_sent_not_decided():
 
 
 def test_zoom_model_corrected_by_gz():
-    """Таблица зума врёт (камера в 1,5 раза быстрее): ответы #GZ раз в 0,5 с держат модель в пределах 10%."""
-    tr = run(_stand_walk_stand, world_u=lambda t: 0.08, T=16, zoom_speed_factor=1.5, gz_period=0.5)
-    assert max(tr.cam_zoom) > 0.3
-    assert _zoom_model_error(tr) < 0.10
-    no_gz = run(_stand_walk_stand, world_u=lambda t: 0.08, T=16, zoom_speed_factor=1.5)
-    assert _zoom_model_error(no_gz) > 0.10  # без #GZ модель уходит
+    """Таблица зума врёт (камера в 1,5 раза быстрее или в 0,7 раза медленнее): ответы #GZ раз в 0,5 с
+    подтягивают модель к камере. Поправка частичная (GZ_GAIN: соответствие #GZ → масштаб живьём не мерялось),
+    поэтому во время наезда модель отстаёт, но когда зум стоит ≥ 1,5 с — сходится (< 5%).
+    """
+    for sf in (1.5, 0.7):
+        tr = run(_stand_walk_stand, world_u=lambda t: 0.08, T=20, zoom_speed_factor=sf, gz_period=0.5)
+        no_gz = run(_stand_walk_stand, world_u=lambda t: 0.08, T=20, zoom_speed_factor=sf)
+        assert max(tr.cam_zoom) > 0.3, sf
+        assert _zoom_model_error(tr) < 0.7 * _zoom_model_error(no_gz), sf
+        settled = [i for i in range(38, len(tr.t)) if abs(tr.cam_zoom[i] - tr.cam_zoom[i - 38]) < 1e-3]
+        assert settled, sf
+        assert max(abs(math.exp(tr.model_zoom[i] - tr.cam_zoom[i]) - 1) for i in settled) < 0.05, sf
+
+
+def test_gz_correction_is_partial_and_bounded():
+    """Один ответ #GZ сдвигает модель на GZ_GAIN расхождения, но не больше GZ_MAX_STEP (ln)."""
+    from ptztracker.camera import protocol as P
+    from ptztracker.control.camera_model import default_calibration
+    from ptztracker.control.framing import GZ_GAIN, GZ_MAX_STEP, FramingController, FramingInput
+
+    ctrl = FramingController(COMPOSITIONS["waist_center"], E, default_calibration(), 0.15)
+    span = P.LENS_MAX - P.LENS_MIN
+    step = lambda t, pos: ctrl.step(FramingInput(now=t, t_capture=None, measure=None, zoom_pos=pos, zoom_pos_t=t))  # noqa: E731
+    step(0.0, P.LENS_MIN)  # опора: k = 1
+    small = round(0.2 / math.log(20) * span)  # камера на ~0,2 ln дальше модели
+    step(0.04, P.LENS_MIN + small)
+    want = small / span * math.log(20)
+    assert abs(ctrl.zdyn.position(0.04) - GZ_GAIN * want) < 1e-9
+    step(0.08, P.LENS_MAX)  # расхождение ~3 ln — поправка упирается в предел
+    assert abs(ctrl.zdyn.position(0.08) - GZ_GAIN * want - GZ_MAX_STEP) < 1e-9
 
 
 def test_no_zoom_in_while_walking():
