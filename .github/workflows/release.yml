@@ -1,0 +1,106 @@
+name: Release
+
+# Тег vX.Y.Z на main → сборка Windows и macOS → релиз на GitHub с заметками из CHANGELOG.md.
+# Правила версий — docs/RELEASING.md.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+# Действия закреплены коммитом: подвижный тег отдал бы сборку тому, кто перепишет тег.
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - id: v
+        name: Tag matches __version__ and CHANGELOG
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          code=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/ptztracker/__init__.py)
+          test "$tag" = "$code" || { echo "Тег v$tag не совпадает с __version__ $code"; exit 1; }
+          grep -q "^## \[$tag\]" CHANGELOG.md || { echo "В CHANGELOG.md нет раздела [$tag]"; exit 1; }
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: check
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e .[dev,build]
+      - run: python -m pytest -q -m "not slow"
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: pyinstaller packaging/ptztracker.spec --noconfirm
+      - shell: pwsh
+        run: Compress-Archive -Path dist/PTZTracker -DestinationPath "dist/PTZTracker-${{ needs.check.outputs.version }}-windows-x64.zip"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: windows
+          path: dist/PTZTracker-*-windows-x64.zip
+
+  macos:
+    needs: check
+    runs-on: macos-14 # Apple Silicon (arm64)
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ".[dev,build]"
+      - run: python -m pytest -q -m "not slow"
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: pyinstaller packaging/ptztracker.spec --noconfirm
+      - name: Smoke test
+        run: |
+          "dist/PTZ Tracker.app/Contents/MacOS/PTZTracker" --version
+          QT_QPA_PLATFORM=offscreen "dist/PTZ Tracker.app/Contents/MacOS/PTZTracker" --lab record --ip sim --seconds 3 --out "$RUNNER_TEMP/lab"
+      - name: Zip (ditto сохраняет ссылки и подпись внутри .app)
+        run: ditto -c -k --keepParent "dist/PTZ Tracker.app" "dist/PTZTracker-${{ needs.check.outputs.version }}-macos-arm64.zip"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: macos
+          path: dist/PTZTracker-*-macos-arm64.zip
+
+  release:
+    needs: [check, windows, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Notes from CHANGELOG
+        run: |
+          v="${{ needs.check.outputs.version }}"
+          awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md > notes.md
+          cat docs/release-footer.md >> notes.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ needs.check.outputs.version }}"
+          gh release create "v$v" assets/* --repo "$GITHUB_REPOSITORY" --title "PTZ Tracker $v" --notes-file notes.md --verify-tag

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ptztracker"
-version = "0.1.0"
+dynamic = ["version"]  # единый номер — ptztracker.__version__ (docs/RELEASING.md)
 description = "Управление и автослежение для PTZ-камер Panasonic AW-HE42"
 requires-python = ">=3.12,<3.14"
 license = "AGPL-3.0-only"
@@ -28,6 +28,9 @@ build = ["pyinstaller>=6.6"]
 
 [project.scripts]
 ptztracker = "ptztracker.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "ptztracker.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -13,6 +13,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/funpin/ptz-tracker/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/funpin/ptz-tracker?style=flat-square&amp;label=release"></a>
   <a href="https://github.com/funpin/ptz-tracker/actions/workflows/windows-build.yml"><img alt="Build and tests" src="https://github.com/funpin/ptz-tracker/actions/workflows/windows-build.yml/badge.svg?branch=main"></a>
   <img alt="Windows | macOS" src="https://img.shields.io/badge/Windows%20%7C%20macOS-desktop-555555?style=flat-square">
   <img alt="Python 3.12–3.13" src="https://img.shields.io/badge/Python-3.12–3.13-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white">
@@ -38,9 +39,9 @@ PTZ Tracker находит людей на видео с камеры, опер�
 
 ## Быстрый старт
 
-**Windows (оператор).** Скачайте архив `PTZTracker-win64` во вкладке [Actions](https://github.com/funpin/ptz-tracker/actions/workflows/windows-build.yml) (или соберите его сами через `build.bat`), распакуйте и запустите `PTZTracker.exe`. Пошагово: [руководство оператора](docs/OPERATOR.md).
+Готовые сборки для **Windows (x64)** и **macOS (Apple Silicon)** — на странице [последнего релиза](https://github.com/funpin/ptz-tracker/releases/latest). Распакуйте и запустите. Как открыть неподписанное приложение и что делать дальше — в заметках к релизу и в [руководстве оператора](docs/OPERATOR.md).
 
-**macOS.** Двойной щелчок по `run_mac.command` — скрипт сам создаст окружение.
+Из исходников: `build.bat` собирает `.exe` на Windows; на Mac двойной щелчок по `run_mac.command` сам создаст окружение и запустит программу.
 
 **Разработка** (Python 3.12–3.13):
 
@@ -64,6 +65,7 @@ CI на Windows прогоняет линтер и быстрый набор и 
 - [архитектура и инварианты безопасности](docs/ARCHITECTURE.md);
 - [решения и замеры, на которых они стоят](docs/DECISIONS.md);
 - [бэклог и открытые вопросы](docs/BACKLOG.md);
+- [изменения по версиям](CHANGELOG.md) и [как выпускать релизы](docs/RELEASING.md);
 - [исходный дизайн и факты живой камеры](docs/superpowers/specs/2026-10-19-ptz-tracker-design.md);
 - [планы этапов](docs/superpowers/plans/);
 - [правила для агента](AGENTS.md) и [правила участия](CONTRIBUTING.md).
