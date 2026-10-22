@@ -1,7 +1,7 @@
 import pytest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
-from ptztracker.ui.theme import H_STATE, apply_dark_theme
+from ptztracker.ui.theme import H_STATE, SP, apply_dark_theme
 from ptztracker.ui.widgets import Chip, KeyButton, SectionHeader, StateTile, VideoFrame
 
 KINDS = ("off", "on", "lost", "remote", "swing")
@@ -58,6 +58,9 @@ def test_state_tile_swing_reason_fits(qtbot):
     t.set_view("swing", "РАСКАЧКА", "Слежение остановлено: камера быстрее, чем ожидалось.", True)
     qtbot.wait(50)
     assert not t.why_label.text().endswith("…")
+    # пояснение на всю ширину плитки: на Windows шрифт шире, и кнопка рядом съедала текст
+    assert t.action_btn.isVisible()
+    assert t.why_label.width() >= t.width() - 2 * SP[2] - 2
 
 
 def test_state_tile_action_only_for_swing(qtbot):

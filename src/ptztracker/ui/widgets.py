@@ -253,8 +253,6 @@ class StateTile(QPushButton):
         row.addWidget(self.word_label, 1)
         lay.addLayout(row)
 
-        why_row = QHBoxLayout()
-        why_row.setSpacing(SP[1])
         self.why_label = _ElideLabel()
         self.why_label.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
         self.action_btn = KeyButton("Калибровка…")
@@ -264,9 +262,9 @@ class StateTile(QPushButton):
             f"QPushButton {{ min-height: 0; padding: 0 8px; font-size: {FS_CAPTION + 1}px; }}"
         )
         self.action_btn.hide()
-        why_row.addWidget(self.why_label, 1)
-        why_row.addWidget(self.action_btn, 0, Qt.AlignBottom)
-        lay.addLayout(why_row)
+        # кнопка — в строке со словом состояния: пояснению нужна вся ширина (Segoe UI на Windows шире)
+        row.addWidget(self.action_btn, 0, Qt.AlignVCenter)
+        lay.addWidget(self.why_label)
 
         for w in (self.caption_label, self.word_label, self._lamp, self.why_label):
             w.setAttribute(Qt.WA_TransparentForMouseEvents)
