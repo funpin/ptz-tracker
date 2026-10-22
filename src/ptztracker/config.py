@@ -61,6 +61,7 @@ class AppConfig:
     atem_ip: str = ""  # адрес микшера ATEM, пусто — Tally выключен
     check_updates: bool = True  # раз в сутки спрашивать GitHub, не вышла ли новая версия
     last_update_check: float = 0.0  # когда проверяли в последний раз (секунды с 1970)
+    latest_version: str = ""  # новая версия, найденная последней проверкой; пусто — новее нет
 
 
 RECORD_DIR_NAME = "Записи PTZ Tracker"
@@ -172,6 +173,8 @@ def _fix_update_settings(cfg: AppConfig) -> None:
         cfg.last_update_check = d.last_update_check
     else:
         cfg.last_update_check = float(t)
+    if not isinstance(cfg.latest_version, str):
+        cfg.latest_version = d.latest_version
 
 
 def ensure_api_token(cfg: AppConfig) -> bool:

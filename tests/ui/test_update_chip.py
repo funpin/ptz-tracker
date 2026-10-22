@@ -107,3 +107,24 @@ def test_menu_toggle_saves(qtbot, tmp_path):
     w.check_updates_action.trigger()
     assert w.cfg.check_updates is False
     assert ConfigStore(tmp_path / "c.json").load().check_updates is False
+
+
+def test_known_newer_version_shown_after_restart_within_24h(qtbot, tmp_path):
+    # проверка была час назад и нашла новую версию: после перезапуска значок виден сразу, без сети
+    w = make(qtbot, tmp_path, cfg_with(last_update_check=time.time() - 3600, latest_version="99.0.0"),
+             checker_factory=factory())
+    w._start_update_check()
+    assert FakeChecker.instances == []
+    assert w.update_chip.isVisible() and "99.0.0" in w.update_chip.text()
+
+
+def test_latest_version_remembered_and_cleared(qtbot, tmp_path):
+    w = make(qtbot, tmp_path, checker_factory=factory(UpdateInfo("99.0.0", "https://example.org/r")))
+    w._start_update_check()
+    w._poll_update_check()
+    assert w.cfg.latest_version == "99.0.0"
+    w2 = make(qtbot, tmp_path / "b", checker_factory=factory(None))
+    w2.cfg.latest_version = "99.0.0"
+    w2._start_update_check()
+    w2._poll_update_check()
+    assert w2.cfg.latest_version == ""

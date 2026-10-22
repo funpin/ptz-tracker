@@ -41,7 +41,7 @@ from ptztracker.ui.preview import PreviewWidget
 from ptztracker.ui.state import TrackingView, tally_chip, tracking_view
 from ptztracker.ui.theme import FS_CAPTION, SP, C
 from ptztracker.ui.widgets import Chip, SectionHeader, VideoFrame, keycap_width, paint_keycap
-from ptztracker.updates import CHECK_INTERVAL_S, UpdateChecker, UpdateInfo
+from ptztracker.updates import CHECK_INTERVAL_S, RELEASE_PAGE, UpdateChecker, UpdateInfo, is_newer
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
 
 log = logging.getLogger(__name__)
@@ -443,6 +443,8 @@ class MainWindow(QMainWindow):
         """Одна проверка в фоне; не чаще раза в сутки и только если не отключена в меню."""
         if self._checker is not None or self._checker_factory is None or not self.cfg.check_updates:
             return
+        if is_newer(self.cfg.latest_version, __version__):  # найдено прошлой проверкой — показать сразу, без сети
+            self._show_update(UpdateInfo(self.cfg.latest_version, RELEASE_PAGE.format(version=self.cfg.latest_version)))
         if time.time() - self.cfg.last_update_check < CHECK_INTERVAL_S:
             return
         self._checker = self._checker_factory(__version__)
@@ -454,14 +456,20 @@ class MainWindow(QMainWindow):
         if c is None or not c.done:
             return
         self._checker = None
+        info = c.result
         if c.ok:
             self.cfg.last_update_check = time.time()
+            self.cfg.latest_version = info.version if info is not None else ""
             self._save()
-        info = c.result
         if info is not None:
-            self._update_info = info
-            self.update_chip.set(f"Доступна {info.version}", "accent")
-            self.update_chip.show()
+            self._show_update(info)
+        elif c.ok:
+            self.update_chip.hide()
+
+    def _show_update(self, info: UpdateInfo) -> None:
+        self._update_info = info
+        self.update_chip.set(f"Доступна {info.version}", "accent")
+        self.update_chip.show()
 
     def _open_release_page(self) -> None:
         if self._update_info is not None:

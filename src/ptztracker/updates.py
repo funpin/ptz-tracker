@@ -14,6 +14,7 @@ from dataclasses import dataclass
 log = logging.getLogger(__name__)
 
 RELEASES_URL = "https://api.github.com/repos/funpin/ptz-tracker/releases/latest"
+RELEASE_PAGE = "https://github.com/funpin/ptz-tracker/releases/tag/v{version}"
 TIMEOUT_S = 5.0
 CHECK_INTERVAL_S = 24 * 3600  # не чаще раза в сутки
 
