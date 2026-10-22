@@ -177,6 +177,17 @@ def test_recording_settings_saved(qtbot, tmp_path):
     assert (cfg.record_buffer_s, cfg.record_to_disk, cfg.record_dir) == (600, True, str(tmp_path / "x"))
 
 
+def test_recording_dialog_ok_keeps_default_folder_empty(qtbot, tmp_path):
+    from ptztracker.ui.recording_dialog import RecordingDialog
+
+    cfg = ConfigStore(tmp_path / "c.json").load()
+    assert cfg.record_dir == ""
+    d = RecordingDialog(cfg)
+    qtbot.addWidget(d)
+    d.apply()  # папку не трогали
+    assert cfg.record_dir == ""
+
+
 def test_calibration_silences_polling_and_resumes(qtbot, tmp_path, monkeypatch):
     """Во время мастера калибровки пульс и опрос положения молчат (иначе камера отвечает eR2), после — возобновляются."""
     seen = {}

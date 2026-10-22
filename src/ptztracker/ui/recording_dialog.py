@@ -31,7 +31,8 @@ class RecordingDialog(QDialog):
         self.minutes.setValue(cfg.record_buffer_s // 60)
         self.to_disk = QCheckBox("Писать всё на диск (около 450 МБ в час)")
         self.to_disk.setChecked(cfg.record_to_disk)
-        self.folder = QLineEdit(str(record_dir(cfg)))
+        self._initial_folder = str(record_dir(cfg))
+        self.folder = QLineEdit(self._initial_folder)
         browse = QPushButton("Обзор…")
         browse.clicked.connect(self._browse)
 
@@ -65,4 +66,7 @@ class RecordingDialog(QDialog):
         c.record_enabled = self.enabled.isChecked()
         c.record_buffer_s = self.minutes.value() * 60
         c.record_to_disk = self.to_disk.isChecked()
-        c.record_dir = self.folder.text().strip()
+        text = self.folder.text().strip()
+        # не трогали папку — остаётся то, что было (пусто = «Записи PTZ Tracker» на рабочем столе)
+        if text != self._initial_folder:
+            c.record_dir = text
