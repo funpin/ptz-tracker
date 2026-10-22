@@ -180,6 +180,18 @@ class BlackBox:
                 fut.set_exception(e)
         return fut
 
+    def recent_events(self, since: float, limit: int = 500) -> list[dict]:
+        """События новее `since` из буфера (без кадров) — для API агента."""
+        with self._lock:
+            lines = self._events.recent(since, limit)
+        out = []
+        for _, line in lines:  # строки уже без паролей (event_line)
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+        return out
+
     def close(self) -> None:
         """Останавливает фоновый поток; остаток постоянной записи дописывается на диск."""
         if self._closed:

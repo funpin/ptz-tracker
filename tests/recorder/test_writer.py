@@ -162,3 +162,18 @@ def test_large_frames_downscaled_to_640x360(tmp_path):
     with zipfile.ZipFile(path) as z:
         index = [json.loads(line) for line in z.read("frames.jsonl").decode().splitlines()]
     assert [(f["w"], f["h"]) for f in index] == [(640, 360), (360, 360), (64, 36)]
+
+
+def test_recent_events_since_and_limit_without_frames(tmp_path):
+    bb = BlackBox(tmp_path, {}, start_thread=False)
+    for i in range(10):
+        bb.event("note", t=100.0 + i, n=i)
+    bb.frame(_frame(1, 105.0))
+    bb.flush()
+    ev = bb.recent_events(since=104.0)
+    assert [e["n"] for e in ev] == [5, 6, 7, 8, 9]  # строго новее since, по порядку
+    assert all(e["kind"] == "note" for e in ev)
+    assert [e["n"] for e in bb.recent_events(since=0.0, limit=3)] == [7, 8, 9]  # самые новые
+    assert bb.recent_events(since=200.0) == []
+    assert NullRecorder().recent_events(0.0) == []
+    bb.close()

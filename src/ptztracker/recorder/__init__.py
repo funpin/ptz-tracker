@@ -49,6 +49,9 @@ class NullRecorder:
         fut.set_exception(RuntimeError("Запись выключена"))
         return fut
 
+    def recent_events(self, since: float, limit: int = 500) -> list[dict]:
+        return []
+
     def close(self) -> None:
         pass
 

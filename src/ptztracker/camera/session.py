@@ -13,6 +13,7 @@ import threading
 import time
 from concurrent.futures import Future
 from pathlib import Path
+from typing import Callable
 
 from ptztracker import __version__
 from ptztracker.camera import protocol as P
@@ -65,6 +66,7 @@ class CameraSession:
         self._hb_stop = threading.Event()
         self._quiet = False  # фоновые опросы остановлены на время калибровки
         self._hb_thread: threading.Thread | None = None
+        self.on_manual: Callable[[], None] | None = None  # окно: ручное действие снимает разрешение агенту
 
     # --- жизненный цикл ------------------------------------------------
 
@@ -247,7 +249,12 @@ class CameraSession:
         )
 
     def _manual(self) -> None:
-        """Ручное действие оператора: слежение уступает немедленно."""
+        """Ручное действие оператора: слежение и агент уступают немедленно, до отправки команды."""
+        if self.on_manual:
+            try:
+                self.on_manual()
+            except Exception:
+                log.exception("on_manual упал")
         if self.follower and self.follower.enabled:
             self.follower.disable("ручное управление")
 

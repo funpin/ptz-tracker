@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,6 +53,10 @@ class AppConfig:
     record_buffer_s: int = 300
     record_to_disk: bool = False  # постоянная запись на диск (~450 МБ/час)
     record_dir: str = ""  # пусто — «Записи PTZ Tracker» на рабочем столе
+    # локальный API для агента (только 127.0.0.1); токен создаётся при первом запуске, агент читает его отсюда
+    api_enabled: bool = True
+    api_port: int = 8765
+    api_token: str = ""
 
 
 RECORD_DIR_NAME = "Записи PTZ Tracker"
@@ -143,6 +148,25 @@ def _fix_record_settings(cfg: AppConfig) -> None:
         cfg.record_dir = d.record_dir
 
 
+def _fix_api_settings(cfg: AppConfig) -> None:
+    d = AppConfig()
+    if not isinstance(cfg.api_enabled, bool):
+        cfg.api_enabled = d.api_enabled
+    p = cfg.api_port
+    if isinstance(p, bool) or not isinstance(p, int) or not 0 < p < 65536:
+        cfg.api_port = d.api_port
+    if not isinstance(cfg.api_token, str):
+        cfg.api_token = d.api_token
+
+
+def ensure_api_token(cfg: AppConfig) -> bool:
+    """Создать токен API, если его ещё нет. True — токен новый (конфиг нужно сохранить)."""
+    if cfg.api_token:
+        return False
+    cfg.api_token = secrets.token_urlsafe(24)
+    return True
+
+
 class ConfigStore:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -171,6 +195,7 @@ class ConfigStore:
         if not cfg.cameras:
             cfg.cameras = default_config().cameras
         _fix_record_settings(cfg)
+        _fix_api_settings(cfg)
         return cfg
 
     def save(self, cfg: AppConfig) -> None:

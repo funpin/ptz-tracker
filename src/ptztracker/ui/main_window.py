@@ -22,10 +22,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ptztracker.api.backend import start_window_api
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import AppConfig, CameraConfig, ConfigStore, get_password, set_password
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
+from ptztracker.ui.agent_panel import AgentPanel
 from ptztracker.ui.camera_dialog import CameraDialog
 from ptztracker.ui.follow_panel import FollowPanel
 from ptztracker.ui.manual_controls import ManualControls
@@ -99,6 +101,8 @@ class MainWindow(QMainWindow):
         sl.addWidget(target_box)
         sl.addWidget(cam_box)
         sl.addWidget(self.controls)
+        self.agent_panel = AgentPanel()  # разрешения агенту: по умолчанию выключены, не сохраняются
+        sl.addWidget(self.agent_panel)
         sl.addStretch(1)
 
         # боковая панель прокручивается — окно помещается и на небольших экранах
@@ -140,7 +144,7 @@ class MainWindow(QMainWindow):
         self.save_moment_action = QAction("Сохранить момент (F9)", self)
         self.save_moment_action.setShortcut(Qt.Key_F9)  # это не ручное управление: слежение не трогаем
         self.service_menu.addAction(self.save_moment_action)
-        self.save_moment_action.triggered.connect(self.save_moment)
+        self.save_moment_action.triggered.connect(lambda: self.save_moment())
         self.rec_settings_action = QAction("Настройки записи…", self)
         self.service_menu.addAction(self.rec_settings_action)
         self.rec_settings_action.triggered.connect(self._recording_settings)
@@ -176,6 +180,7 @@ class MainWindow(QMainWindow):
 
         QApplication.instance().installEventFilter(self)
         self._fill_combo(select_id="sim" if use_sim else self.cfg.last_camera_id)
+        self._api = start_window_api(self)
 
     # --- список камер -------------------------------------------------
 
@@ -201,6 +206,7 @@ class MainWindow(QMainWindow):
         self._activate(self._current_cfg())
 
     def _activate(self, cam: CameraConfig | None) -> None:
+        self.agent_panel.revoke()  # смена камеры: агент теряет управление
         self.release_all_held()
         if self.session:
             self.session.stop()
@@ -219,6 +225,9 @@ class MainWindow(QMainWindow):
             return
         self.session = CameraSession(cam, scene_path=self.cfg.sim_scene_path, app_cfg=self.cfg)
         self.session.start()
+        self.session.on_manual = self.agent_panel.revoke
+        if self.session.follower:
+            self.session.follower.on_change = self.agent_panel.on_follow_change  # раскачка, аварийный стоп
         self.preview.set_source(self.session.frames)
         self.preview.set_analyzer(self.session.analyzer)
         self.preview.set_follow(self.session.follower)
@@ -380,13 +389,14 @@ class MainWindow(QMainWindow):
 
     # --- запись (чёрный ящик) ------------------------------------------
 
-    def save_moment(self) -> None:
+    def save_moment(self, reason: str = "F9"):
         if self.session is None:
             self.statusBar().showMessage("Нечего сохранять: камера не выбрана.", 5000)
-            return
+            return None
         self.statusBar().showMessage("Сохраняю запись…")
-        fut = self.session.save_moment("F9")
+        fut = self.session.save_moment(reason)
         fut.add_done_callback(self._saveFinished.emit)  # рабочий поток → сигнал → Qt-поток
+        return fut
 
     def _on_save_finished(self, fut) -> None:
         try:
@@ -527,7 +537,8 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def emergency_stop(self) -> None:
-        """Esc: отпустить клавиши, выключить слежение, остановить камеру."""
+        """Esc: снять разрешение агенту, отпустить клавиши, выключить слежение, остановить камеру."""
+        self.agent_panel.revoke()
         self.release_all_held()
         if self.session:
             self.session.emergency_stop()
@@ -555,6 +566,9 @@ class MainWindow(QMainWindow):
         super().changeEvent(e)
 
     def closeEvent(self, e):  # noqa: N802
+        if self._api:
+            self._api.stop()
+            self._api = None
         QApplication.instance().removeEventFilter(self)
         self._status_timer.stop()
         self._hide_folder_timer.stop()

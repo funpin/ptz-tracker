@@ -146,3 +146,19 @@ def test_record_buffer_bad_values_do_not_break_start(tmp_path, raw, expected):
     p = tmp_path / "config.json"
     p.write_text('{"record_buffer_s": %s}' % raw, encoding="utf-8")
     assert ConfigStore(p).load().record_buffer_s == expected
+
+
+def test_api_settings_defaults_token_and_fallback(tmp_path):
+    from ptztracker.config import AppConfig, ensure_api_token
+
+    d = AppConfig()
+    assert (d.api_enabled, d.api_port, d.api_token) == (True, 8765, "")
+    assert ensure_api_token(d) and len(d.api_token) >= 32
+    tok = d.api_token
+    assert not ensure_api_token(d) and d.api_token == tok
+    p = tmp_path / "config.json"
+    ConfigStore(p).save(d)
+    assert ConfigStore(p).load().api_token == tok
+    p.write_text('{"api_enabled": "yes", "api_port": 99999, "api_token": 5}', encoding="utf-8")
+    cfg = ConfigStore(p).load()
+    assert (cfg.api_enabled, cfg.api_port, cfg.api_token) == (True, 8765, "")

@@ -142,6 +142,11 @@ class Follower:
         except Exception as e:
             safe_event(self.recorder, "note", error=f"настройки слежения не записаны: {e}")
 
+    @property
+    def codes(self) -> tuple[int, int, int]:
+        """Последние коды скоростей pan/tilt/zoom от слежения (50 — стоп)."""
+        return self._codes
+
     def note_manual(self) -> None:
         """Сессия сообщает о ручной команде: опрос камеры ненадолго уступает оператору."""
         self._last_manual = time.monotonic()

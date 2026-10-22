@@ -19,6 +19,20 @@ class RingBuffer:
         while self._items and self._items[0][0] < cutoff:
             self._items.popleft()
 
+    def recent(self, since: float, limit: int, slack: float = 5.0) -> list[tuple[float, Any]]:
+        """Не больше `limit` самых новых записей с t > since, по порядку.
+
+        Идёт с конца и останавливается на записях старше since − slack (допуск на неупорядоченные метки).
+        """
+        out = []
+        for t, item in reversed(self._items):
+            if t < since - slack or len(out) >= limit:
+                break
+            if t > since:
+                out.append((t, item))
+        out.reverse()
+        return out
+
     def items(self) -> list[tuple[float, Any]]:
         """Копия содержимого (быстро: копируются только ссылки)."""
         return list(self._items)

@@ -201,3 +201,122 @@ def test_calibration_silences_polling_and_resumes(qtbot, tmp_path, monkeypatch):
     assert s.follower is follower and follower._thread.is_alive() and follower._zthread.is_alive()
     assert w.preview._follower is follower
     w.close()
+
+
+# --- агент: разрешение управлять снимается оператором -------------------------
+
+
+def allow_agent(w):
+    w.agent_panel.allow_check.setChecked(True)
+    w.agent_panel.off_air_check.setChecked(True)
+    assert w.agent_panel.control_allowed and w.agent_panel.not_on_air
+
+
+def agent_revoked(w) -> bool:
+    p = w.agent_panel
+    return not (p.control_allowed or p.not_on_air or p.allow_check.isChecked() or p.off_air_check.isChecked())
+
+
+def test_agent_switches_off_by_default_and_not_saved(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    assert agent_revoked(w)
+    allow_agent(w)
+    w.close()
+    raw = (tmp_path / "c.json").read_text(encoding="utf-8")
+    assert "agent" not in raw and "air" not in raw
+    w2 = make(qtbot, tmp_path)
+    assert agent_revoked(w2)
+    w2.close()
+
+
+def test_api_token_generated_once_and_saved(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    tok = w.cfg.api_token
+    assert len(tok) >= 32
+    w.close()
+    assert ConfigStore(tmp_path / "c.json").load().api_token == tok
+    w2 = make(qtbot, tmp_path)
+    assert w2.cfg.api_token == tok
+    w2.close()
+
+
+def test_esc_revokes_agent_control(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    allow_agent(w)
+    qtbot.keyPress(w, Qt.Key_Escape)
+    assert agent_revoked(w)
+    w.close()
+
+
+def test_manual_joystick_revokes_agent_control(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    allow_agent(w)
+    w.controls._on_joystick(0.5, 0.0)
+    assert agent_revoked(w)
+    w.controls.release_all()
+    # стрелки и пресеты — то же ручное управление
+    allow_agent(w)
+    qtbot.keyPress(w, Qt.Key_Left)
+    assert agent_revoked(w)
+    qtbot.keyRelease(w, Qt.Key_Left)
+    allow_agent(w)
+    w.session.recall_preset(0)
+    assert agent_revoked(w)
+    # окно теряет фокус (оператор переключился на агента): стопы уходят, разрешение остаётся
+    allow_agent(w)
+    w.release_all_held()
+    assert w.agent_panel.control_allowed
+    w.close()
+
+
+def test_camera_switch_revokes_agent_control(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    allow_agent(w)
+    w._activate(w._current_cfg())
+    assert agent_revoked(w)
+    w.close()
+
+
+def test_divergence_and_emergency_stop_revoke_agent_control(qtbot, tmp_path):
+    import threading
+
+    w = make(qtbot, tmp_path)
+    f = w.session.follower
+    allow_agent(w)
+    f.enabled = True
+    f.disable("выключено оператором")  # обычное выключение разрешение не трогает
+    qtbot.wait(50)
+    assert w.agent_panel.control_allowed
+    f.enabled = True
+    t = threading.Thread(target=f.disable, args=("камера раскачивалась — она быстрее, чем ожидалось",))
+    t.start()
+    t.join()
+    assert not w.agent_panel.control_allowed  # снимок меняется сразу, ещё в потоке слежения
+    qtbot.waitUntil(lambda: agent_revoked(w), timeout=1000)
+    allow_agent(w)
+    f.enabled = True
+    f.disable("аварийный стоп")
+    qtbot.waitUntil(lambda: agent_revoked(w), timeout=1000)
+    w.close()
+
+
+def test_busy_api_port_keeps_window_working(qtbot, tmp_path):
+    import socket
+
+    busy = socket.socket()
+    busy.bind(("127.0.0.1", 0))
+    busy.listen(1)
+    port = busy.getsockname()[1]
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cfg.api_port = port
+    store.save(cfg)
+    try:
+        w = make(qtbot, tmp_path)
+        assert w._api is None
+        assert f"порт {port} занят" in w.agent_panel.api_label.text()
+        assert "занят" in w.statusBar().currentMessage()
+        qtbot.waitUntil(lambda: w.preview.has_frame(), timeout=3000)
+        w.close()
+    finally:
+        busy.close()
