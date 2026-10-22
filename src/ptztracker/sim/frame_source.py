@@ -80,10 +80,13 @@ class SimFrameSource:
         w, h = self.scene.size
         with self.sim._lock:
             pan, tilt, hfov = self.sim.pan_deg, self.sim.tilt_deg, self.sim.hfov_deg()
+        t = time.monotonic() - self._t0
+        if hasattr(self.scene, "view_ptz"):  # сцена сама строит кадр по углам (проективно или плоско)
+            img, kp = self.scene.view_ptz(t, pan, tilt, hfov, self.out_size, self.pan_span_deg, self.tilt_span_deg)
+            return img, {"people": [kp]}
         cx = w / 2 + pan / self.pan_span_deg * w
         cy = h / 2 - tilt / self.tilt_span_deg * h
         crop_w = w * hfov / self.pan_span_deg
-        t = time.monotonic() - self._t0
         img = self.scene.render(t, cx, cy, crop_w, self.out_size)
         meta = None
         if hasattr(self.scene, "person_keypoints"):
