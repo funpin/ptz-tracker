@@ -33,10 +33,12 @@ STEP_RUN_S = 2.2
 ZOOM_CODES = (60, 75, 90)
 ZOOM_RUN_S = 0.6
 PROBE_MAX_S, PROBE_MAX_FRACTION = 2.5, 0.9  # пробег: до 2,5 с или 0,9 кадра — разгон ~0,85 с
-# Ожидание зума: #GZ не меняется ZOOM_STABLE_POLLS опросов подряд (~0,45 с). Было: всегда 2 с —
-# возврат с теле длится дольше, и разгон мерился при едущем зуме (часть 0: задержка видео 0).
+# Ожидание зума: #GZ не дальше ZOOM_ARRIVE_UNITS от заданного и не меняется ZOOM_STABLE_POLLS опросов
+# подряд (~0,45 с). Было: всегда 2 с — возврат с теле длится дольше, и разгон мерился при едущем зуме
+# (часть 0: задержка видео 0). Без цели «стоит» и до начала движения, если камера тронулась не сразу.
 ZOOM_STABLE_POLLS = 3
-ZOOM_SETTLE_TIMEOUT_S = 10.0
+ZOOM_ARRIVE_UNITS = 0x20
+ZOOM_SETTLE_TIMEOUT_S = 8.0
 # Остановка в точке: два опроса #APC подряд отличаются не больше REST_UNITS и до цели ≤ ARRIVE_DEG.
 REST_UNITS = 2
 ARRIVE_DEG = 0.2
@@ -49,9 +51,9 @@ MONOTONE_TOL_ABS, MONOTONE_TOL_REL = 0.002, 0.05  # «скорость не па
 TAU_GRID = [round(0.10 + 0.01 * i, 2) for i in range(91)]  # 0,10…1,00 с
 T0_GRID_S = [0.01 * i for i in range(51)]  # начало движения: 0…0,5 с после команды
 
-FLAT_SCENE_ERROR = (
-    "Слишком однотонная картинка — по ней не видно, когда камера сдвинулась, и задержку видео "
-    "не измерить. Наведите камеру на сцену с деталями и повторите."
+FLAT_SCENE_WARNING = (
+    "Картинка однотонная: задержка видео не измерена, взято типовое значение для этого потока. "
+    "Для точной настройки наведите камеру на сцену с деталями и повторите."
 )
 
 
@@ -81,6 +83,9 @@ def monotone_curve(curve: list[tuple[int, float]]) -> tuple[list[tuple[int, floa
     """Самая длинная цепочка точек, где скорость не падает с ростом кода (с допуском); остальные —
     выбросы. Возвращает (оставленные точки, коды выбросов). Было: «максимум предыдущих» — один
     выброс вверх растягивался на все следующие коды (часть 0: плато 0,024 fw/s на 53–59)."""
+    # Допуск — к каждому соседнему шагу, поэтому цепочка из многих точек может «сползти» вниз на
+    # несколько допусков. Это сознательно: допуск мал (0,002 fw/s или 5%), а шум #APC на медленных
+    # кодах — того же порядка; цель — отбросить грубый выброс, а не выровнять кривую.
     pts = sorted(curve)
     n = len(pts)
     best, prev = [1] * n, [-1] * n
@@ -168,15 +173,16 @@ class CalibrationRunner:
         p, tl = P.parse_pan_tilt(body)
         return p, tl, t
 
-    def _wait_zoom_settled(self) -> int:
-        """Ждать, пока #GZ перестанет меняться; вернуть положение зума."""
+    def _wait_zoom_settled(self, target: int | None = None) -> int:
+        """Ждать, пока #GZ доедет до target (если задан) и перестанет меняться; вернуть положение зума."""
         deadline = time.monotonic() + ZOOM_SETTLE_TIMEOUT_S
         last, same = None, 0
         while True:
             z = P.parse_zoom(self.pacer.send(P.Q_ZOOM))
             same = same + 1 if last is not None and abs(z - last) <= 1 else 0
             last = z
-            if same >= ZOOM_STABLE_POLLS - 1:
+            there = target is None or abs(z - target) <= ZOOM_ARRIVE_UNITS
+            if there and same >= ZOOM_STABLE_POLLS - 1:
                 return z
             if time.monotonic() > deadline:
                 self.progress("Внимание: зум долго не останавливается — продолжаю.")
@@ -201,6 +207,12 @@ class CalibrationRunner:
     def _go_to(self, start: tuple[int, int]) -> None:
         self.pacer.send(P.pan_tilt_abs(*start))
         self._wait_at_rest(start)
+
+    @staticmethod
+    def _toward_centre(code: int, start: tuple[int, int]) -> int:
+        """Код pan (51–99) в сторону центра диапазона от start: пробег до 0,9 кадра не упрётся в край.
+        Было: попеременно вправо/влево — у края диапазона пробег упирался и давал заниженную скорость."""
+        return code if start[0] <= he42.APC_CENTER else 100 - code
 
     def _frame(self) -> Frame:
         fr = self.source.latest()
@@ -231,25 +243,35 @@ class CalibrationRunner:
             self.pacer.send(P.STOP_PT)
         return {"t_cmd": t_cmd, "samples": samples, "frames": frames}
 
-    def _step_response(self, hfov: float) -> tuple[float, float]:
+    def _step_response(self, hfov: float, start: tuple[int, int]) -> tuple[float, float]:
         """Задержка видео и τ разгона на коде STEP_CODE; камера в покое, зум доехал."""
         self.progress("Замер разгона и задержки видео…")
         ref = self._frame()
         width = ref.image.shape[1]
         threshold = MOTION_THRESHOLD_PX * width / 1280
         shifts: list[tuple[float, float]] = []  # (момент получения кадра, сдвиг от опорного, px)
-        done = threading.Event()
-        watcher = threading.Thread(target=self._watch_shifts, args=(ref, shifts, done), name="calib-motion", daemon=True)
+        done, failed = threading.Event(), threading.Event()
+        watcher = threading.Thread(
+            target=self._watch_shifts, args=(ref, shifts, done, failed), name="calib-motion", daemon=True
+        )
         watcher.start()
         try:
-            run = self._run(STEP_CODE, hfov, STEP_RUN_S, snapshots=(1.2, 1.6))
+            run = self._run(self._toward_centre(STEP_CODE, start), hfov, STEP_RUN_S, snapshots=(1.2, 1.6))
         finally:
             done.set()
             watcher.join()
-        moved = [(t, d) for t, d in shifts if d > threshold]
-        if not moved:
-            raise RuntimeError(FLAT_SCENE_ERROR)
         v, tau, t0 = fit_ramp(run["samples"], run["t_cmd"])
+        default = default_calibration().latency_for(self.stream_kind)
+        moved = [(t, d) for t, d in shifts if d > threshold]
+        if failed.is_set():
+            self.progress(
+                "Внимание: картинку не удалось обработать — задержка видео не измерена, "
+                f"взято типовое значение для этого потока ({default:.2f} с)."
+            )
+            return default, tau
+        if not moved:
+            self.progress("Внимание: " + FLAT_SCENE_WARNING)
+            return default, tau
         # Каждый сдвинутый кадр показывает камеру в положении d (в градусах — по углу обзора у центра
         # кадра); по #APC известно, когда она там была. Берём первые кадры движения (до LATENCY_SPAN
         # кадра): там ошибка шкалы мало сдвигает время, а сам кадр не опаздывает на период до порога.
@@ -260,7 +282,6 @@ class CalibrationRunner:
             "Разгон: v=%.2f°/с τ=%.3f с, начало через %.3f с; задержка видео %.3f с (%d кадров)",
             v, tau, t0 - run["t_cmd"], latency, len(lat),
         )
-        default = default_calibration().latency_for(self.stream_kind)
         if latency < MIN_VIDEO_LATENCY_S:
             self.progress(
                 f"Внимание: задержка видео получилась {latency:.2f} с — так не бывает. "
@@ -271,14 +292,22 @@ class CalibrationRunner:
         self._check_picture(run, v, tau, t0, latency, hfov, width)
         return latency, tau
 
-    def _watch_shifts(self, ref: Frame, out: list[tuple[float, float]], done: threading.Event) -> None:
-        """Сдвиг каждого нового кадра от опорного, пока кадр не уедет на LATENCY_SPAN (или до done)."""
+    def _watch_shifts(
+        self, ref: Frame, out: list[tuple[float, float]], done: threading.Event, failed: threading.Event
+    ) -> None:
+        """Сдвиг каждого нового кадра от опорного, пока кадр не уедет на LATENCY_SPAN (или до done).
+        Сбой обработки кадра — failed (а не «картинка однотонная»)."""
         width, last = ref.image.shape[1], ref.seq
         while not done.is_set():
             fr = self.source.latest()
             if fr is not None and fr.seq != last:
                 last = fr.seq
-                dx, dy = measure_shift(ref.image, fr.image)
+                try:
+                    dx, dy = measure_shift(ref.image, fr.image)
+                except Exception as e:
+                    log.warning("Сдвиг кадра не измерен: %s", e)
+                    failed.set()
+                    return
                 d = math.hypot(dx, dy)
                 out.append((fr.t_capture, d))
                 if d > 2 * LATENCY_SPAN * width:
@@ -307,10 +336,10 @@ class CalibrationRunner:
 
     def _pan_curve(self, zoom: int, start: tuple[int, int], tau: float) -> list[tuple[int, float]]:
         self.pacer.send(P.zoom_abs(zoom))
-        hfov = hfov_at(self._wait_zoom_settled())
+        hfov = hfov_at(self._wait_zoom_settled(zoom))  # угол — по фактическому #GZ
         curve = []
-        for i, code in enumerate(self.codes):
-            c = code if i % 2 == 0 else 100 - code  # попеременно вправо/влево
+        for code in self.codes:
+            c = self._toward_centre(code, start)
             self._go_to(start)
             self.progress(f"Зум {zoom:03X}: скорость {code}…")
             run = self._run(c, hfov, PROBE_MAX_S)
@@ -350,7 +379,7 @@ class CalibrationRunner:
         self.pacer.try_send(P.zoom_abs(start_zoom))
         try:
             self._wait_at_rest(start)
-            self._wait_zoom_settled()
+            self._wait_zoom_settled(start_zoom)
         except Exception as e:  # связь пропала — камера доедет сама
             log.warning("Возврат камеры: %s", e)
             time.sleep(3.0)
@@ -360,14 +389,14 @@ class CalibrationRunner:
         start = self._wait_at_rest()
         zooms = self.zooms or default_zooms(start_zoom)
         try:
-            latency, tau = self._step_response(hfov_at(start_zoom))
+            latency, tau = self._step_response(hfov_at(start_zoom), start)
             curves = drop_flat_curves({z: self._pan_curve(z, start, tau) for z in zooms})
             if not curves:
                 raise RuntimeError(
                     "Камера не поворачивается по командам скорости. Проверьте, что её не держит пульт, и повторите."
                 )
             self.pacer.send(P.zoom_abs(start_zoom))
-            self._wait_zoom_settled()
+            self._wait_zoom_settled(start_zoom)
             self._go_to(start)
             zoom_pts = self._zoom_rates() or default_calibration().zoom.points
         finally:

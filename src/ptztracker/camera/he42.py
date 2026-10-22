@@ -47,3 +47,4 @@ LENS_K1_WIDE = -0.08
 # По ней сторож раскачки решает, сдвинулась ли камера (control.framing.WATCHDOG_APC_MIN_STEP), а мастер
 # калибровки переводит положение в градусы/с.
 APC_DEG_PER_UNIT = 0.0075
+APC_CENTER = 0x8000  # #APC pan/tilt = 0° (середина диапазона)

@@ -1,4 +1,5 @@
 import math
+import threading
 import time
 
 import numpy as np
@@ -51,18 +52,23 @@ def test_calibration_recovers_sim_table_and_returns_home():
 
 
 @pytest.mark.slow
-def test_flat_scene_reports_error():
+def test_flat_scene_completes_with_warning():
+    """Однотонная картинка: скорости и τ по #APC, задержка видео — типовая для потока, оператор предупреждён."""
     sim, srv, src, client = make(FlatScene())
     try:
-        r = CalibrationRunner(client.send, src, lambda m: None, zooms=[0x555], codes=(60, 70, 80))
-        with pytest.raises(RuntimeError, match="однотонн"):
-            r.run()
+        msgs = []
+        r = CalibrationRunner(client.send, src, msgs.append, zooms=[0x555], codes=(60, 70, 80), stream_kind="sim")
+        cal = r.run()
+        assert any("однотонн" in m for m in msgs), msgs
+        assert cal.video_latency["sim"] == he42.VIDEO_LATENCY_S["sim"]
+        for code in (70, 80):
+            assert abs(cal.pan.speed(code, 0x555) / HE42_FW_S[code] - 1) < 0.1
+        assert 0.27 <= cal.tau <= 0.47
     finally:
         src.stop()
         srv.stop()
 
 
-@pytest.mark.slow
 def test_default_zooms_cover_tele_and_flat_curves_dropped():
     from ptztracker.control.calibration import default_zooms, drop_flat_curves
 
@@ -130,15 +136,13 @@ def test_wizard_tau_matches_sim():
 
 @pytest.mark.slow
 def test_wizard_on_flat_wall_does_not_drift():
-    """Однотонная стена: картинка не даёт задержку видео — мастер сообщает об этом, но камеру не уводит."""
+    """Однотонная стена: мастер доходит до конца и камеру не уводит — каждый пробег из исходной точки."""
     sim, srv, src, client = make(FlatScene())
     try:
         sim.pan_deg = 3.0
         send, starts = _spy_starts(sim, client)
-        r = CalibrationRunner(send, src, lambda m: None, zooms=[0x555], codes=(60, 70, 80))
-        with pytest.raises(RuntimeError, match="однотонн"):
-            r.run()
-        assert starts and all(abs(p - 3.0) <= 1.0 for p in starts), starts
+        CalibrationRunner(send, src, lambda m: None, zooms=[0x555, 0xFFF], codes=(60, 70, 80)).run()
+        assert len(starts) == 7 and all(abs(p - 3.0) <= 1.0 for p in starts), starts
         assert abs(sim.pan_deg - 3.0) <= 1.0
     finally:
         src.stop()
@@ -187,6 +191,56 @@ def test_wizard_rejects_zero_latency():
         cal = CalibrationRunner(client.send, src, msgs.append, zooms=[0x555], codes=(70,), stream_kind="sim").run()
         assert cal.video_latency["sim"] == he42.VIDEO_LATENCY_S["sim"]
         assert any("задержка видео" in m for m in msgs), msgs
+    finally:
+        src.stop()
+        srv.stop()
+
+
+@pytest.mark.slow
+def test_wizard_waits_for_zoom_that_starts_late():
+    """Камера начинает абсолютный зум с задержкой: мастер ждёт, пока #GZ доедет до цели, а не «стоит до старта»."""
+    sim, srv, src, client = make()
+    handle = sim.handle
+
+    def late_zoom(cmd):
+        if cmd.startswith("#AXZ"):
+            threading.Timer(0.8, handle, args=(cmd,)).start()
+            return "axz" + cmd[4:]
+        return handle(cmd)
+
+    sim.handle = late_zoom
+    try:
+        cal = CalibrationRunner(client.send, src, lambda m: None, zooms=[0xFFF], codes=(70, 80)).run()
+        # на теле камера медленнее в 20 раз по углу; угол обзора — по доехавшему #GZ
+        truth = {c: HE42_FW_S[c] * he42.HFOV_WIDE_DEG / he42.ZOOM_RATIO / he42.HFOV_TELE_DEG for c in (70, 80)}
+        for code, want in truth.items():
+            assert abs(cal.pan.speed(code, 0xFFF) / want - 1) < 0.1, (code, cal.pan.speed(code, 0xFFF), want)
+    finally:
+        src.stop()
+        srv.stop()
+
+
+@pytest.mark.slow
+def test_wizard_near_pan_end_runs_toward_centre():
+    """Старт у края диапазона pan: пробеги идут к центру, в упор не попадают, скорости верные."""
+    sim, srv, src, client = make()
+    try:
+        sim.pan_deg = 170.0
+        peak = []
+        stop = threading.Event()
+
+        def watch():
+            while not stop.is_set():
+                peak.append(sim.pan_deg)
+                time.sleep(0.01)
+
+        threading.Thread(target=watch, daemon=True).start()
+        cal = CalibrationRunner(client.send, src, lambda m: None, zooms=[0x555], codes=(70, 80, 90)).run()
+        stop.set()
+        assert max(peak) < 171.0
+        for code in (70, 80, 90):
+            assert abs(cal.pan.speed(code, 0x555) / HE42_FW_S[code] - 1) < 0.1
+        assert abs(sim.pan_deg - 170.0) <= 1.0
     finally:
         src.stop()
         srv.stop()

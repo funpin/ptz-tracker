@@ -157,8 +157,8 @@ class SimPtz:
                 return "eR3:" + cmd.lstrip("#")
 
     def _pan_units(self) -> tuple[int, int]:
-        p = 0x8000 + round(self.pan_deg / APC_DEG_PER_UNIT)
-        t = 0x8000 + round(self.tilt_deg / APC_DEG_PER_UNIT)
+        p = he42.APC_CENTER + round(self.pan_deg / APC_DEG_PER_UNIT)
+        t = he42.APC_CENTER + round(self.tilt_deg / APC_DEG_PER_UNIT)
         return max(0, min(0xFFFF, p)), max(0, min(0xFFFF, t))
 
     def _zoom_units(self) -> int:
@@ -205,8 +205,8 @@ class SimPtz:
             p, t = self._pan_units()
             return f"aPC{p:04X}{t:04X}"
         if m := re.fullmatch(r"#APC([0-9A-Fa-f]{4})([0-9A-Fa-f]{4})", cmd):
-            p = (int(m[1], 16) - 0x8000) * APC_DEG_PER_UNIT
-            t = (int(m[2], 16) - 0x8000) * APC_DEG_PER_UNIT
+            p = (int(m[1], 16) - he42.APC_CENTER) * APC_DEG_PER_UNIT
+            t = (int(m[2], 16) - he42.APC_CENTER) * APC_DEG_PER_UNIT
             self._target = (max(-PAN_LIMIT, min(PAN_LIMIT, p)), max(TILT_MIN, min(TILT_MAX, t)))
             self.pan_code = self.tilt_code = 50
             return f"aPC{m[1].upper()}{m[2].upper()}"
