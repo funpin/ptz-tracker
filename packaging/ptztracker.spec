@@ -87,6 +87,8 @@ if MAC:
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,
             "NSHighResolutionCapable": True,
+            # обычное приложение с меню и значком в Dock; PyInstaller иначе берёт «фоновое» от консольной диагностики
+            "LSBackgroundOnly": False,
             "LSMinimumSystemVersion": "12.0",
             # без этого macOS не спросит доступ к локальной сети, и камера не будет отвечать
             "NSLocalNetworkUsageDescription": "PTZ Tracker управляет PTZ-камерами и принимает их видео по локальной сети.",

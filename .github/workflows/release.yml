@@ -81,6 +81,7 @@ jobs:
       - name: Smoke test
         run: |
           "dist/PTZ Tracker.app/Contents/MacOS/PTZTracker" --version
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSBackgroundOnly' "dist/PTZ Tracker.app/Contents/Info.plist")" = "false"
           QT_QPA_PLATFORM=offscreen "dist/PTZ Tracker.app/Contents/MacOS/PTZTracker" --lab record --ip sim --seconds 3 --out "$RUNNER_TEMP/lab"
       - name: DMG
         run: packaging/macos/make_dmg.sh "${{ needs.check.outputs.version }}"
