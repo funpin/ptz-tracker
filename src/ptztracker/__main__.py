@@ -25,6 +25,14 @@ def _parser() -> argparse.ArgumentParser:
     r.add_argument("--mode", choices=("controller", "analysis"), default="controller",
                    help="controller — через регулятор (по умолчанию), analysis — через распознавание")
     r.add_argument("--view", action="store_true", help="открыть запись в окне просмотра")
+    lab = p.add_argument_group("команды без окна для агента (--ip, --user, --out — те же)")
+    lab.add_argument("--lab", choices=("record", "follow", "calibrate"), help="запись / слежение / калибровка без окна")
+    lab.add_argument("--seconds", type=float, default=30.0, help="сколько секунд писать или следить")
+    lab.add_argument("--select", metavar="X,Y", help="кого вести: пиксели кадра анализа")
+    lab.add_argument("--composition", help="композиция кадра (waist_center, waist_left, waist_right, full, wide)")
+    lab.add_argument("--effort", type=float, help="характер слежения, 0 — мягко, 1 — резко")
+    lab.add_argument("--not-on-air", action="store_true", help="подтверждаю: камера НЕ в эфире, можно двигать")
+    lab.add_argument("--save", action="store_true", help="calibrate: записать результат в настройки камеры")
     return p
 
 
@@ -140,6 +148,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.replay:
         return run_replay_cli(args)
+    if args.lab:
+        from ptztracker.lab import run_lab
+
+        return run_lab(args)
     if args.diagnose:
         if not args.ip:
             print("Укажите IP камеры: --ip 10.0.0.12", file=sys.stderr)

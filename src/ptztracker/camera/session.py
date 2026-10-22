@@ -42,8 +42,10 @@ class CameraSession:
         scene=None,
         sim_latency: float | None = None,
         app_cfg: AppConfig | None = None,  # настройки записи (record_*); None — по умолчанию
+        password: str | None = None,  # явный пароль (команды --lab); None — из системного хранилища
     ):
         self.cfg = cfg
+        self._password = password
         self.app_cfg = app_cfg or AppConfig()
         self.recorder: Recorder = NullRecorder()
         self.scene_path = scene_path
@@ -78,7 +80,9 @@ class CameraSession:
             scene = self._scene or (VideoScene(self.scene_path) if self.scene_path else SyntheticStage())
             self.frames = SimFrameSource(self.sim, scene, latency_s=self._sim_latency)
         else:
-            password = get_password(self.cfg.id) if self.cfg.username else None
+            password = self._password
+            if password is None and self.cfg.username:
+                password = get_password(self.cfg.id)
             self.client = CameraClient(self.cfg.ip, self.cfg.username, password)
             urls = stream_urls(self.cfg.ip, self.cfg.stream, self.cfg.username, password, self.cfg.rtsp_url)
             on_found = self._on_rtsp_found if self.cfg.stream == "auto" else None
@@ -122,6 +126,12 @@ class CameraSession:
         rec, self.recorder = self.recorder, NullRecorder()
         # close() дописывает постоянную запись на диск — в фоне, чтобы окно не ждало
         threading.Thread(target=rec.close, name="blackbox-close", daemon=True).start()
+
+    def quiet_for_calibration(self) -> None:
+        """Остановить фоновые опросы (пульс, положение камеры), чтобы они не занимали окно команд мастера."""
+        self._hb_stop.set()
+        if self.follower:
+            self.follower.stop()
 
     # --- запись (чёрный ящик) -------------------------------------------
 
