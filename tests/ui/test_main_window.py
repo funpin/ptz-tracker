@@ -175,3 +175,29 @@ def test_recording_settings_saved(qtbot, tmp_path):
     d.folder.setText(str(tmp_path / "x"))
     d.apply()
     assert (cfg.record_buffer_s, cfg.record_to_disk, cfg.record_dir) == (600, True, str(tmp_path / "x"))
+
+
+def test_calibration_silences_polling_and_resumes(qtbot, tmp_path, monkeypatch):
+    """Во время мастера калибровки пульс и опрос положения молчат (иначе камера отвечает eR2), после — возобновляются."""
+    seen = {}
+
+    class FakeDialog:
+        def __init__(self, factory, on_saved, parent=None):
+            self.factory = factory
+
+        def exec(self):
+            self.factory(lambda m: None)  # как рабочий поток мастера
+            s = w.session
+            seen["quiet"] = s._quiet
+            seen["follower_stopped"] = s.follower._stop.is_set()
+            seen["heartbeat_stopped"] = s._hb_stop.is_set()
+
+    monkeypatch.setattr("ptztracker.ui.calibration_dialog.CalibrationDialog", FakeDialog)
+    w = make(qtbot, tmp_path)
+    s = w.session
+    old_follower = s.follower
+    w._run_calibration()
+    assert seen == {"quiet": True, "follower_stopped": True, "heartbeat_stopped": True}
+    assert not s._quiet and not s._hb_stop.is_set()
+    assert s.follower is not old_follower and not s.follower._stop.is_set()
+    w.close()

@@ -1,6 +1,7 @@
 """Команды --lab без окна: запись, слежение, калибровка на симуляторе."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -39,7 +40,10 @@ def moving(cmds):
 def test_lab_movement_requires_not_on_air(cmd, sessions, capsys):
     rc = main(["--lab", cmd, "--ip", "sim", "--select", SELECT])
     assert rc == 3
-    assert "не в эфире" in capsys.readouterr().out.lower()
+    out = capsys.readouterr().out
+    assert "не в эфире" in out.lower()
+    res = result_of(out)
+    assert res["error"] == "not_on_air" and res["exit_code"] == 3
     assert sessions == []  # до подключения
 
 
@@ -63,7 +67,9 @@ def test_lab_ctrl_c_sends_stop(tmp_path, sessions, monkeypatch, capsys):
     rc = main(["--lab", "record", "--ip", "sim", "--seconds", "30", "--out", str(tmp_path)])
     assert rc == 130
     assert "#PTS5050" in list(sessions[0].sim.received)
-    assert "RESULT" in capsys.readouterr().out
+    res = result_of(capsys.readouterr().out)
+    assert res["interrupted"] is True
+    assert Path(res["zip"]).exists()
 
 
 def test_lab_select_without_person_exits_4(tmp_path, sessions, monkeypatch, capsys):
@@ -76,6 +82,30 @@ def test_lab_select_without_person_exits_4(tmp_path, sessions, monkeypatch, caps
 def test_lab_bad_composition_exits_2(tmp_path, sessions):
     rc = main(["--lab", "follow", "--ip", "sim", "--not-on-air", "--composition", "нет", "--out", str(tmp_path)])
     assert rc == 2
+
+
+def test_lab_rejects_non_positive_seconds(sessions, capsys):
+    assert main(["--lab", "record", "--ip", "sim", "--seconds", "0"]) == 2
+    assert result_of(capsys.readouterr().out)["error"] == "bad_args"
+    assert sessions == []
+
+
+def test_lab_output_hides_password_and_rtsp_urls(tmp_path, sessions, monkeypatch, capsys):
+    """Исключение с адресом потока и пароль не попадают ни в текст, ни в RESULT."""
+    orig_start = CameraSession.start
+
+    def failing_start(self):
+        orig_start(self)
+        raise RuntimeError("поток rtsp://u:secret@host/live не открылся, пароль secret2")
+
+    monkeypatch.setattr(CameraSession, "start", failing_start)
+    cam = lab.CameraConfig(id="sim", name="s", ip="sim", kind="sim")
+    monkeypatch.setattr(lab, "_resolve_camera", lambda ip, user: (cam, lab.AppConfig(), "secret2"))
+    rc = main(["--lab", "record", "--ip", "sim", "--out", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "secret" not in out
+    assert result_of(out)["error"]
 
 
 @pytest.mark.slow
@@ -91,7 +121,8 @@ def test_lab_follow_sim_prints_summary(tmp_path, sessions, capsys):
 
 
 @pytest.mark.slow
-def test_lab_calibrate_sim_prints_json(tmp_path, sessions, capsys):
+def test_lab_calibrate_sim_prints_json(tmp_path, sessions, capsys, monkeypatch):
+    monkeypatch.setattr(lab, "default_config_path", lambda: tmp_path / "config.json")
     rc = main(["--lab", "calibrate", "--ip", "sim", "--not-on-air", "--save", "--out", str(tmp_path)])
     out = capsys.readouterr().out
     assert rc == 0, out

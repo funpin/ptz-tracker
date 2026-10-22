@@ -22,11 +22,12 @@ from ptztracker.config import (
     get_password,
     record_dir,
 )
+from ptztracker.recorder import NullRecorder
+from ptztracker.video.rtsp import redact_url
 
 MOVING = ("follow", "calibrate")
 SELECT_WAIT_S = 5.0  # сколько ждать, пока распознавание найдёт человека в точке --select
 SAVE_WAIT_S = 30.0
-QUIET_PAUSE_S = 0.6
 EXIT_BAD_ARGS, EXIT_NOT_ON_AIR, EXIT_NO_PERSON, EXIT_INTERRUPTED = 2, 3, 4, 130
 
 NOT_ON_AIR_TEXT = (
@@ -39,12 +40,20 @@ def _sleep(seconds: float) -> None:  # отдельная функция — т�
     time.sleep(seconds)
 
 
+_secret: str | None = None  # пароль этого запуска: вырезается из любого вывода
+
+
+def _scrub(text: str) -> str:
+    text = redact_url(text)
+    return text.replace(_secret, "***") if _secret else text
+
+
 def _say(msg: str) -> None:
-    print(msg, flush=True)
+    print(_scrub(msg), flush=True)
 
 
 def _result(**data) -> None:
-    print("RESULT " + json.dumps(data, ensure_ascii=False, default=str), flush=True)
+    print(_scrub("RESULT " + json.dumps(data, ensure_ascii=False, default=str)), flush=True)
 
 
 def _parse_select(text: str | None) -> tuple[float, float] | None:
@@ -68,13 +77,19 @@ def _resolve_camera(ip: str, user: str | None) -> tuple[CameraConfig, AppConfig,
     return cam, app_cfg, password
 
 
+def _person_at(session: CameraSession, xy: tuple[float, float]) -> bool:
+    r = session.analyzer.latest() if session.analyzer else None
+    return bool(r) and any(t.box[0] <= xy[0] <= t.box[2] and t.box[1] <= xy[1] <= t.box[3] for t in r.tracks)
+
+
 def _select_person(session: CameraSession, xy: tuple[float, float]) -> int | None:
+    """Ждёт, пока анализ увидит человека в точке, и щёлкает один раз (каждый щелчок попадает в запись)."""
     deadline = time.monotonic() + SELECT_WAIT_S
-    while True:
-        tid = session.analyzer.select_at(*xy) if session.analyzer else None
-        if tid is not None or time.monotonic() >= deadline:
-            return tid
+    while not _person_at(session, xy):
+        if time.monotonic() >= deadline:
+            return None
         _sleep(0.2)
+    return session.analyzer.select_at(*xy)
 
 
 def _wait(seconds: float) -> None:
@@ -99,14 +114,19 @@ def _emergency(session: CameraSession) -> None:
         _say(f"Аварийный стоп не удался: {e}")
 
 
+def _bad(cmd: str, code: int, error: str) -> int:
+    _result(command=cmd, error=error, exit_code=code)
+    return code
+
+
 def run_lab(args) -> int:
     cmd = args.lab
     if cmd in MOVING and not args.not_on_air:
         _say(NOT_ON_AIR_TEXT)
-        return EXIT_NOT_ON_AIR
+        return _bad(cmd, EXIT_NOT_ON_AIR, "not_on_air")
     if not args.ip:
         _say("Укажите IP камеры: --ip 10.0.0.12 (или --ip sim для симулятора).")
-        return EXIT_BAD_ARGS
+        return _bad(cmd, EXIT_BAD_ARGS, "bad_args")
     from ptztracker.control.composition import COMPOSITIONS
     from ptztracker.control.effort import EffortProfile
 
@@ -114,18 +134,23 @@ def run_lab(args) -> int:
         select = _parse_select(args.select)
     except ValueError:
         _say("Не понял --select: нужно два числа через запятую, например 320,240.")
-        return EXIT_BAD_ARGS
+        return _bad(cmd, EXIT_BAD_ARGS, "bad_args")
     if args.composition is not None and args.composition not in COMPOSITIONS:
         _say(f"Нет такой композиции: {args.composition}. Есть: {', '.join(COMPOSITIONS)}.")
-        return EXIT_BAD_ARGS
+        return _bad(cmd, EXIT_BAD_ARGS, "bad_args")
     if args.effort is not None and not 0.0 <= args.effort <= 1.0:
         _say("--effort должен быть от 0 до 1.")
-        return EXIT_BAD_ARGS
+        return _bad(cmd, EXIT_BAD_ARGS, "bad_args")
+    if args.seconds <= 0:
+        _say("--seconds должно быть больше нуля.")
+        return _bad(cmd, EXIT_BAD_ARGS, "bad_args")
     if cmd == "follow" and select is None:
         _say("Для слежения укажите, кого вести: --select x,y (пиксели кадра анализа).")
-        return EXIT_BAD_ARGS
+        return _bad(cmd, EXIT_BAD_ARGS, "bad_args")
 
+    global _secret
     cam, app_cfg, password = _resolve_camera(args.ip, args.user)
+    _secret = password or None
     app_cfg.record_enabled = True
     if args.out:
         app_cfg.record_dir = str(Path(args.out).expanduser())
@@ -167,7 +192,7 @@ def _finish(session: CameraSession, data: dict, code: int, stopped: bool = False
     try:
         if not stopped and session.scheduler:
             _emergency(session)
-        if "zip" not in data and session.recorder.__class__.__name__ != "NullRecorder":
+        if "zip" not in data and not isinstance(session.recorder, NullRecorder):
             path = _save(session, "lab")
             if path:
                 data["zip"] = str(path)
@@ -217,7 +242,6 @@ def _calibrate(session, args, cam, data) -> int:
     if session.follower:
         session.follower.disable("калибровка")
     session.quiet_for_calibration()  # опросы положения и пульс сбивают команды мастера (камера отвечает «занята»)
-    _wait(QUIET_PAUSE_S)  # дать уйти командам, которые планировщик уже отправил
     _say("Калибровка: камера будет двигаться 1–2 минуты и вернётся на место.")
     runner = CalibrationRunner(session.client.send, session.frames, _say, stream_kind=session.stream_kind())
     calib = runner.run().to_json()

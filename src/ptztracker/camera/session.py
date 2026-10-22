@@ -10,6 +10,7 @@ import dataclasses
 import logging
 import platform
 import threading
+import time
 from concurrent.futures import Future
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from ptztracker.video.rtsp import RtspSource, stream_urls
 log = logging.getLogger(__name__)
 
 HEARTBEAT_S = 2.0
+QUIET_PAUSE_S = 0.6
 ONE_SHOT_TTL_S = 2.0  # пресет/разовый AF, нажатые при обрыве связи, не выполняются позже
 STOP_FLUSH_S = 1.5  # сколько ждать отправки «стопов» при остановке (если камера на связи)
 SIM_START_TILT = -8.0
@@ -61,6 +63,7 @@ class CameraSession:
         self.frames: FrameSource | None = None
         self.found_rtsp_url: str | None = None  # заполняется, когда подобран рабочий адрес видео
         self._hb_stop = threading.Event()
+        self._quiet = False  # фоновые опросы остановлены на время калибровки
         self._hb_thread: threading.Thread | None = None
 
     # --- жизненный цикл ------------------------------------------------
@@ -128,10 +131,28 @@ class CameraSession:
         threading.Thread(target=rec.close, name="blackbox-close", daemon=True).start()
 
     def quiet_for_calibration(self) -> None:
-        """Остановить фоновые опросы (пульс, положение камеры), чтобы они не занимали окно команд мастера."""
+        """Остановить фоновые опросы (пульс, положение камеры), чтобы они не занимали окно команд мастера.
+
+        Ждёт 0,6 с, пока уйдут уже отправленные команды, — вызывать из рабочего потока, не из Qt.
+        """
+        self._quiet = True
         self._hb_stop.set()
         if self.follower:
             self.follower.stop()
+        time.sleep(QUIET_PAUSE_S)
+
+    def resume_after_calibration(self) -> None:
+        """Вернуть пульс и слежение после quiet_for_calibration (с актуальной калибровкой)."""
+        if not self._quiet or not self.scheduler:
+            return
+        self._quiet = False
+        if self._hb_thread:
+            self._hb_thread.join(HEARTBEAT_S)
+        self._hb_stop.clear()
+        self._hb_thread = threading.Thread(target=self._heartbeat, name="cam-heartbeat", daemon=True)
+        self._hb_thread.start()
+        if self.analyzer:
+            self._start_follower()
 
     # --- запись (чёрный ящик) -------------------------------------------
 

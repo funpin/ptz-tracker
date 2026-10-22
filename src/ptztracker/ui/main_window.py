@@ -351,6 +351,7 @@ class MainWindow(QMainWindow):
         kind = s.stream_kind()
 
         def factory(progress):
+            s.quiet_for_calibration()  # опросы положения и пульс сбивают команды мастера (eR2)
             return CalibrationRunner(s.client.send, s.frames, progress, stream_kind=kind)
 
         def saved(calib: dict) -> None:
@@ -361,6 +362,8 @@ class MainWindow(QMainWindow):
         CalibrationDialog(factory, saved, parent=self).exec()
         if cam.calibration is not None:
             self._activate(cam)  # слежение подхватит новую калибровку
+        else:
+            s.resume_after_calibration()
 
     def _run_diagnostics(self) -> None:
         from ptztracker.ui.diagnostics_dialog import DiagnosticsDialog
