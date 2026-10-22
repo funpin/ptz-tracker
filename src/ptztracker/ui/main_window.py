@@ -259,6 +259,27 @@ class MainWindow(QMainWindow):
             f.disable("выключено оператором")
         self._sync_follow()
 
+    # --- для API агента (вызывать в потоке Qt) ---------------------------
+
+    def request_follow(self, on: bool) -> bool:
+        """Включить/выключить слежение тем же путём, что пробел. Возвращает, включено ли оно теперь."""
+        self._on_follow_requested(on)
+        f = self._follower()
+        return bool(f and f.enabled)
+
+    def apply_composition(self, key: str) -> None:
+        self._on_composition(key)
+
+    def apply_effort(self, x: float) -> None:
+        self.follow_panel.set_effort(x)
+        self._on_effort(x)
+
+    def refresh_status(self) -> None:
+        self._update_status()
+
+    def save_config(self) -> None:
+        self._save()
+
     def toggle_follow(self) -> None:
         f = self._follower()
         self._on_follow_requested(not (f and f.enabled))

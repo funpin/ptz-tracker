@@ -140,6 +140,7 @@ class _Handler(BaseHTTPRequestHandler):
         log.debug("API %s %s", self.command, urlsplit(self.path).path)
 
     def _handle(self, method: str) -> None:
+        self._body_read = method != "POST"
         try:
             if not self._authorized():
                 raise ApiError(401, "Нужен заголовок Authorization: Bearer <api_token из config.json>.")
@@ -168,9 +169,13 @@ class _Handler(BaseHTTPRequestHandler):
             else:
                 raise ApiError(404, f"Нет такого адреса: /{name}")
         except ApiError as e:
+            if not self._body_read:  # непрочитанное тело сбило бы следующий запрос в том же соединении
+                self.close_connection = True
             self._json(e.status, {"error": e.message})
         except Exception as e:
             log.exception("API: ошибка обработки %s", urlsplit(self.path).path)
+            if not self._body_read:
+                self.close_connection = True
             self._json(500, {"error": f"Внутренняя ошибка: {type(e).__name__}"})
 
     def _authorized(self) -> bool:
@@ -187,6 +192,7 @@ class _Handler(BaseHTTPRequestHandler):
         if n < 0 or n > MAX_BODY:
             raise ApiError(413, "Слишком большой запрос.")
         raw = self.rfile.read(n) if n else b""
+        self._body_read = True
         if not raw.strip():
             return {}
         try:
@@ -205,6 +211,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(payload)
 

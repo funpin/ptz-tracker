@@ -118,7 +118,9 @@ class WindowBackend:
             "calibrate": lambda b: (self._calibrate, ()),
         }[name]
         fn, args = act(body)  # разбор тела — здесь, в потоке сервера
-        return self.invoker.call(lambda: self._gated(fn, args, need_off_air=name == "calibrate"))
+        # всё, что может двинуть камеру, — только с флажком «НЕ в эфире»; выключить слежение (стоп) можно всегда
+        moves = not (name == "follow" and args == (False,))
+        return self.invoker.call(lambda: self._gated(fn, args, need_off_air=moves))
 
     def _gated(self, fn, args, need_off_air: bool) -> dict:
         """Поток Qt: проверка разрешений оператора прямо перед действием."""
@@ -128,7 +130,8 @@ class WindowBackend:
         if not panel.control_allowed:
             raise ApiError(403, "Оператор не разрешил управление агенту (флажок в окне программы).")
         if need_off_air and not panel.not_on_air:
-            raise ApiError(403, "Оператор не отметил «Камера НЕ в эфире» — двигать камеру нельзя.")
+            raise ApiError(403, "Оператор не отметил «Камера НЕ в эфире — агент может двигать камеру»: "
+                                "агент может только выключить слежение.")
         s = self.w.session
         if s is None or s.follower is None:
             raise ApiError(409, "Камера не выбрана или распознавание недоступно.")
@@ -145,10 +148,19 @@ class WindowBackend:
         return self._follow, (on,)
 
     def _follow(self, on: bool) -> dict:
-        self.w._on_follow_requested(on)  # тот же путь, что пробел и кнопка: все проверки те же
-        f = self.w.session.follower
-        if on and not f.enabled:
-            raise ApiError(409, "Слежение не включилось: сначала выберите цель (POST /target).")
+        following = self.w.request_follow(on)  # тот же путь, что пробел и кнопка: все проверки те же
+        s = self.w.session
+        f = s.follower
+        if on and following and not self.w.agent_panel.control_allowed:
+            # раскачка или аварийный стоп сняли разрешение, пока включалось слежение (поток слежения)
+            f.disable("разрешение агенту снято")
+            raise ApiError(403, "Разрешение агенту снято, пока включалось слежение.")
+        if on and not following:
+            r = s.analyzer.latest() if s.analyzer else None
+            if r is None or r.target_id is None:
+                raise ApiError(409, "Слежение не включилось: сначала выберите цель (POST /target).")
+            why = f" Последняя причина: {f.last_reason}." if f.last_reason else ""
+            raise ApiError(409, f"Слежение не включилось.{why}")
         return {"following": f.enabled, "reason": f.last_reason}
 
     def _target_args(self, b: dict):
@@ -160,7 +172,7 @@ class WindowBackend:
     def _target(self, x: float, y: float) -> dict:
         a = self.w.session.analyzer
         tid = a.select_at(x, y)
-        self.w._update_status()
+        self.w.refresh_status()
         if tid is None:
             raise ApiError(404, "В этой точке никого нет.")
         return {"target_id": tid}
@@ -172,7 +184,7 @@ class WindowBackend:
         return self._composition, (key,)
 
     def _composition(self, key: str) -> dict:
-        self.w._on_composition(key)
+        self.w.apply_composition(key)
         return {"composition": key}
 
     def _effort_args(self, b: dict):
@@ -182,8 +194,7 @@ class WindowBackend:
         return self._effort, (float(v),)
 
     def _effort(self, v: float) -> dict:
-        self.w.follow_panel.set_effort(v)
-        self.w._on_effort(v)
+        self.w.apply_effort(v)
         return {"effort": v}
 
     def _calibrate(self) -> dict:
@@ -200,7 +211,7 @@ def start_window_api(window: MainWindow) -> ApiServer | None:
         panel.set_api_status("API для агента выключен в настройках.")
         return None
     if ensure_api_token(cfg):
-        window._save()
+        window.save_config()
     srv = ApiServer(WindowBackend(window, QtInvoker(window)), cfg.api_token, cfg.api_port)
     try:
         srv.start()

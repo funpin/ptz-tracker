@@ -97,6 +97,21 @@ def test_bad_requests(server):
     assert call(server.port, "/frame.jpg", token=t)[0] == 503
 
 
+def test_rejected_post_does_not_poison_keep_alive(server):
+    import http.client
+
+    c = http.client.HTTPConnection(HOST, server.port, timeout=5)
+    c.request("POST", "/follow", body=b'{"on": true}', headers={"Authorization": "Bearer wrong"})
+    r = c.getresponse()
+    assert r.status == 401
+    r.read()
+    # тело первого запроса не прочитано — сервер закрывает соединение, клиент открывает новое
+    c.request("GET", "/status", headers={"Authorization": "Bearer tok-123"})
+    r = c.getresponse()
+    assert r.status == 200 and json.loads(r.read()) == {"ok": True}
+    c.close()
+
+
 def test_port_busy_raises():
     busy = socket.socket()
     busy.bind((HOST, 0))
@@ -183,9 +198,27 @@ def test_control_forbidden_by_default(qtbot, tmp_path):
     w.close()
 
 
+MOVING = [("/follow", {"on": True}), ("/target", {"x": 1, "y": 2}),
+          ("/composition", {"key": "full"}), ("/effort", {"value": 0.3}), ("/calibrate", {})]
+
+
+def test_moving_needs_not_on_air_but_stop_does_not(qtbot, tmp_path):
+    w, port, tok = make_window(qtbot, tmp_path)
+    w.agent_panel.allow_check.setChecked(True)  # разрешено, но камера может быть в эфире
+    for path, body in MOVING:
+        code, data = call_bg(qtbot, port, path, token=tok, body=body)
+        assert code == 403 and "НЕ в эфире" in data["error"], path
+    f = w.session.follower
+    f.enabled = True  # слежение включил оператор; агент может его выключить — это стоп
+    code, data = call_bg(qtbot, port, "/follow", token=tok, body={"on": False})
+    assert code == 200 and not data["following"] and not f.enabled
+    w.close()
+
+
 def test_agent_selects_target_and_follows_through_enable(qtbot, tmp_path):
     w, port, tok = make_window(qtbot, tmp_path)
     w.agent_panel.allow_check.setChecked(True)
+    w.agent_panel.off_air_check.setChecked(True)
     code, data = call_bg(qtbot, port, "/follow", token=tok, body={"on": True})
     assert code == 409 and "цель" in data["error"]  # enable() отказал: цели нет
     code, data = call_bg(qtbot, port, "/target", token=tok, body=pick_person(qtbot, w))
@@ -200,9 +233,30 @@ def test_agent_selects_target_and_follows_through_enable(qtbot, tmp_path):
     w.close()
 
 
-def test_agent_settings_calibrate_and_calibration_lock(qtbot, tmp_path):
+def test_follow_on_undone_if_permission_revoked_meanwhile(qtbot, tmp_path, monkeypatch):
+    """Раскачка в потоке слежения сняла разрешение, пока включалось слежение: агент его не оставит."""
     w, port, tok = make_window(qtbot, tmp_path)
     w.agent_panel.allow_check.setChecked(True)
+    w.agent_panel.off_air_check.setChecked(True)
+    real = w.request_follow
+
+    def racing(on):
+        res = real(on)
+        w.agent_panel.control_allowed = False  # как revoke() из чужого потока
+        return res
+
+    monkeypatch.setattr(w, "request_follow", racing)
+    pick = pick_person(qtbot, w)
+    assert call_bg(qtbot, port, "/target", token=tok, body=pick)[0] == 200
+    code, data = call_bg(qtbot, port, "/follow", token=tok, body={"on": True})
+    assert code == 403 and not w.session.follower.enabled
+    w.close()
+
+
+def test_agent_settings_calibrate_and_calibration_lock(qtbot, tmp_path, monkeypatch):
+    w, port, tok = make_window(qtbot, tmp_path)
+    w.agent_panel.allow_check.setChecked(True)
+    w.agent_panel.off_air_check.setChecked(True)
     assert call_bg(qtbot, port, "/composition", token=tok, body={"key": "nope"})[0] == 400
     assert call_bg(qtbot, port, "/composition", token=tok, body={"key": "full"})[0] == 200
     assert call_bg(qtbot, port, "/effort", token=tok, body={"value": 1.5})[0] == 400
@@ -212,19 +266,24 @@ def test_agent_settings_calibrate_and_calibration_lock(qtbot, tmp_path):
     status = json.loads(call(port, "/status", token=tok)[1])
     assert (status["composition"], status["effort"]) == ("full", 0.8)
 
-    # калибровка: ещё нужен флажок «НЕ в эфире»; мастер API не открывает
-    code, data = call_bg(qtbot, port, "/calibrate", token=tok, body={})
-    assert code == 403 and "НЕ в эфире" in data["error"]
-    w.agent_panel.off_air_check.setChecked(True)
+    # мастер калибровки API не открывает
     code, data = call_bg(qtbot, port, "/calibrate", token=tok, body={})
     assert code == 501 and "в окне" in data["error"]
 
     # пока идёт калибровка, любое управление — 409
     w.session.follower.polling_paused = True
-    for path, body in [("/follow", {"on": True}), ("/target", {"x": 1, "y": 2}),
-                       ("/composition", {"key": "full"}), ("/effort", {"value": 0.3}), ("/calibrate", {})]:
+    for path, body in MOVING + [("/follow", {"on": False})]:
         assert call_bg(qtbot, port, path, token=tok, body=body)[0] == 409, path
     w.session.follower.polling_paused = False
+
+    # открыт модальный диалог (мастер до «Начать», настройки камеры) — тоже 409
+    from PySide6.QtWidgets import QApplication
+
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: object()))
+    for path, body in MOVING:
+        code, data = call_bg(qtbot, port, path, token=tok, body=body)
+        assert code == 409 and "диалог" in data["error"], path
+    monkeypatch.undo()
     w.close()
 
 
@@ -235,7 +294,8 @@ def test_events_frame_and_moment(qtbot, tmp_path):
     assert code == 200 and raw[:2] == b"\xff\xd8"
     pick = pick_person(qtbot, w)
     w.session.analyzer.select_at(pick["x"], pick["y"])  # событие target
-    qtbot.wait(300)  # фоновый поток записи разбирает очередь
+    qtbot.waitUntil(lambda: any(e["kind"] == "target" for e in w.session.recorder.recent_events(0.0)),
+                    timeout=3000)  # фоновый поток записи разбирает очередь
     code, raw = call(port, "/events?since=0", token=tok)
     data = json.loads(raw)
     assert code == 200 and any(e["kind"] == "target" for e in data["events"])
