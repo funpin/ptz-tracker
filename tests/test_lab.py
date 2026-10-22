@@ -59,17 +59,46 @@ def test_lab_record_sim_writes_zip(tmp_path, sessions, capsys):
     assert moving(list(sessions[0].sim.received)) == []
 
 
-def test_lab_ctrl_c_sends_stop(tmp_path, sessions, monkeypatch, capsys):
+def stops_and_moves(cmds):
+    return [c for c in cmds if c.startswith(("#PTS", "#Z", "#F", "#APS", "#AXZ", "#AXI", "#AXF"))]
+
+
+def test_lab_record_sends_only_queries(tmp_path, sessions, capsys):
+    """record — второй клиент к камере в эфире: ни движений, ни стопов (стоп заморозил бы камеру)."""
+    rc = main(["--lab", "record", "--ip", "sim", "--seconds", "2", "--select", SELECT, "--out", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    ep = Episode.open(result_of(out)["zip"])
+    cmds = list(ep.events("cmd"))
+    assert cmds and {e["priority"] for e in cmds} == {"QUERY"}
+    assert stops_and_moves(list(sessions[0].sim.received)) == []
+
+
+def test_lab_record_ctrl_c_sends_no_stop(tmp_path, sessions, monkeypatch, capsys):
     def boom(_s):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(lab, "_sleep", boom)
     rc = main(["--lab", "record", "--ip", "sim", "--seconds", "30", "--out", str(tmp_path)])
     assert rc == 130
-    assert "#PTS5050" in list(sessions[0].sim.received)
+    assert stops_and_moves(list(sessions[0].sim.received)) == []
     res = result_of(capsys.readouterr().out)
     assert res["interrupted"] is True
     assert Path(res["zip"]).exists()
+
+
+def test_lab_follow_ctrl_c_sends_stop(tmp_path, sessions, monkeypatch, capsys):
+    def boom(_s):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(lab, "_sleep", boom)
+    monkeypatch.setattr(lab, "_select_person", lambda s, xy: boom(0))
+    rc = main(["--lab", "follow", "--ip", "sim", "--seconds", "30", "--select", SELECT, "--not-on-air",
+               "--out", str(tmp_path)])
+    assert rc == 130
+    received = list(sessions[0].sim.received)
+    assert "#PTS5050" in received and "#Z50" in received
+    assert result_of(capsys.readouterr().out)["interrupted"] is True
 
 
 def test_lab_select_without_person_exits_4(tmp_path, sessions, monkeypatch, capsys):

@@ -33,6 +33,10 @@ class WindowBackend:
     def __init__(self, window: MainWindow, invoker: QtInvoker):
         self.w = window
         self.invoker = invoker
+        # слежение, которое включил агент (объект Follower); None — включал оператор или выключено
+        self._agent_follower = None
+        window.on_operator_follow = self._on_operator_follow
+        window.agent_panel.offAirCleared.connect(self._on_off_air_cleared)
 
     # --- чтение (поток сервера) ------------------------------------------
 
@@ -161,7 +165,21 @@ class WindowBackend:
                 raise ApiError(409, "Слежение не включилось: сначала выберите цель (POST /target).")
             why = f" Последняя причина: {f.last_reason}." if f.last_reason else ""
             raise ApiError(409, f"Слежение не включилось.{why}")
+        if on:
+            self._agent_follower = f
         return {"following": f.enabled, "reason": f.last_reason}
+
+    # --- оператор забирает слежение (поток Qt) ------------------------------
+
+    def _on_operator_follow(self, _on: bool) -> None:
+        self._agent_follower = None  # пробел или кнопка оператора: слежение теперь его
+
+    def _on_off_air_cleared(self) -> None:
+        """Снят «Камера НЕ в эфире»: слежение, включённое агентом, выключается сразу."""
+        f, self._agent_follower = self._agent_follower, None
+        s = self.w.session
+        if f is not None and s is not None and s.follower is f and f.enabled:
+            f.disable("камера в эфире — агент не ведёт")
 
     def _target_args(self, b: dict):
         x, y = b.get("x"), b.get("y")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QEvent, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices
@@ -173,6 +174,8 @@ class MainWindow(QMainWindow):
         self._follow_timer.timeout.connect(self._sync_follow)
         self._follow_timer.start(100)
         self._follow_shown = (False, None)
+        # API агента: оператор сам включил/выключил слежение (пробел, кнопка) — слежение теперь его
+        self.on_operator_follow: Callable[[bool], None] | None = None
 
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._update_status)
@@ -246,7 +249,12 @@ class MainWindow(QMainWindow):
     def _follower(self):
         return self.session.follower if self.session else None
 
-    def _on_follow_requested(self, want: bool) -> None:
+    def _on_follow_requested(self, want: bool, by_agent: bool = False) -> None:
+        if not by_agent:
+            if not want:  # оператор забрал камеру — как Esc: агент теряет разрешение до следующей команды
+                self.agent_panel.revoke()
+            if self.on_operator_follow:
+                self.on_operator_follow(want)
         f = self._follower()
         if f is None:
             self.follow_panel.set_state(False, "распознавание недоступно")
@@ -263,7 +271,7 @@ class MainWindow(QMainWindow):
 
     def request_follow(self, on: bool) -> bool:
         """Включить/выключить слежение тем же путём, что пробел. Возвращает, включено ли оно теперь."""
-        self._on_follow_requested(on)
+        self._on_follow_requested(on, by_agent=True)
         f = self._follower()
         return bool(f and f.enabled)
 

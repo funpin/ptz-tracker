@@ -1,7 +1,9 @@
 """Команды без окна (--lab): запись, слежение и калибровка для агента на Mac.
 
-Камера двигается только с флагом --not-on-air. Пароль берётся из системного хранилища (по камере из
-настроек) или из переменной PTZ_PASSWORD — в аргументах и выводе его нет.
+Камера двигается только с флагом --not-on-air. record не шлёт камере ни движений, ни стопов
+(observe_only): безопасно, даже если камера в эфире и её ведёт другая программа.
+Пароль берётся из системного хранилища (по камере из настроек) или из переменной PTZ_PASSWORD —
+в аргументах и выводе его нет.
 В конце всегда строка `RESULT {json}`, которую разбирает агент.
 """
 
@@ -167,7 +169,9 @@ def run_lab(args) -> int:
         app_cfg.record_dir = str(Path(args.out).expanduser())
     _say(f"Папка записей: {record_dir(app_cfg)}")
 
-    session = CameraSession(cam, app_cfg=app_cfg, password=password)
+    # record — второй клиент к камере, которую, возможно, ведёт пульт в эфире: ни движений, ни стопов
+    observe = cmd not in MOVING
+    session = CameraSession(cam, app_cfg=app_cfg, password=password, observe_only=observe)
     data: dict = {"command": cmd, "ip": args.ip}
     code = 0
     try:
@@ -187,8 +191,11 @@ def run_lab(args) -> int:
         else:
             code = _calibrate(session, args, cam, data)
     except KeyboardInterrupt:
-        _say("Прервано (Ctrl+C): аварийный стоп.")
-        _emergency(session)
+        if session.observe_only:
+            _say("Прервано (Ctrl+C). Камеру не трогаю: запись её не двигала.")
+        else:
+            _say("Прервано (Ctrl+C): аварийный стоп.")
+            _emergency(session)
         data["interrupted"] = True
         return _finish(session, data, EXIT_INTERRUPTED, stopped=True)
     except Exception as e:
@@ -199,9 +206,9 @@ def run_lab(args) -> int:
 
 
 def _finish(session: CameraSession, data: dict, code: int, stopped: bool = False) -> int:
-    """Стоп, запись в zip (если есть что сохранять), остановка сессии, итоговая строка RESULT."""
+    """Стоп (кроме record), запись в zip (если есть что сохранять), остановка сессии, итоговая строка RESULT."""
     try:
-        if not stopped and session.scheduler:
+        if not stopped and session.scheduler and not session.observe_only:
             _emergency(session)
         if "zip" not in data and not isinstance(session.recorder, NullRecorder):
             path = _save(session, "lab")

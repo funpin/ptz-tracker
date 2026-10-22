@@ -331,3 +331,18 @@ def test_busy_api_port_keeps_window_working(qtbot, tmp_path):
         w.close()
     finally:
         busy.close()
+
+
+def test_operator_follow_off_revokes_agent_control(qtbot, tmp_path):
+    """Оператор сам выключил слежение (пробел или кнопка) — забрал камеру: агент теряет разрешение."""
+    w = make(qtbot, tmp_path)
+    f = w.session.follower
+    allow_agent(w)
+    f.enabled = True
+    qtbot.keyPress(w, Qt.Key_Space)
+    assert not f.enabled and agent_revoked(w)
+    allow_agent(w)
+    f.enabled = True
+    w.follow_panel.followRequested.emit(False)  # кнопка «Слежение»
+    assert not f.enabled and agent_revoked(w)
+    w.close()

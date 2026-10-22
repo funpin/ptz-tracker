@@ -152,9 +152,13 @@ class Follower:
         self._last_manual = time.monotonic()
 
     def pause_polling(self) -> None:
-        """На время калибровки: слежение выключено, камеру не опрашиваем (объект и потоки остаются)."""
-        self.disable("калибровка")
+        """На время калибровки: слежение выключено, камеру не опрашиваем (объект и потоки остаются).
+
+        Флаг — до выключения: вызов идёт из рабочего потока калибровки, и enable() из Qt между
+        выключением и флагом снова включил бы слежение.
+        """
         self.polling_paused = True
+        self.disable("калибровка")
 
     def resume_polling(self) -> None:
         self.polling_paused = False

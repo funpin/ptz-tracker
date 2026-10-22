@@ -66,12 +66,14 @@ def test_event_never_raises(tmp_path):
 
 
 def test_snapshot_does_not_block(tmp_path):
-    bb = BlackBox(tmp_path, {}, frame_fps=1000)
+    bb = BlackBox(tmp_path, {}, frame_fps=1000, start_thread=False)
     img = np.zeros((360, 640, 3), np.uint8)  # сжимается хорошо: быстрый набор не тратит память на шум
     img[100:200, 200:300] = (0, 180, 255)
     t0 = time.monotonic()
     for i in range(1500):
         bb.frame(Frame(image=img, t_capture=t0 + i * 0.01, seq=i))
+        if i % 40 == 39:  # очередь кадров маленькая: разбираем по ходу
+            bb.flush()
     bb.flush()
     assert bb.buffered_frames() == 1500
     start = time.perf_counter()
@@ -177,3 +179,14 @@ def test_recent_events_since_and_limit_without_frames(tmp_path):
     assert bb.recent_events(since=200.0) == []
     assert NullRecorder().recent_events(0.0) == []
     bb.close()
+
+
+def test_frame_queue_is_small_and_events_still_queue(tmp_path):
+    """Фоновый поток встал: в очереди не больше 50 полных кадров, лишние выбрасываются, события — нет."""
+    bb = BlackBox(tmp_path, {}, frame_fps=1000, start_thread=False)
+    for i in range(80):
+        bb.frame(Frame(image=np.zeros((720, 1280, 3), np.uint8), t_capture=10.0 + i * 0.01, seq=i))
+        bb.event("cmd", t=10.0 + i * 0.01, cmd="#O")
+    assert bb.queued_frames() == 50 and bb.dropped_frames == 30
+    bb.flush()
+    assert len(list(bb.recent_events(0.0, 1000))) == 80

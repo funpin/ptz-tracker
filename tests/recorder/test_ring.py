@@ -1,7 +1,7 @@
 import numpy as np
 
 from ptztracker.recorder.ring import RingBuffer
-from ptztracker.recorder.writer import BlackBox
+from ptztracker.recorder.writer import FRAME_QUEUE_SIZE, BlackBox
 from ptztracker.video.frames import Frame
 
 
@@ -30,7 +30,7 @@ def test_queue_overflow_drops_frames_not_events(tmp_path):
         bb.frame(Frame(image=img, t_capture=100.0 + i * 0.01, seq=i))
     for i in range(100):
         bb.event("note", i=i)
-    assert bb.dropped_frames == 3000
+    assert bb.dropped_frames == 5000 - FRAME_QUEUE_SIZE
     bb.flush()
     path = bb.save_snapshot("переполнение").result(timeout=30)
     bb.close()
@@ -39,4 +39,4 @@ def test_queue_overflow_drops_frames_not_events(tmp_path):
 
     ep = Episode.open(path)
     assert [e["i"] for e in ep.events("note")] == list(range(100))
-    assert sum(1 for _ in ep.frames()) == 2000
+    assert sum(1 for _ in ep.frames()) == FRAME_QUEUE_SIZE

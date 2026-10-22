@@ -69,6 +69,21 @@ def test_enable_refused_while_polling_paused():
         s.stop()
 
 
+def test_pause_polling_blocks_enable_before_disabling():
+    """Калибровка (рабочий поток): запрет включения встаёт раньше выключения — между ними включить нельзя."""
+    s = sim_session()
+    try:
+        select_person(s)
+        assert s.follower.enable() is True
+        seen = []
+        s.follower.on_change = lambda on, reason: seen.append((on, s.follower.polling_paused))
+        s.follower.pause_polling()
+        assert seen == [(False, True)]
+        assert not s.follower.enabled
+    finally:
+        s.stop()
+
+
 def test_follows_walking_sim_person():
     s = sim_session(composition="full", calibrated=True, script="lecture")
     try:

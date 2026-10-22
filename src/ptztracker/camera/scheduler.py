@@ -61,8 +61,11 @@ class CommandScheduler:
         min_interval: float = 0.130,
         clock: Callable[[], float] = time.monotonic,
         on_sent: Callable[[dict], None] | None = None,
+        queries_only: bool = False,
     ):
         self._send = send
+        # режим наблюдения (--lab record при камере в эфире): только запросы, ни движений, ни стопов
+        self.queries_only = queries_only
         self.min_interval = min_interval
         self._clock = clock
         self._st = _State()
@@ -95,6 +98,9 @@ class CommandScheduler:
         only_if_changed: bool = True,
         ttl: float | None = None,
     ) -> None:
+        if self.queries_only and priority != Priority.QUERY:
+            log.debug("Режим наблюдения: команда %s не отправлена", cmd)
+            return
         with self._cond:
             if only_if_changed and self._st.last_sent.get(key) == cmd:
                 self._st.slots.pop(key, None)  # вернулись к уже отправленному — отменить ожидающую
@@ -112,6 +118,8 @@ class CommandScheduler:
         return fut.result(timeout=timeout)
 
     def emergency_stop(self) -> None:
+        if self.queries_only:  # камерой управляет другой пульт: наш стоп заморозил бы её
+            return
         with self._cond:
             self._st.slots.clear()
             for key, cmd in (("pt", STOP_PT), ("zoom", STOP_ZOOM), ("focus", STOP_FOCUS)):

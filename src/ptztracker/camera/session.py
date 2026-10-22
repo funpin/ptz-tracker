@@ -46,7 +46,9 @@ class CameraSession:
         sim_latency: float | None = None,
         app_cfg: AppConfig | None = None,  # настройки записи (record_*); None — по умолчанию
         password: str | None = None,  # явный пароль (команды --lab); None — из системного хранилища
+        observe_only: bool = False,  # только смотреть и опрашивать (--lab record): ни движений, ни стопов
     ):
+        self.observe_only = observe_only
         self.cfg = cfg
         self._password = password
         self.app_cfg = app_cfg or AppConfig()
@@ -94,7 +96,8 @@ class CameraSession:
             self.frames = RtspSource(urls, on_found=on_found)
         self.recorder = self._make_recorder()
         self.scheduler = CommandScheduler(
-            self.client.send, min_interval=self.cfg.min_interval, on_sent=self._on_cmd_sent
+            self.client.send, min_interval=self.cfg.min_interval, on_sent=self._on_cmd_sent,
+            queries_only=self.observe_only,
         )
         self.scheduler.start()
         self.frames.start()
@@ -120,9 +123,10 @@ class CameraSession:
         if self.analyzer:
             self.analyzer.stop(timeout=0.2)  # поток daemon: если он в середине распознавания — доработает сам
         if self.scheduler:
-            self.scheduler.emergency_stop()
-            if self.scheduler.online:
-                self.scheduler.wait_emergency(STOP_FLUSH_S)
+            if not self.observe_only:  # наблюдатель камерой не управляет — и не останавливает её
+                self.scheduler.emergency_stop()
+                if self.scheduler.online:
+                    self.scheduler.wait_emergency(STOP_FLUSH_S)
             self.scheduler.stop(timeout=0.2)
         if self.frames:
             self.frames.stop(timeout=0.0)

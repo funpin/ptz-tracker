@@ -95,3 +95,18 @@ def test_stop_does_not_freeze_ui_on_dead_camera():
         assert time.monotonic() - t0 < 0.7
     finally:
         hole.close()
+
+
+def test_observe_only_session_sends_no_movement_or_stops():
+    """Сессия наблюдения: ни ручные команды, ни аварийный стоп, ни stop() не шлют камере движений и стопов."""
+    s = CameraSession(sim_cfg(), observe_only=True)
+    s.start()
+    try:
+        s.set_pan_tilt_velocity(1, 0)
+        s.set_zoom_velocity(1)
+        s.emergency_stop()
+        time.sleep(0.5)
+    finally:
+        s.stop()
+    time.sleep(0.3)
+    assert [c for c in list(s.sim.received) if c.startswith(("#PTS", "#Z", "#D1", "#AXF", "#F"))] == []

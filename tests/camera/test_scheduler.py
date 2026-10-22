@@ -239,3 +239,18 @@ def test_pan_tilt_before_zoom_when_tracking(env):
     s.submit("zoom", "#Z60", Priority.TRACKING_ZOOM)
     s.submit("pt", "#PTS6050", Priority.TRACKING)
     assert s.pump() == "#PTS6050"
+
+
+def test_queries_only_drops_movement_and_stops():
+    """Режим наблюдения (--lab record): камере уходят только запросы, ни движений, ни стопов."""
+    clock, send = FakeClock(), Recorder()
+    s = CommandScheduler(send, min_interval=0.130, clock=clock, queries_only=True)
+    s.submit("pt", "#PTS6050", Priority.MANUAL)
+    s.submit("zoom", "#Z60", Priority.TRACKING_ZOOM)
+    s.emergency_stop()
+    s.submit("heartbeat", "#O", Priority.QUERY, only_if_changed=False)
+    assert s.pump() == "#O"
+    clock.t += 1.0
+    assert s.pump() is None
+    assert send.calls == ["#O"]
+    assert s.wait_emergency(0.1) is True

@@ -230,6 +230,28 @@ def test_agent_selects_target_and_follows_through_enable(qtbot, tmp_path):
     assert json.loads(data)["following"] is True
     code, data = call_bg(qtbot, port, "/follow", token=tok, body={"on": False})
     assert code == 200 and not data["following"] and not w.session.follower.enabled
+    assert w.agent_panel.control_allowed  # выключил сам агент — разрешение остаётся
+    w.close()
+
+
+def test_off_air_untick_stops_agent_follow_only(qtbot, tmp_path):
+    """Оператор снял «Камера НЕ в эфире»: слежение, включённое агентом, выключается; своё — нет."""
+    w, port, tok = make_window(qtbot, tmp_path)
+    p, f = w.agent_panel, w.session.follower
+    p.allow_check.setChecked(True)
+    p.off_air_check.setChecked(True)
+    assert call_bg(qtbot, port, "/target", token=tok, body=pick_person(qtbot, w))[0] == 200
+    assert call_bg(qtbot, port, "/follow", token=tok, body={"on": True})[0] == 200 and f.enabled
+    p.off_air_check.setChecked(False)
+    assert not f.enabled
+    # слежение включил оператор (пробел) — снятие флажка его не трогает
+    p.off_air_check.setChecked(True)
+    assert call_bg(qtbot, port, "/follow", token=tok, body={"on": True})[0] == 200 and f.enabled
+    f.disable("тест")
+    w.toggle_follow()
+    assert f.enabled
+    p.off_air_check.setChecked(False)
+    assert f.enabled
     w.close()
 
 
