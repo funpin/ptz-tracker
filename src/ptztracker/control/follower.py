@@ -84,6 +84,8 @@ class Follower:
     # --- управление ----------------------------------------------------
 
     def enable(self) -> bool:
+        if self.polling_paused:  # идёт калибровка: слежение камеру не двигает
+            return False
         r = self.analyzer.latest() if self.analyzer else None
         if r is None or r.target_id is None:
             return False
@@ -235,6 +237,8 @@ class Follower:
             safe_event(self.recorder, "note", error=f"такт регулятора не записан: {e}")
 
     def _tick(self) -> None:
+        if self.polling_paused:
+            return
         now = time.monotonic()
         r = self.analyzer.latest()
         stale_after = STALE_S + self.controller.video_latency  # кадры H.264 приходят с опозданием сами по себе

@@ -54,6 +54,21 @@ def test_enable_requires_target():
         s.stop()
 
 
+def test_enable_refused_while_polling_paused():
+    s = sim_session()
+    try:
+        select_person(s)
+        s.follower.pause_polling()
+        before = len(s.sim.received)
+        assert s.follower.enable() is False and not s.follower.enabled
+        time.sleep(0.5)
+        assert [c for c in list(s.sim.received)[before:] if c.startswith(("#PTS", "#Z"))] == []
+        s.follower.resume_polling()
+        assert s.follower.enable() is True
+    finally:
+        s.stop()
+
+
 def test_follows_walking_sim_person():
     s = sim_session(composition="full", calibrated=True, script="lecture")
     try:
