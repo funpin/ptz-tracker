@@ -34,7 +34,16 @@ jobs:
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path dist/PTZTracker/* -DestinationPath dist/PTZTracker-win64.zip
+      - name: Setup (проверка установщика до релиза)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc /Qp "/DAppVersion=0.0.0-ci" packaging\windows\ptztracker.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: PTZTracker-win64
-          path: dist/PTZTracker-win64.zip
+          path: |
+            dist/PTZTracker-win64.zip
+            dist/PTZTracker-*-windows-x64-setup.exe

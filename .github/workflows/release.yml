@@ -45,12 +45,22 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
       - run: pyinstaller packaging/ptztracker.spec --noconfirm
-      - shell: pwsh
-        run: Compress-Archive -Path dist/PTZTracker -DestinationPath "dist/PTZTracker-${{ needs.check.outputs.version }}-windows-x64.zip"
+      - name: Portable zip
+        shell: pwsh
+        run: Compress-Archive -Path dist/PTZTracker -DestinationPath "dist/PTZTracker-${{ needs.check.outputs.version }}-windows-x64-portable.zip"
+      - name: Setup (Inno Setup 6 есть на образе windows-2022)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc /Qp "/DAppVersion=${{ needs.check.outputs.version }}" packaging\windows\ptztracker.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: windows
-          path: dist/PTZTracker-*-windows-x64.zip
+          path: |
+            dist/PTZTracker-*-windows-x64-portable.zip
+            dist/PTZTracker-*-windows-x64-setup.exe
 
   macos:
     needs: check
@@ -72,12 +82,12 @@ jobs:
         run: |
           "dist/PTZ Tracker.app/Contents/MacOS/PTZTracker" --version
           QT_QPA_PLATFORM=offscreen "dist/PTZ Tracker.app/Contents/MacOS/PTZTracker" --lab record --ip sim --seconds 3 --out "$RUNNER_TEMP/lab"
-      - name: Zip (ditto сохраняет ссылки и подпись внутри .app)
-        run: ditto -c -k --keepParent "dist/PTZ Tracker.app" "dist/PTZTracker-${{ needs.check.outputs.version }}-macos-arm64.zip"
+      - name: DMG
+        run: packaging/macos/make_dmg.sh "${{ needs.check.outputs.version }}"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: macos
-          path: dist/PTZTracker-*-macos-arm64.zip
+          path: dist/PTZTracker-*-macos-arm64.dmg
 
   release:
     needs: [check, windows, macos]
@@ -96,7 +106,8 @@ jobs:
       - name: Notes from CHANGELOG
         run: |
           v="${{ needs.check.outputs.version }}"
-          awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md > notes.md
+          sed "s/{VERSION}/$v/g" docs/release-header.md > notes.md
+          awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md >> notes.md
           cat docs/release-footer.md >> notes.md
       - name: Publish
         env:

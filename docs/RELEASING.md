@@ -33,10 +33,17 @@
    git push origin main vX.Y.Z
    ```
 
-5. Workflow `Release` (`.github/workflows/release.yml`) сверит тег с `__version__` и `CHANGELOG.md`, соберёт `PTZTracker-X.Y.Z-windows-x64.zip` и `PTZTracker-X.Y.Z-macos-arm64.zip`, прогонит быстрые тесты и создаст релиз. Заметки берутся из раздела версии в `CHANGELOG.md` и `docs/release-footer.md`.
-6. Проверьте страницу релиза: оба файла на месте. Пользователю дайте ссылку и коротко скажите, что сделать на площадке.
+5. Workflow `Release` (`.github/workflows/release.yml`) сверит тег с `__version__` и `CHANGELOG.md`, прогонит быстрые тесты и соберёт три файла: `PTZTracker-X.Y.Z-windows-x64-setup.exe` (установщик Inno Setup, `packaging/windows/ptztracker.iss`), `PTZTracker-X.Y.Z-windows-x64-portable.zip` и `PTZTracker-X.Y.Z-macos-arm64.dmg` (`packaging/macos/make_dmg.sh`). Заметки к релизу собираются из таблицы загрузок `docs/release-header.md`, раздела версии в `CHANGELOG.md` и `docs/release-footer.md`.
+6. Проверьте страницу релиза: все три файла на месте и ссылки в таблице работают. Пользователю дайте ссылку и коротко скажите, что сделать на площадке.
 
 Если сборка упала, тег не переиспользуйте: исправьте ошибку и выпустите `X.Y.(Z+1)`.
+
+## Обновление у пользователя
+
+- **Windows Setup** ставится поверх прежней версии: `AppId` в `ptztracker.iss` не меняется никогда, старые библиотеки удаляются, запущенная программа закрывается.
+- **macOS DMG** — перетащить с заменой.
+- Настройки, калибровка и пароли лежат вне папки программы (`%APPDATA%`, `~/Library`, связка ключей), поэтому обновление их не трогает. Если формат `config.json` меняется несовместимо — это `MAJOR` и миграция при чтении.
+- Программа раз в сутки проверяет GitHub и показывает «Доступна X.Y.Z»; сама ничего не скачивает (сборки не подписаны).
 
 ## Что не делаем
 
