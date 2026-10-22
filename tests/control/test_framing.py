@@ -153,3 +153,45 @@ def test_edge_zoom_out_is_not_counteracted_by_pan():
 def test_no_zoom_out_command_beyond_wide_end():
     tr = run(lambda t: 0.9, T=2.0, zoom_pos=0x555)
     assert all(z >= 0 for z in tr.zoom)
+
+
+# --- модель зума по отправленным командам (часть 1, задача 1) ---------------------
+
+
+def _zoom_model_error(tr, after=0.0):
+    """Наибольшее расхождение масштаба модели и камеры, в долях (0.1 — на 10%)."""
+    return max(abs(math.exp(m - c) - 1) for m, c, t in zip(tr.model_zoom, tr.cam_zoom, tr.t) if t >= after)
+
+
+def _stand_walk_stand(t):
+    return AX + 0.2 * min(max(t - 6.0, 0.0), 3.0)
+
+
+def test_zoom_model_follows_sent_not_decided():
+    """Часть 0, B2: зум ждал в очереди до 2,4 с, а модель считала его выполненным (×3,9 при факте ×9,4).
+
+    Зум доходит до камеры через 1,5 с — модель всё равно совпадает с камерой (< 10%).
+    """
+    tr = run(_stand_walk_stand, world_u=lambda t: 0.08, T=16, cmd_delay=0.065, zoom_cmd_delay=1.5)
+    assert max(tr.cam_zoom) > 0.3  # наезд реально был
+    assert _zoom_model_error(tr) < 0.10
+
+
+def test_zoom_model_corrected_by_gz():
+    """Таблица зума врёт (камера в 1,5 раза быстрее): ответы #GZ раз в 0,5 с держат модель в пределах 10%."""
+    tr = run(_stand_walk_stand, world_u=lambda t: 0.08, T=16, zoom_speed_factor=1.5, gz_period=0.5)
+    assert max(tr.cam_zoom) > 0.3
+    assert _zoom_model_error(tr) < 0.10
+    no_gz = run(_stand_walk_stand, world_u=lambda t: 0.08, T=16, zoom_speed_factor=1.5)
+    assert _zoom_model_error(no_gz) > 0.10  # без #GZ модель уходит
+
+
+def test_no_zoom_in_while_walking():
+    """Наезд прекращается, как только человек пошёл: не дожидаясь плавного спада скорости зума."""
+    walk_at = 4.0
+    tr = run(lambda t: AX + 0.25 * max(t - walk_at, 0.0), world_u=lambda t: 0.08, T=7, cmd_delay=0.065)
+    zooming_in = [t for t, z in zip(tr.t, tr.zoom) if z > 0]
+    assert zooming_in and min(zooming_in) < walk_at  # человек стоял — наезд шёл
+    moving = [i for i, (t, s) in enumerate(zip(tr.t, tr.state)) if t > walk_at and s == "moving"]
+    assert moving
+    assert all(tr.zoom[i] <= 0 for i in moving)

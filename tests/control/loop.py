@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from ptztracker.camera import he42
+from ptztracker.camera import protocol as P
 from ptztracker.control.camera_model import CameraDynamics, default_calibration
 from ptztracker.control.composition import COMPOSITIONS, BodyMeasure
 from ptztracker.control.effort import EffortProfile
@@ -24,6 +26,8 @@ class Trace:
     img_y: list = field(default_factory=list)
     u: list = field(default_factory=list)
     state: list = field(default_factory=list)
+    cam_zoom: list = field(default_factory=list)  # ln масштаба камеры (правда)
+    model_zoom: list = field(default_factory=list)  # ln масштаба в модели регулятора
 
 
 def run(
@@ -38,6 +42,9 @@ def run(
     visible=lambda t: True,
     speed_factor: float = 1.0,  # реальная камера быстрее модели в столько раз (рассогласование калибровки)
     cmd_delay: float = 0.0,  # команды доходят до камеры позже (очередь планировщика)
+    zoom_cmd_delay: float | None = None,  # зум ждёт в очереди отдельно (за поворотом); None — как cmd_delay
+    zoom_speed_factor: float = 1.0,  # зум камеры быстрее таблицы калибровки в столько раз
+    gz_period: float | None = None,  # опрос #GZ: положение зума уходит регулятору (None — не опрашивать)
     zoom_pos: int = 0x73F,
     controller_hook=None,
 ) -> Trace:
@@ -51,7 +58,10 @@ def run(
     tr = Trace()
     t, next_meas = 0.0, 0.0
     pending = []  # (когда придёт, t_shot, measure)
-    queued = []  # (когда дойдёт до камеры, pan, tilt, zoom)
+    queued = []  # (когда дойдёт до камеры, pan, tilt)
+    zqueued = []  # (когда дойдёт до камеры, zoom)
+    zdelay = cmd_delay if zoom_cmd_delay is None else zoom_cmd_delay
+    gz_pos, gz_t, next_gz = zoom_pos, None, 0.0
     while t < T:
         if t >= next_meas:
             next_meas += MEAS_DT
@@ -65,16 +75,24 @@ def run(
         measure, t_cap = None, None
         while pending and pending[0][0] <= t:
             t_cap, measure = pending.pop(0)
-        out = ctrl.step(FramingInput(now=t, t_capture=t_cap, measure=measure, zoom_pos=zoom_pos))
+        if gz_period is not None and t >= next_gz - 1e-9:
+            next_gz += gz_period
+            gz_t = t
+            gz_pos = round(zoom_pos + cam_z.position(t) / math.log(he42.ZOOM_RATIO) * (P.LENS_MAX - P.LENS_MIN))
+        out = ctrl.step(FramingInput(now=t, t_capture=t_cap, measure=measure, zoom_pos=gz_pos, zoom_pos_t=gz_t))
         if controller_hook:
             controller_hook(t, ctrl, out)
-        queued.append((t + cmd_delay, out.pan, out.tilt, out.zoom))
+        queued.append((t + cmd_delay, out.pan, out.tilt))
+        zqueued.append((t + zdelay, out.zoom))
         while queued and queued[0][0] <= t + 1e-9:
-            _, qp, qt, qz = queued.pop(0)
+            _, qp, qt = queued.pop(0)
             k = math.exp(cam_z.position(t))
             cam_x.command(t, speed_factor * qp / k)  # камера даёт fw/s при текущем зуме → мировые единицы
             cam_y.command(t, speed_factor * qt / k)
-            cam_z.command(t, qz)
+        while zqueued and zqueued[0][0] <= t + 1e-9:
+            _, qz = zqueued.pop(0)
+            cam_z.command(t, zoom_speed_factor * qz)
+            ctrl.zoom_sent(t, qz)  # как Follower по on_sent планировщика: модель знает, что ушло в камеру
         zx = math.exp(cam_z.position(t))
         tr.t.append(t)
         tr.pan.append(out.pan)
@@ -84,6 +102,8 @@ def run(
         tr.img_y.append(0.5 + (world_y(t) + cam_y.position(t) - 0.5) * zx)
         tr.u.append(world_u(t) * zx)
         tr.state.append(out.state)
+        tr.cam_zoom.append(cam_z.position(t))
+        tr.model_zoom.append(ctrl.zdyn.position(t))
         t = round(t + CTRL_DT, 6)
     return tr
 

@@ -200,3 +200,32 @@ def test_uncalibrated_uses_conservative_table():
 
     s = CameraSession(CameraConfig(id="x", name="X", ip="sim", kind="sim"), analysis=False)
     assert abs(s.calibration().pan.speed(70, 0x73F) - 1.5 * default_calibration().pan.speed(70, 0x73F)) < 1e-9
+
+
+def test_zoom_model_matches_camera_on_sim():
+    """Review Focus 3 (часть 1): масштаб в модели регулятора отличается от камеры меньше чем на 10%.
+
+    Часть 0, B2: модель считала зум ×3,9 при факте ×9,4 — команды зума ждали за поворотом до 2,4 с.
+    """
+    import math
+
+    s = sim_session(calibrated=True, script="walk")
+    try:
+        select_person(s)
+        assert s.follower.enable()
+        errs, truth = [], []
+        t_end = time.monotonic() + 20
+        while time.monotonic() < t_end and s.follower.enabled:
+            with s.follower._lock:
+                ctrl = s.follower.controller
+                ref = ctrl._gz_ref
+                model = None if ref is None else ref + ctrl.zdyn.position(time.monotonic())
+                real = math.log(s.sim.zoom_ratio())  # правда симулятора: ln масштаба от широкого угла
+            truth.append(real)
+            if model is not None:
+                errs.append(abs(math.exp(model - real) - 1))
+            time.sleep(0.1)
+        assert max(truth) - min(truth) > 0.3, "зум почти не двигался — проверять нечего"
+        assert max(errs) < 0.10, f"модель зума расходится с камерой на {max(errs):.0%}"
+    finally:
+        s.stop()

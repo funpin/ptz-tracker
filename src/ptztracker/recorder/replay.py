@@ -18,7 +18,7 @@ from dataclasses import dataclass, field, fields
 from ptztracker.control.camera_model import Calibration, default_calibration
 from ptztracker.control.composition import COMPOSITIONS, DEFAULT_COMPOSITION, BodyMeasure, Composition
 from ptztracker.control.effort import EffortProfile
-from ptztracker.control.follower import output_codes
+from ptztracker.control.follower import output_codes, sent_zoom_code
 from ptztracker.control.framing import FramingController, FramingInput
 from ptztracker.recorder.reader import Episode, _num
 from ptztracker.vision.tracker import _iou
@@ -278,9 +278,10 @@ def replay_controller(
                 implicit_t = None
             elif kind == "control":
                 # сначала разобрать такт целиком: повреждённый не должен сдвинуть состояние регулятора
+                zt = e.get("zoom_pos_t")  # в старых записях нет: модель зума без поправки по #GZ
                 inp = FramingInput(now=t, t_capture=None if e.get("t_capture") is None else float(e["t_capture"]),
                                    measure=_measure(e.get("measure")), zoom_pos=int(e.get("zoom_pos", 0x555)),
-                                   aspect=float(e.get("aspect", 16 / 9)))
+                                   aspect=float(e.get("aspect", 16 / 9)), zoom_pos_t=None if zt is None else float(zt))
                 rec = e.get("codes") or [50, 50, 50]
                 rec_codes = (int(rec[0]), int(rec[1]), int(rec[2]))
                 if not on:
@@ -306,6 +307,10 @@ def replay_controller(
                                        and (abs(out.error[0]) > soft_x or abs(out.error[1]) > soft_y))
                 res.segment.append(len(bounds) - 1)
                 bounds[-1][1] = t
+            elif kind == "cmd":
+                code = sent_zoom_code(e)
+                if on and code is not None:  # как Follower: модель зума — по командам, ушедшим в камеру
+                    ctrl.zoom_sent(t, calib.zoom.rate(code))
             elif kind == "analysis":
                 res.targets.append((t, e.get("target_id"), e.get("target_state") or "none"))
             elif kind == "position":

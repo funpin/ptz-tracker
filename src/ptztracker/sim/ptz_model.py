@@ -22,7 +22,7 @@ TILT_MIN, TILT_MAX = -30.0, 90.0
 ABS_MOVE_DEG_S = 60.0  # скорость перехода к абсолютной позиции / пресету
 APC_DEG_PER_UNIT = 0.0075
 HFOV_WIDE, HFOV_TELE = he42.HFOV_WIDE_DEG, he42.HFOV_TELE_DEG
-ZOOM_RATIO_MAX = 20.0
+ZOOM_RATIO_MAX = he42.ZOOM_RATIO
 ZOOM_RATE = 0.4  # доля диапазона зума в секунду при переходе к абсолютной позиции
 LENS_MIN, LENS_MAX = 0x555, 0xFFF
 

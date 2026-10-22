@@ -254,3 +254,92 @@ def test_queries_only_drops_movement_and_stops():
     assert s.pump() is None
     assert send.calls == ["#O"]
     assert s.wait_emergency(0.1) is True
+
+
+# --- окно для зума (часть 1, задача 1) --------------------------------------------
+
+
+def test_sent_listeners_all_called_and_isolated():
+    """Запись и модель зума слушают отправку вместе; сбой одного слушателя не мешает другому и командам."""
+    clock, send = FakeClock(), Recorder()
+    first, second = [], []
+
+    def boom(info):
+        first.append(info["cmd"])
+        raise RuntimeError("запись сломалась")
+
+    s = CommandScheduler(send, min_interval=0.130, clock=clock, on_sent=boom)
+    s.add_sent_listener(second.append)
+    s.submit("zoom", "#Z60", Priority.TRACKING_ZOOM)
+    assert s.pump() == "#Z60"
+    assert first == ["#Z60"]
+    assert [i["cmd"] for i in second] == ["#Z60"] and second[0]["key"] == "zoom" and second[0]["ok"]
+
+
+def _pt(pan, tilt=50):
+    return f"#PTS{pan:02d}{tilt:02d}"
+
+
+def _run_tracking(s, clock, pan_step, zoom_cmd, T=3.0, zoom_at=0.0):
+    """Регулятор 25 Гц: каждые 40 мс новая команда pt — на pan_step кодов от последней отправленной.
+
+    Зум (zoom_cmd) встаёт в очередь в zoom_at и дальше каждый такт подтверждается тем же значением.
+    Возвращает (когда ушёл зум или None, максимальное ожидание pt в ячейке).
+    """
+    last_pt = {"pan": 60}
+    sent_zoom_t, pt_wait_since, pt_waits = None, None, []
+
+    def on_sent(info):
+        nonlocal sent_zoom_t, pt_wait_since
+        if info["key"] == "pt":
+            last_pt["pan"] = int(info["cmd"][4:6])
+            pt_waits.append(clock.t - pt_wait_since)
+            pt_wait_since = None
+        elif info["key"] == "zoom" and sent_zoom_t is None and info["cmd"] == zoom_cmd:
+            sent_zoom_t = clock.t
+
+    s.add_sent_listener(on_sent)
+    t0 = clock.t
+    next_tick = t0
+    while clock.t - t0 < T:
+        if clock.t >= next_tick - 1e-9:
+            next_tick += 0.04
+            pan = last_pt["pan"] + pan_step if last_pt["pan"] < 90 else last_pt["pan"] - pan_step
+            s.submit("pt", _pt(pan), Priority.TRACKING)
+            if pt_wait_since is None:
+                pt_wait_since = clock.t
+            if clock.t - t0 >= zoom_at - 1e-9:
+                s.submit("zoom", zoom_cmd, Priority.TRACKING_ZOOM)
+        s.pump()
+        clock.t = round(clock.t + 0.005, 6)
+    return (None if sent_zoom_t is None else sent_zoom_t - t0 - zoom_at), max(pt_waits)
+
+
+def test_zoom_gets_window_without_delaying_pan_beyond_one_slot(env):
+    """Часть 0, раздел A: pt меняется каждый такт, и зум ждал до 2,4 с.
+
+    Если pt почти не меняется (< 2 кодов), зум ждёт не больше 0,3 с + окно; pt уступает не больше одного окна.
+    """
+    s, clock, _ = env
+    zoom_after, pt_wait = _run_tracking(s, clock, pan_step=1, zoom_cmd="#Z70", zoom_at=0.5)
+    assert zoom_after is not None and 0.3 - 1e-6 <= zoom_after <= 0.3 + 2 * 0.130 + 0.01
+    assert pt_wait <= 2 * 0.130 + 0.01  # обычное окно + не больше одного окна, отданного зуму
+
+
+def test_zoom_waits_while_pan_changes_notably(env):
+    """Поворот разгоняется (≥ 2 кодов за окно) — зум, который только начинает движение, ждёт: поворот важнее."""
+    s, clock, _ = env
+    zoom_after, pt_wait = _run_tracking(s, clock, pan_step=3, zoom_cmd="#Z70", T=2.0)
+    assert zoom_after is None
+    assert pt_wait <= 0.130 + 0.01
+
+
+def test_zoom_stop_gets_window_while_pan_changes(env):
+    """Наезд идёт, человек пошёл (pt меняется сильно): стоп зума не стоит в очереди — уходит за 0,3 с + окно."""
+    s, clock, _ = env
+    s.submit("zoom", "#Z74", Priority.TRACKING_ZOOM)
+    assert s.pump() == "#Z74"
+    clock.t += 0.2
+    zoom_after, pt_wait = _run_tracking(s, clock, pan_step=3, zoom_cmd="#Z50")
+    assert zoom_after is not None and zoom_after <= 0.3 + 2 * 0.130 + 0.01
+    assert pt_wait <= 2 * 0.130 + 0.01

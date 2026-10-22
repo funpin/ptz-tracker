@@ -7,6 +7,9 @@
 - учитывает, что кадр опаздывает: камера уже сдвинула картинку, пока кадр шёл по сети;
 - оставляет место перед идущим человеком;
 - зумирует только когда кадр спокоен, а отъезжает сразу, если человек у края.
+
+Модель зума (zdyn) идёт по командам, которые реально ушли в камеру (zoom_sent), и подправляется
+по ответам #GZ (FramingInput.zoom_pos_t): зум может ждать в очереди за поворотом.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ptztracker.camera import protocol as P
-from ptztracker.control.camera_model import Calibration, CameraDynamics
+from ptztracker.control.camera_model import Calibration, CameraDynamics, zoom_ln
 from ptztracker.control.composition import BodyMeasure, Composition
 from ptztracker.control.effort import EffortProfile
 
@@ -52,6 +55,7 @@ class FramingInput:
     measure: BodyMeasure | None
     zoom_pos: int
     aspect: float = 16 / 9
+    zoom_pos_t: float | None = None  # когда пришёл ответ #GZ с zoom_pos (None — положение не замерено)
 
 
 @dataclass(frozen=True)
@@ -226,13 +230,30 @@ class FramingController:
         self._zoom_active = False
         self._hold_since: float | None = None
         self._still_since: float | None = None
+        self._gz_t: float | None = None  # момент последнего учтённого ответа #GZ
+        self._gz_ref: float | None = None  # ln масштаба (по #GZ), которому соответствует k = 1
         self.diverged = False
+
+    def zoom_sent(self, t: float, rate: float) -> None:
+        """Команда зума (ln/с) ушла в камеру в момент t: модель зума идёт по отправленному, а не по решённому."""
+        self.zdyn.command(t, rate)
+
+    def _zoom_measured(self, t: float, pos: int) -> None:
+        """Ответ #GZ: подправить положение модели зума (масштаб k считается от первого ответа после reset)."""
+        ln = zoom_ln(pos)
+        if self._gz_ref is None:
+            self._gz_ref = ln - self.zdyn.position(t)
+            return
+        self.zdyn.shift((ln - self._gz_ref) - self.zdyn.position(t))
 
     def step(self, inp: FramingInput) -> FramingOutput:
         now = inp.now
         dt = CTRL_DT_DEFAULT if self._t_prev is None else max(1e-3, now - self._t_prev)
         self._t_prev = now
         e, comp = self.effort, self.composition
+        if inp.zoom_pos_t is not None and inp.zoom_pos_t != self._gz_t:
+            self._gz_t = inp.zoom_pos_t
+            self._zoom_measured(inp.zoom_pos_t, inp.zoom_pos)
 
         if inp.measure is not None and inp.t_capture is not None and inp.t_capture != self._last_cap:
             self._last_cap = inp.t_capture
@@ -278,7 +299,8 @@ class FramingController:
             self._still_since = None
         elif self._still_since is None:
             self._still_since = now
-        zoom, size_err = self._zoom(now, dt, active, state, e, inp.zoom_pos)
+        walking = state == "moving" or self._still_since is None
+        zoom, size_err = self._zoom(now, dt, active, walking, e, inp.zoom_pos)
         return FramingOutput(pan, tilt, zoom, state, (self.x.err, self.y.err), size_err)
 
     def _k(self, t: float) -> float:
@@ -286,7 +308,7 @@ class FramingController:
         return math.exp(self.zdyn.position(t))
 
     def _zoom(
-        self, now: float, dt: float, active: bool, state: str, e: EffortProfile, zoom_pos: int
+        self, now: float, dt: float, active: bool, walking: bool, e: EffortProfile, zoom_pos: int
     ) -> tuple[float, float | None]:
         want = 0.0
         size_err = None
@@ -308,13 +330,14 @@ class FramingController:
                         want = 0.0
             if at_edge:
                 want = -e.zoom_max  # человек уходит из кадра — сразу шире
-        # у края диапазона объектива дальше не зумируем (и не считаем, что зумируем)
+        # у края диапазона объектива дальше не зумируем
         if (want < 0 and zoom_pos <= P.LENS_MIN + LENS_END_MARGIN) or (want > 0 and zoom_pos >= P.LENS_MAX - LENS_END_MARGIN):
             want = 0.0
+        if walking and self._zoom_cmd > 0 and want <= 0:
+            self._zoom_cmd = 0.0  # человек пошёл — наезд прекращаем сразу, без плавного спада
         self._zoom_cmd += _limit(want - self._zoom_cmd, ZOOM_ACCEL * dt)
         if abs(self._zoom_cmd) < 1e-9:
             self._zoom_cmd = 0.0
-        self.zdyn.command(now, self._zoom_cmd)
         return self._zoom_cmd, size_err
 
 

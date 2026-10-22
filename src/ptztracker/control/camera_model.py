@@ -11,6 +11,7 @@ import math
 from dataclasses import dataclass, field
 
 from ptztracker.camera import he42
+from ptztracker.camera import protocol as P
 
 MOVING_THRESHOLD = 0.005  # быстрее этого (fw/s или ln/s) — код «реально двигает»
 
@@ -138,6 +139,11 @@ class CameraDynamics:
             x, v = self._advance(tb, x, v, target, t_eff) if tb > -1e8 else (x, v)
             self._base = (t_eff, x, v, new_target)
 
+    def shift(self, dx: float) -> None:
+        """Сдвинуть всю историю положения на dx (поправка по замеру; скорость и команды не меняются)."""
+        tb, x, v, target = self._base
+        self._base = (tb, x + dx, v, target)
+
     def velocity(self, t: float) -> float:
         return self._state(t)[1]
 
@@ -148,6 +154,11 @@ class CameraDynamics:
 
     def displacement(self, t0: float, t1: float) -> float:
         return self._state(t1)[0] - self._state(t0)[0]
+
+
+def zoom_ln(pos: int) -> float:
+    """ln масштаба зума от широкого угла по положению #GZ (Panasonic 0x555–0xFFF), см. he42.ZOOM_RATIO."""
+    return (pos - P.LENS_MIN) / (P.LENS_MAX - P.LENS_MIN) * math.log(he42.ZOOM_RATIO)
 
 
 DEFAULT_VIDEO_LATENCY_S = 0.15  # задержка видео, если для этого вида потока нет замера

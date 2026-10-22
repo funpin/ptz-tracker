@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import re
 import threading
 import time
 from concurrent.futures import Future
@@ -25,6 +26,14 @@ log = logging.getLogger(__name__)
 MAX_CAMERA_ERROR_RETRIES = 3
 UNREACHABLE_BACKOFF_AFTER = 3
 UNREACHABLE_BACKOFF_S = 1.0
+# Окно для зума при слежении (часть 0, раздел A: зум ждал за поворотом до 2,4 с). Зум, ждущий дольше
+# ZOOM_WINDOW_AFTER_S, уходит раньше поворота, если поворот почти не изменился (< PT_SMALL_CHANGE кодов
+# по обеим осям) или если зум останавливает/разворачивает уже отправленный зум. Поворот уступает
+# не больше одного окна подряд.
+ZOOM_WINDOW_AFTER_S = 0.3
+PT_SMALL_CHANGE = 2
+_PT_RE = re.compile(r"#PTS(\d\d)(\d\d)")
+_ZOOM_RE = re.compile(r"#Z(\d\d)")
 
 
 class Priority(IntEnum):
@@ -45,6 +54,7 @@ class _Item:
     errors: int = 0
     expires: float | None = None  # для разовых команд: не выполнять, если связь вернулась слишком поздно
     submitted: float = 0.0  # когда команда встала в очередь (для записи: сколько она ждала)
+    waiting_since: float = 0.0  # с какого момента ячейка ждёт отправки (склейка его не сбрасывает)
 
 
 @dataclass
@@ -77,12 +87,13 @@ class CommandScheduler:
         self._online: bool | None = None
         self.last_error: str | None = None
         self.on_state_change: Callable[[bool], None] | None = None
-        # после каждой отправки: {"cmd", "key", "priority", "queued_s", "reply", "ok"} (для записи)
-        self.on_sent = on_sent
+        # после каждой отправки: {"cmd", "key", "priority", "queued_s", "reply", "ok"} — запись, модель зума
+        self._sent_listeners: list[Callable[[dict], None]] = [on_sent] if on_sent else []
         self._last_on_sent_log = float("-inf")
         self._thread: threading.Thread | None = None
         self._running = False
         self._inflight: _Item | None = None
+        self._pt_yielded = False  # поворот уже уступил окно зуму и ещё не ушёл
 
     # --- публичный API -------------------------------------------------
 
@@ -107,8 +118,14 @@ class CommandScheduler:
                 return
             now = self._clock()
             expires = now + ttl if ttl is not None else None
-            self._st.slots[key] = _Item(cmd, priority, next(self._seq), key=key, expires=expires, submitted=now)
+            prev = self._st.slots.get(key)
+            self._st.slots[key] = _Item(cmd, priority, next(self._seq), key=key, expires=expires, submitted=now,
+                                        waiting_since=prev.waiting_since if prev else now)
             self._cond.notify()
+
+    def add_sent_listener(self, fn: Callable[[dict], None]) -> None:
+        """Слушать отправленные команды (вызывается из потока планировщика, вне его замка)."""
+        self._sent_listeners.append(fn)
 
     def query(self, cmd: str, timeout: float = 2.0) -> str:
         fut: Future = Future()
@@ -195,6 +212,11 @@ class CommandScheduler:
             return None
         candidates = list(self._st.slots.values()) + self._st.queries
         item = min(candidates, key=lambda i: (i.priority, i.seq))
+        if self._zoom_window_due(item, now):
+            item = self._st.slots["zoom"]
+            self._pt_yielded = True
+        elif item.key == "pt":
+            self._pt_yielded = False
         if item.key is not None:
             del self._st.slots[item.key]
         else:
@@ -202,6 +224,28 @@ class CommandScheduler:
         self._last_send_t = now
         self._inflight = item
         return item
+
+    def _zoom_window_due(self, best: _Item, now: float) -> bool:
+        """Отдать окно ожидающему зуму слежения вместо поворота слежения (см. ZOOM_WINDOW_AFTER_S)."""
+        zoom = self._st.slots.get("zoom")
+        if (best.key != "pt" or best.priority != Priority.TRACKING or zoom is None
+                or zoom.priority != Priority.TRACKING_ZOOM or self._pt_yielded
+                or now - zoom.waiting_since < ZOOM_WINDOW_AFTER_S):
+            return False
+        return self._pt_small_change(best.cmd) or self._zoom_halts(zoom.cmd)
+
+    def _pt_small_change(self, cmd: str) -> bool:
+        new, old = _PT_RE.fullmatch(cmd), _PT_RE.fullmatch(self._st.last_sent.get("pt", ""))
+        if not (new and old):
+            return False
+        return all(abs(int(a) - int(b)) < PT_SMALL_CHANGE for a, b in zip(new.groups(), old.groups()))
+
+    def _zoom_halts(self, cmd: str) -> bool:
+        """Команда останавливает или разворачивает зум, который камера сейчас выполняет."""
+        new, old = _ZOOM_RE.fullmatch(cmd), _ZOOM_RE.fullmatch(self._st.last_sent.get("zoom", ""))
+        if not (new and old) or int(old[1]) == 50:
+            return False
+        return (int(new[1]) - 50) * (int(old[1]) - 50) <= 0
 
     def _drop_expired(self, now: float) -> None:
         for key, item in list(self._st.slots.items()):
@@ -219,17 +263,18 @@ class CommandScheduler:
         self._report_sent(item, sent_t, ok, reply)
 
     def _report_sent(self, item: _Item, sent_t: float, ok: bool, reply: str) -> None:
-        cb = self.on_sent
-        if cb is None:
+        if not self._sent_listeners:
             return
-        try:
-            cb({"cmd": item.cmd, "key": item.key, "priority": item.priority.name,
-                "queued_s": round(sent_t - item.submitted, 4), "reply": reply, "ok": ok})
-        except Exception as e:  # запись — только наблюдатель: её сбой не мешает командам
-            now = time.monotonic()
-            if now - self._last_on_sent_log >= 10.0:
-                self._last_on_sent_log = now
-                log.warning("on_sent упал: %s", e)
+        info = {"cmd": item.cmd, "key": item.key, "priority": item.priority.name,
+                "queued_s": round(sent_t - item.submitted, 4), "reply": reply, "ok": ok}
+        for cb in list(self._sent_listeners):
+            try:
+                cb(dict(info))
+            except Exception as e:  # слушатели — только наблюдатели: их сбой не мешает командам
+                now = time.monotonic()
+                if now - self._last_on_sent_log >= 10.0:
+                    self._last_on_sent_log = now
+                    log.warning("on_sent упал: %s", e)
 
     def _send_and_record(self, item: _Item) -> tuple[bool, str]:
         """Отправить команду; (успех, ответ камеры или текст ошибки)."""

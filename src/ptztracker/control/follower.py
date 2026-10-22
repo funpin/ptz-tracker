@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 import threading
 import time
 from typing import Callable
@@ -28,6 +29,15 @@ ZOOM_POLL_S = 0.5  # при слежении: зум и (для записи) п
 IDLE_POSITION_POLL_S = 2.0  # слежение выкл., идёт запись: положение и зум реже — не мешать ручному управлению
 MANUAL_QUIET_S = 2.0  # после ручной команды столько не опрашиваем (запрос занимает окно ~130 мс)
 TILT_FROM_FH = 9 / 16  # скорость по вертикали (доли высоты) → эквивалент по ширине кадра 16:9
+_ZOOM_CMD = re.compile(r"#Z(\d\d)")
+
+
+def sent_zoom_code(info: dict) -> int | None:
+    """Код скорости зума из события отправки планировщика (on_sent), если ушла команда #Zxx."""
+    if info.get("key") != "zoom" or not info.get("ok"):
+        return None
+    m = _ZOOM_CMD.fullmatch(str(info.get("cmd", "")))
+    return int(m[1]) if m else None
 
 
 def output_codes(
@@ -71,11 +81,13 @@ class Follower:
         self.on_change: Callable[[bool, str | None], None] | None = None
         self._lock = threading.Lock()
         self._zoom_pos = 0x555
+        self._zoom_pos_t: float | None = None  # когда пришёл ответ #GZ с _zoom_pos
         self._codes = (50, 50, 50)
         self._last_u: float | None = None
         self._last_manual = float("-inf")
         self.polling_paused = False  # калибровка: опросы зума и положения молчат, поток живёт
         self._stop = threading.Event()
+        scheduler.add_sent_listener(self._on_cmd_sent)
         self._thread = threading.Thread(target=self._run, name="follower", daemon=True)
         self._zthread = threading.Thread(target=self._poll_zoom, name="follower-zoom", daemon=True)
         self._thread.start()
@@ -89,10 +101,11 @@ class Follower:
         r = self.analyzer.latest() if self.analyzer else None
         if r is None or r.target_id is None:
             return False
+        self._zoom_pos_t = None  # старое положение не годится как опора модели зума
         try:  # сразу узнать зум: от него зависит таблица скоростей
             z = self.query_zoom()
             if z is not None:
-                self._zoom_pos = z
+                self._set_zoom_pos(z)
         except Exception as e:
             log.debug("Запрос зума при включении не удался: %s", e)
         with self._lock:
@@ -167,6 +180,20 @@ class Follower:
         self.disable("остановка камеры")
         self._stop.set()
 
+    def _set_zoom_pos(self, z: int) -> None:
+        with self._lock:  # пара (положение, момент) читается тактом слежения целиком
+            self._zoom_pos, self._zoom_pos_t = z, time.monotonic()
+
+    def _on_cmd_sent(self, info: dict) -> None:
+        """Планировщик отправил команду: команда зума — в модель зума регулятора (зум ждёт за поворотом)."""
+        code = sent_zoom_code(info)
+        if code is None:
+            return
+        t = time.monotonic()
+        with self._lock:
+            if self.enabled:
+                self.controller.zoom_sent(t, self.calib.zoom.rate(code))
+
     def _notify(self) -> None:
         cb = self.on_change
         if cb:
@@ -199,7 +226,7 @@ class Follower:
                 log.debug("Запрос зума не удался: %s", e)
                 z = None
             if z is not None:
-                self._zoom_pos = z
+                self._set_zoom_pos(z)
             if not self.enabled and time.monotonic() - self._last_manual < MANUAL_QUIET_S:
                 continue  # пока шёл запрос зума, оператор взялся за камеру — положение не спрашиваем
             if recording and self.query_pan_tilt is not None:
@@ -225,7 +252,7 @@ class Follower:
                 log.exception("Ошибка в цикле слежения")
                 self.disable("внутренняя ошибка")
 
-    def _record_tick(self, now, r, measure, zoom, out, codes, comp: Composition, effort: EffortProfile) -> None:
+    def _record_tick(self, now, r, measure, zoom, zoom_t, out, codes, comp: Composition, effort: EffortProfile) -> None:
         """Такт регулятора в запись: всё, что нужно, чтобы повторить его без камеры.
 
         Ошибка здесь не должна дойти до цикла слежения (он бы выключил слежение).
@@ -238,7 +265,7 @@ class Follower:
                 m = {"nose": [float(v) for v in measure.nose],
                      "u": None if measure.u is None else float(measure.u), "confident": bool(measure.confident)}
             safe_event(
-                self.recorder, "control", t=now, t_capture=r.t_capture, measure=m, zoom_pos=zoom,
+                self.recorder, "control", t=now, t_capture=r.t_capture, measure=m, zoom_pos=zoom, zoom_pos_t=zoom_t,
                 aspect=r.frame_size[0] / max(1, r.frame_size[1]),
                 out={"pan": out.pan, "tilt": out.tilt, "zoom": out.zoom, "state": out.state,
                      "error": list(out.error), "size_error": out.size_error},
@@ -263,13 +290,13 @@ class Follower:
                 measure = measure_body(tgt.keypoints, tgt.box, r.frame_size, self._last_u)
                 if measure is not None and measure.u is not None:
                     self._last_u = measure.u
-        zoom = self._zoom_pos
         with self._lock:
             if not self.enabled:
                 return
+            zoom, zoom_t = self._zoom_pos, self._zoom_pos_t
             out = self.controller.step(
                 FramingInput(now=now, t_capture=r.t_capture, measure=measure, zoom_pos=zoom,
-                             aspect=r.frame_size[0] / max(1, r.frame_size[1]))
+                             aspect=r.frame_size[0] / max(1, r.frame_size[1]), zoom_pos_t=zoom_t)
             )
             self.output = out
             diverged = out.state == "diverged"
@@ -279,6 +306,6 @@ class Follower:
             self.scheduler.submit("pt", P.pan_tilt_speed(pan, tilt), Priority.TRACKING)
             self.scheduler.submit("zoom", P.zoom_speed(zc), Priority.TRACKING_ZOOM)
             comp, effort = self.controller.composition, self.controller.effort  # только ссылки: работа записи — вне замка
-        self._record_tick(now, r, measure, zoom, out, (pan, tilt, zc), comp, effort)
+        self._record_tick(now, r, measure, zoom, zoom_t, out, (pan, tilt, zc), comp, effort)
         if diverged:
             self.disable("камера раскачивалась — она быстрее, чем ожидалось. Сервис → Калибровка камеры")
