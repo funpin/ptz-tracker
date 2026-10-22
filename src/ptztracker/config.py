@@ -39,6 +39,9 @@ class CameraConfig:
     min_interval: float = 0.130
     stream: str = "auto"  # "auto" | "h264_1" | "h264_2" | "mjpeg"
     calibration: dict | None = None  # результат мастера калибровки (control.camera_model.Calibration.to_json)
+    # поправка скорости по ходу слежения (control.speed_adapt): {"pan", "tilt", "zoom"} — камера быстрее
+    # таблицы калибровки во столько раз; новая калибровка её сбрасывает
+    speed_scale: dict | None = None
     composition: str = "waist_center"  # control.composition.COMPOSITIONS
     effort: float = 0.5  # 0 — мягко, 1 — резко
     atem_input: int = 0  # вход ATEM (1…), 0 — не задан
@@ -126,6 +129,9 @@ def _camera_from(d) -> CameraConfig | None:
     if c.calibration is not None and not isinstance(c.calibration, dict):
         log.warning("Неправильная калибровка у камеры %s — сбрасываю", c.name)
         c.calibration = None
+    if c.speed_scale is not None and not isinstance(c.speed_scale, dict):
+        log.warning("Неправильная поправка скорости у камеры %s — сбрасываю", c.name)
+        c.speed_scale = None  # значения внутри проверяет Calibration.set_speed_scale
     if c.composition not in COMPOSITION_KEYS:
         c.composition = "waist_center"
     if not isinstance(c.effort, (int, float)):

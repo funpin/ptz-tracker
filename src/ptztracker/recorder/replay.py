@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass, field, fields
 
@@ -216,9 +217,13 @@ def replay_controller(
     как в Follower.enable(). Повреждённые события пропускаются и считаются (`skipped_events`).
     """
     res = ReplayResult()
+    recorded_calib = calib is None
     if calib is None:
         calib, res.calibration_ok = episode_calibration(ep)
     res.calib = calib
+    # Поправка скорости менялась по ходу слежения и записана в каждом такте: с записанной калибровкой
+    # коды считаются с ней (на копии — калибровка снаружи не меняется); с переданной — с её собственной.
+    calib = dataclasses.replace(calib)
     # задержка из follow on (её выставил Follower.enable); в старых записях её нет — по виду потока
     meta_latency = calib.latency_for(ep.meta.get("stream_kind"))
     res.skipped_events = getattr(ep, "bad_lines", 0)
@@ -295,6 +300,8 @@ def replay_controller(
                         res.partial_start = True  # запись началась посреди слежения
                 ctrl.set_composition(composition or _composition(e.get("composition"), ctrl.composition))
                 ctrl.set_effort(effort or _effort(e.get("effort"), ctrl.effort))
+                if recorded_calib:
+                    calib.set_speed_scale(e.get("speed_scale"))
                 out = ctrl.step(inp)
                 codes = output_codes(calib, out, inp.zoom_pos, codes)
                 soft_x, soft_y = ctrl.effort.soft_x, ctrl.effort.soft_y
@@ -313,7 +320,7 @@ def replay_controller(
             elif kind == "cmd":
                 code = sent_zoom_code(e)
                 if on and code is not None:  # как Follower: модель зума — по командам, ушедшим в камеру
-                    ctrl.zoom_sent(t, calib.zoom.rate(code))
+                    ctrl.zoom_sent(t, calib.zoom_rate(code))
             elif kind == "analysis":
                 res.targets.append((t, e.get("target_id"), e.get("target_state") or "none"))
             elif kind == "position":

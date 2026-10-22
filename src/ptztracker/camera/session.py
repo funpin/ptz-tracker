@@ -211,12 +211,15 @@ class CameraSession:
     def calibration(self):
         from ptztracker.control.camera_model import Calibration, default_calibration
 
+        calib = None
         if self.cfg.calibration:
             try:
-                return Calibration.from_json(self.cfg.calibration)
+                calib = Calibration.from_json(self.cfg.calibration)
             except Exception as e:  # повреждённая калибровка — работаем по средним значениям
                 log.warning("Калибровка камеры %s не читается (%s) — беру средние значения", self.cfg.name, e)
-        return default_calibration(safety=UNCALIBRATED_SAFETY)
+        calib = calib or default_calibration(safety=UNCALIBRATED_SAFETY)
+        calib.set_speed_scale(self.cfg.speed_scale)  # поправка, найденная слежением в прошлые разы
+        return calib
 
     def stream_kind(self) -> str:
         if self.cfg.kind == "sim":

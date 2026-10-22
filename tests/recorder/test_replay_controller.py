@@ -28,13 +28,14 @@ def _write(path, events, meta=None):
     return Episode.open(write_episode(path, meta, items, []))
 
 
-def _following_events(seconds=8.0, effort=0.5, follow_on_late=0.005, latency=None):
+def _following_events(seconds=8.0, effort=0.5, follow_on_late=0.005, latency=None, scale=None):
     """Слежение как в Follower: такты 25 Гц, новый замер каждый второй такт, человек ходит туда-обратно.
 
     Событие follow on пишется на follow_on_late позже первого такта — как в жизни, когда поток слежения
     успевает сделать такт раньше, чем enable() записал событие.
     """
     calib, comp, eff = default_calibration(), COMPOSITIONS["waist_center"], EffortProfile.at(effort)
+    rec_scale = {}
     ctrl = FramingController(comp, eff, calib, calib.video_latency["sim"] if latency is None else latency)
     codes = (50, 50, 50)
     ev = [{"t": T0 + follow_on_late, "kind": "follow", "on": True, "reason": None, "target_id": 3}]
@@ -50,12 +51,15 @@ def _following_events(seconds=8.0, effort=0.5, follow_on_late=0.005, latency=Non
             ev.append({"t": t_cap, "kind": "analysis", "target_id": 3, "target_state": "tracking", "tracks": []})
         meas = BodyMeasure(tuple(m["nose"]), m["u"], m["confident"])
         out = ctrl.step(FramingInput(now=now, t_capture=t_cap, measure=meas, zoom_pos=0x555, aspect=16 / 9))
+        if scale is not None:  # поправка скорости по ходу слежения (как SpeedAdapter): пишется в такт
+            calib.pan_scale = calib.tilt_scale = scale(now - T0)
+            rec_scale = {"speed_scale": calib.speed_scale}
         codes = output_codes(calib, out, 0x555, codes)
         ev.append({"t": now, "kind": "control", "t_capture": t_cap, "measure": m, "zoom_pos": 0x555,
                    "aspect": 16 / 9,
                    "out": {"pan": out.pan, "tilt": out.tilt, "zoom": out.zoom, "state": out.state,
                            "error": list(out.error), "size_error": out.size_error},
-                   "codes": list(codes), "composition": comp.key, "effort": dataclasses.asdict(eff)})
+                   "codes": list(codes), "composition": comp.key, "effort": dataclasses.asdict(eff), **rec_scale})
     ev.append({"t": T0 + seconds, "kind": "follow", "on": False, "reason": "ручное управление"})
     ev.append({"t": T0 + 1.0, "kind": "position", "pan": 0x8000, "tilt": 0x8000, "zoom": 0x555})
     ev.append({"t": T0 + 2.0, "kind": "position", "pan": 0x8100, "tilt": 0x8000, "zoom": 0x555})
@@ -70,6 +74,15 @@ def test_replay_reproduces_synthetic_codes(tmp_path):
     assert any(c[0] != 50 for c in res.codes_new)  # камера реально двигалась
     assert not res.partial_start  # follow on позже первого такта — тот же запуск
     assert len(res.segments) == 1 and abs(res.segments[0][1] - res.segments[0][0] - 8.0) < 0.01
+
+
+def test_replay_reproduces_codes_with_recorded_speed_scale(tmp_path):
+    """Поправка скорости менялась по ходу слежения: повтор берёт её из каждого такта и даёт те же коды."""
+    ep = _write(tmp_path / "e.zip", _following_events(scale=lambda t: 1.0 + 0.1 * t))
+    res = replay_controller(ep)
+    assert res.codes_new == res.codes_rec
+    assert res.calib.speed_scale == {"pan": 1.0, "tilt": 1.0, "zoom": 1.0}  # калибровка записи не тронута
+    assert replay_controller(ep, calib=default_calibration()).codes_new != res.codes_rec  # без поправки — другие
 
 
 def test_replay_flags_episode_starting_mid_follow(tmp_path):

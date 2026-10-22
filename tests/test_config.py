@@ -183,3 +183,16 @@ def test_atem_input_of_rejects_garbage():
         assert atem_input_of(cam(bad)) == 0, bad
     assert atem_input_of(cam(3)) == 3
     assert atem_input_of(cam(40)) == 40
+
+
+def test_speed_scale_roundtrip_and_invalid(tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = default_config()
+    assert cfg.cameras[0].speed_scale is None
+    cfg.cameras[0].speed_scale = {"pan": 1.4, "tilt": 1.0, "zoom": 0.8}
+    store.save(cfg)
+    assert store.load().cameras[0].speed_scale == {"pan": 1.4, "tilt": 1.0, "zoom": 0.8}
+    (tmp_path / "c.json").write_text(
+        '{"cameras": [{"id": "a", "name": "А", "ip": "10.0.0.12", "speed_scale": [1, 2]}]}', encoding="utf-8"
+    )
+    assert store.load().cameras[0].speed_scale is None

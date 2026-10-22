@@ -7,14 +7,16 @@ from dataclasses import dataclass, field
 
 from ptztracker.camera import he42
 from ptztracker.camera import protocol as P
+from ptztracker.control.calibration import hfov_at
 from ptztracker.control.camera_model import CameraDynamics, default_calibration
 from ptztracker.control.composition import COMPOSITIONS, BodyMeasure
 from ptztracker.control.effort import EffortProfile
-from ptztracker.control.framing import FramingController, FramingInput
+from ptztracker.control.follower import output_codes
+from ptztracker.control.framing import TILT_FROM_FH, FramingController, FramingInput
+from ptztracker.control.speed_adapt import SpeedAdapter
 
 CTRL_DT = 0.04  # 25 Гц
 MEAS_DT = 1 / 14  # анализ 14 к/с
-APC_PER_FW = 8000  # единиц #APC на ширину кадра при зуме старта (как у симулятора на широком угле)
 
 
 @dataclass
@@ -29,6 +31,7 @@ class Trace:
     state: list = field(default_factory=list)
     cam_zoom: list = field(default_factory=list)  # ln масштаба камеры (правда)
     model_zoom: list = field(default_factory=list)  # ln масштаба в модели регулятора
+    scale: list = field(default_factory=list)  # поправка скорости (pan, tilt, zoom) после такта (adapt=True)
 
 
 def run(
@@ -49,11 +52,18 @@ def run(
     apc_period: float | None = None,  # опрос #APC: положение pan/tilt уходит регулятору (None — не опрашивать)
     zoom_pos: int = 0x73F,
     controller_hook=None,
+    cam_tau: float | None = None,  # разгон камеры на самом деле (None — как в калибровке)
+    cam_dead_time: float | None = None,  # мёртвое время камеры на самом деле (None — как в калибровке)
+    adapt: bool = False,  # как Follower: скорости → коды камеры (с поправкой), подстройка скорости по #APC/#GZ
 ) -> Trace:
     calib = default_calibration()
-    cam_x = CameraDynamics(calib.dead_time, calib.tau)
-    cam_y = CameraDynamics(calib.dead_time, calib.tau)
-    cam_z = CameraDynamics(calib.dead_time, calib.tau)
+    adapter = SpeedAdapter(calib) if adapt else None
+    codes = (50, 50, 50)
+    # #APC: положение камеры в градусах (единицы — he42.APC_DEG_PER_UNIT); мировые единицы — доли кадра
+    # при зуме старта (pan) и доли его высоты (tilt)
+    apc_per_fw = hfov_at(zoom_pos) / he42.APC_DEG_PER_UNIT
+    cam_dyn = (calib.dead_time if cam_dead_time is None else cam_dead_time, calib.tau if cam_tau is None else cam_tau)
+    cam_x, cam_y, cam_z = CameraDynamics(*cam_dyn), CameraDynamics(*cam_dyn), CameraDynamics(*cam_dyn)
     ctrl = FramingController(
         COMPOSITIONS[comp], EffortProfile.at(effort), calib, latency if ctrl_latency is None else ctrl_latency
     )
@@ -85,20 +95,38 @@ def run(
         if apc_period is not None and t >= next_apc - 1e-9:
             next_apc += apc_period
             apc_t = t
-            apc = (round(0x8000 + cam_x.position(t) * APC_PER_FW), round(0x8000 + cam_y.position(t) * APC_PER_FW))
+            apc = (round(0x8000 + cam_x.position(t) * apc_per_fw),
+                   round(0x8000 + cam_y.position(t) * TILT_FROM_FH * apc_per_fw))
         out = ctrl.step(FramingInput(now=t, t_capture=t_cap, measure=measure, zoom_pos=gz_pos, zoom_pos_t=gz_t,
                                      pan_tilt=apc, pan_tilt_t=apc_t))
         if controller_hook:
             controller_hook(t, ctrl, out)
-        queued.append((t + cmd_delay, out.pan, out.tilt))
-        zqueued.append((t + zdelay, out.zoom))
+        if adapter is not None:  # как Follower._tick: замеры положения → поправка → коды
+            if gz_t == t:
+                adapter.zoom_measured(t, gz_pos, frozen=ctrl.diverged)
+            if apc_t == t:
+                adapter.pan_tilt_measured(t, apc[0], apc[1], gz_pos, frozen=ctrl.diverged)
+            codes = output_codes(calib, out, gz_pos, codes)
+            queued.append((t + cmd_delay, codes[0], codes[1]))
+            zqueued.append((t + zdelay, codes[2]))
+        else:
+            queued.append((t + cmd_delay, out.pan, out.tilt))
+            zqueued.append((t + zdelay, out.zoom))
         while queued and queued[0][0] <= t + 1e-9:
             _, qp, qt = queued.pop(0)
             k = math.exp(cam_z.position(t))
+            if adapter is not None:  # камера едет по таблице без поправки, только в speed_factor раз быстрее
+                adapter.pt_sent(t, qp, qt, gz_pos)
+                qp, qt = calib.pan.speed(qp, gz_pos), calib.pan.speed(qt, gz_pos) / TILT_FROM_FH
             cam_x.command(t, speed_factor * qp / k)  # камера даёт fw/s при текущем зуме → мировые единицы
             cam_y.command(t, speed_factor * qt / k)
         while zqueued and zqueued[0][0] <= t + 1e-9:
             _, qz = zqueued.pop(0)
+            if adapter is not None:
+                adapter.zoom_sent(t, qz)
+                cam_z.command(t, zoom_speed_factor * calib.zoom.rate(qz))
+                ctrl.zoom_sent(t, calib.zoom_rate(qz))  # модель — по таблице с поправкой
+                continue
             cam_z.command(t, zoom_speed_factor * qz)
             ctrl.zoom_sent(t, qz)  # как Follower по on_sent планировщика: модель знает, что ушло в камеру
         zx = math.exp(cam_z.position(t))
@@ -112,6 +140,7 @@ def run(
         tr.state.append(out.state)
         tr.cam_zoom.append(cam_z.position(t))
         tr.model_zoom.append(ctrl.zdyn.position(t))
+        tr.scale.append((calib.pan_scale, calib.tilt_scale, calib.zoom_scale))
         t = round(t + CTRL_DT, 6)
     return tr
 

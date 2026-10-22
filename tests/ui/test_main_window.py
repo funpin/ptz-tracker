@@ -346,3 +346,23 @@ def test_operator_follow_off_revokes_agent_control(qtbot, tmp_path):
     w.follow_panel.followRequested.emit(False)  # кнопка «Слежение»
     assert not f.enabled and agent_revoked(w)
     w.close()
+
+
+def test_speed_scale_saved_at_most_once_a_minute(qtbot, tmp_path):
+    """Поправку скорости от слежения окно пишет в настройки камеры (поток Qt), не чаще раза в минуту;
+    новая калибровка её сбрасывает."""
+    store = ConfigStore(tmp_path / "c.json")
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    calib = w.session.follower.calib
+    calib.pan_scale = 1.4
+    w._update_status()
+    assert store.load().cameras[0].speed_scale == {"pan": 1.4, "tilt": 1.0, "zoom": 1.0}
+    calib.pan_scale = 1.6
+    w._update_status()
+    assert store.load().cameras[0].speed_scale["pan"] == 1.4  # минута не прошла
+    w._speed_scale_saved_t -= 61
+    w._update_status()
+    assert store.load().cameras[0].speed_scale["pan"] == 1.6
+    w.close()
+    assert store.load().cameras[0].speed_scale["pan"] == 1.6

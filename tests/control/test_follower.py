@@ -240,3 +240,23 @@ def test_zoom_model_matches_camera_on_sim():
         assert max(errs) < 0.10, f"модель зума расходится с камерой на {max(errs):.0%}"
     finally:
         s.stop()
+
+
+def test_speed_adapts_on_sim_when_camera_faster_than_table():
+    """Часть 1, задача 5: таблица калибровки в 1,6 раза медленнее камеры (симулятор с перспективой).
+    За 30 с прохаживания слежение по #APC находит поправку 1,6 ± 0,15, раскачки нет (слежение не выключилось)."""
+    from ptztracker.control.camera_model import default_calibration
+
+    cfg = {"calibration": default_calibration(safety=1 / 1.6).to_json()}
+    s = sim_session(composition="full", script="lecture", **cfg)
+    try:
+        select_person(s)
+        assert s.follower.enable()
+        t_end = time.monotonic() + 34  # «lecture»: стоит 8 с, затем прохаживается
+        while time.monotonic() < t_end and s.follower.enabled:
+            time.sleep(0.2)
+        assert s.follower.enabled, s.follower.last_reason
+        scale = s.follower.speed_scale
+        assert abs(scale["pan"] - 1.6) <= 0.15, scale
+    finally:
+        s.stop()

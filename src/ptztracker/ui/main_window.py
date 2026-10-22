@@ -46,6 +46,9 @@ from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
 
 log = logging.getLogger(__name__)
 
+SPEED_SCALE_SAVE_S = 60.0  # поправку скорости от слежения пишем в настройки не чаще раза в минуту
+SPEED_SCALE_SAVE_DIFF = 0.01  # меньшее изменение поправки не сохраняем
+
 SIM_CAMERA = CameraConfig(id="sim", name="Симулятор", ip="sim", kind="sim")
 KEY_PAN_SPEED = 0.4
 KEY_ZOOM_SPEED = 0.5
@@ -320,6 +323,7 @@ class MainWindow(QMainWindow):
         # API агента: оператор сам включил/выключил слежение (пробел, кнопка) — слежение теперь его
         self.on_operator_follow: Callable[[bool], None] | None = None
 
+        self._speed_scale_saved_t = float("-inf")
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._update_status)
         self._status_timer.start(500)
@@ -646,6 +650,7 @@ class MainWindow(QMainWindow):
 
         def saved(calib: dict) -> None:
             cam.calibration = calib
+            cam.speed_scale = None  # новая таблица скоростей: прежняя поправка к ней не относится
             if cam.kind != "sim":
                 self._save()
 
@@ -744,6 +749,7 @@ class MainWindow(QMainWindow):
         )
         self.record_label.setVisible(s.recorder.active)
         self._remember_rtsp_url(s)
+        self._remember_speed_scale(s)
         if s.online:
             self.link_label.set("Камера на связи", "neutral")  # зелёный PVW — только для Tally
         else:
@@ -789,6 +795,24 @@ class MainWindow(QMainWindow):
             cam.rtsp_url = url
             self._save()
             self.statusBar().showMessage(f"Найден адрес видео: {url}", 8000)
+
+    def _remember_speed_scale(self, s: CameraSession) -> None:
+        """Поправку скорости, найденную слежением, — в настройки камеры (не чаще раза в SPEED_SCALE_SAVE_S).
+        Поток слежения настройки не пишет: только читает поправку отсюда, из потока Qt."""
+        f = s.follower
+        if f is None or f.polling_paused or time.monotonic() - self._speed_scale_saved_t < SPEED_SCALE_SAVE_S:
+            return  # идёт калибровка: её итог сбросит поправку
+        cam = next((c for c in self.cfg.cameras if c.id == s.cfg.id), None)  # симулятор в настройки не пишем
+        if cam is None:
+            return
+        scale = {k: round(v, 3) for k, v in f.speed_scale.items()}
+        old = cam.speed_scale if isinstance(cam.speed_scale, dict) else {}
+        if all(abs(v - float(old.get(k, 1.0))) < SPEED_SCALE_SAVE_DIFF for k, v in scale.items()):
+            return
+        cam.speed_scale = scale
+        self._speed_scale_saved_t = time.monotonic()
+        self._save()
+        log.info("Поправка скорости камеры %s сохранена: %s", cam.name, scale)
 
     # --- горячие клавиши ---------------------------------------------
 

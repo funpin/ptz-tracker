@@ -161,6 +161,9 @@ def zoom_ln(pos: int) -> float:
     return (pos - P.LENS_MIN) / (P.LENS_MAX - P.LENS_MIN) * math.log(he42.ZOOM_RATIO)
 
 
+# Пределы поправки скорости по ходу слежения: дальше — это уже не поправка, а другая камера (нужна калибровка).
+SCALE_MIN, SCALE_MAX = 0.5, 2.0
+
 DEFAULT_VIDEO_LATENCY_S = 0.15  # задержка видео, если для этого вида потока нет замера
 
 
@@ -172,6 +175,46 @@ class Calibration:
     tau: float = he42.RAMP_TAU_S
     video_latency: dict[str, float] = field(default_factory=lambda: dict(he42.VIDEO_LATENCY_S))
     created: str | None = None
+    # Поправка таблиц по ходу слежения (control.speed_adapt): камера быстрее таблицы в столько раз.
+    # Таблицы не меняются; скорость камеры и код для скорости — только через методы ниже.
+    pan_scale: float = 1.0
+    tilt_scale: float = 1.0
+    zoom_scale: float = 1.0
+
+    def axis_scale(self, axis: str) -> float:
+        return self.tilt_scale if axis == "tilt" else self.pan_scale
+
+    def pan_fw(self, code: int, zoom: int, axis: str = "pan") -> float:
+        """Скорость камеры (fw/s, со знаком) по коду pan/tilt — таблица с поправкой оси."""
+        return self.pan.speed(code, zoom) * self.axis_scale(axis)
+
+    def pan_code(self, v: float, zoom: int, current: int = 50, axis: str = "pan") -> int:
+        """Код pan/tilt для скорости v (fw/s) с учётом поправки оси (с гистерезисом от current)."""
+        return self.pan.code_for(v / self.axis_scale(axis), zoom, current=current)
+
+    def pan_max_fw(self, zoom: int, axis: str = "pan") -> float:
+        """Самая большая скорость камеры (fw/s) на этом зуме — код 99 с поправкой оси."""
+        return self.pan_fw(99, zoom, axis)
+
+    def zoom_rate(self, code: int) -> float:
+        """Скорость зума (ln/с, со знаком) по коду #Z — таблица с поправкой."""
+        return self.zoom.rate(code) * self.zoom_scale
+
+    def zoom_code(self, rate: float, current: int = 50) -> int:
+        return self.zoom.code_for(rate / self.zoom_scale, current=current)
+
+    @property
+    def speed_scale(self) -> dict[str, float]:
+        return {"pan": self.pan_scale, "tilt": self.tilt_scale, "zoom": self.zoom_scale}
+
+    def set_speed_scale(self, d) -> None:
+        """Поправка из настроек/записи; неправильные значения пропускаются, остальное — в SCALE_MIN…SCALE_MAX."""
+        if not isinstance(d, dict):
+            return
+        for axis in ("pan", "tilt", "zoom"):
+            v = d.get(axis)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0:
+                setattr(self, f"{axis}_scale", min(SCALE_MAX, max(SCALE_MIN, float(v))))
 
     def latency_for(self, stream_kind: str | None) -> float:
         """Задержка видео для вида потока (mjpeg/h264/sim), по умолчанию — DEFAULT_VIDEO_LATENCY_S."""
@@ -185,11 +228,12 @@ class Calibration:
             "tau": self.tau,
             "video_latency": dict(self.video_latency),
             "created": self.created,
+            "speed_scale": dict(self.speed_scale),
         }
 
     @classmethod
     def from_json(cls, d: dict) -> Calibration:
-        return cls(
+        c = cls(
             pan=SpeedTable.from_json(d["pan"]),
             zoom=ZoomTable([tuple(p) for p in d["zoom"]]),
             dead_time=float(d.get("dead_time", he42.DEAD_TIME_S)),
@@ -198,6 +242,8 @@ class Calibration:
             or dict(he42.VIDEO_LATENCY_S),
             created=d.get("created"),
         )
+        c.set_speed_scale(d.get("speed_scale"))
+        return c
 
 
 def default_calibration(safety: float = 1.0) -> Calibration:

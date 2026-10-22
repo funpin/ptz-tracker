@@ -19,16 +19,18 @@ from ptztracker.control.camera_model import Calibration
 from ptztracker.control.composition import Composition, measure_body
 from ptztracker.control.effort import EffortProfile
 from ptztracker.control.framing import TILT_FROM_FH, FramingController, FramingInput, FramingOutput
+from ptztracker.control.speed_adapt import SpeedAdapter
 from ptztracker.recorder import NullRecorder, Recorder, safe_event
 
 log = logging.getLogger(__name__)
 
 LOOP_HZ = 25.0
 STALE_S = 0.6  # результат анализа старше — анализ встал, камеру останавливаем
-ZOOM_POLL_S = 0.5  # при слежении: зум и (для записи) положение #APC; чаще — опрос отнимает окна у команд
+ZOOM_POLL_S = 0.5  # при слежении: зум и положение #APC (сторож, подстройка скорости, запись); чаще — опрос отнимает окна у команд
 IDLE_POSITION_POLL_S = 2.0  # слежение выкл., идёт запись: положение и зум реже — не мешать ручному управлению
 MANUAL_QUIET_S = 2.0  # после ручной команды столько не опрашиваем (запрос занимает окно ~130 мс)
 _ZOOM_CMD = re.compile(r"#Z(\d\d)")
+_PT_CMD = re.compile(r"#PTS(\d\d)(\d\d)")
 
 
 def sent_zoom_code(info: dict) -> int | None:
@@ -39,17 +41,26 @@ def sent_zoom_code(info: dict) -> int | None:
     return int(m[1]) if m else None
 
 
+def sent_pt_codes(info: dict) -> tuple[int, int] | None:
+    """Коды pan/tilt из события отправки планировщика, если ушла команда #PTSxxyy."""
+    if info.get("key") != "pt" or not info.get("ok"):
+        return None
+    m = _PT_CMD.fullmatch(str(info.get("cmd", "")))
+    return (int(m[1]), int(m[2])) if m else None
+
+
 def output_codes(
     calib: Calibration, out: FramingOutput, zoom_pos: int, current: tuple[int, int, int]
 ) -> tuple[int, int, int]:
     """Скорости регулятора → коды pan/tilt/zoom камеры (с гистерезисом от текущих кодов).
 
     Общая для слежения и повтора записи: повтор должен давать те же коды, что ушли в камеру.
+    Поправка скорости (calib.*_scale) учитывается: камера в k раз быстрее таблицы — код на скорость v/k.
     """
     p0, t0, z0 = current
-    pan = calib.pan.code_for(out.pan, zoom_pos, current=p0)
-    tilt = calib.pan.code_for(out.tilt * TILT_FROM_FH, zoom_pos, current=t0)
-    zc = calib.zoom.code_for(out.zoom, current=z0)
+    pan = calib.pan_code(out.pan, zoom_pos, current=p0)
+    tilt = calib.pan_code(out.tilt * TILT_FROM_FH, zoom_pos, current=t0, axis="tilt")
+    zc = calib.zoom_code(out.zoom, current=z0)
     return pan, tilt, zc
 
 
@@ -74,6 +85,10 @@ class Follower:
         self.query_pan_tilt = query_pan_tilt
         self.recorder: Recorder = recorder or NullRecorder()
         self.controller = FramingController(composition, effort, calib, video_latency())
+        # подстройка скорости: пишет поправку в calib (только этот поток и планировщик — под self._lock)
+        self.adapter = SpeedAdapter(calib)
+        self._adapt_apc_t: float | None = None
+        self._adapt_gz_t: float | None = None
         self.enabled = False
         self.last_reason: str | None = None
         self.output: FramingOutput | None = None
@@ -118,6 +133,8 @@ class Follower:
             latency = self.video_latency()
             self.controller.video_latency = latency
             self.controller.reset()
+            self.adapter.reset()
+            self._adapt_apc_t = self._adapt_gz_t = None
             self._pan_tilt = self._pan_tilt_t = None  # сторожу нового включения — только новые ответы #APC
             self._gen += 1
             self._zoom_cmd_gen.clear()
@@ -194,17 +211,22 @@ class Follower:
             self._zoom_pos, self._zoom_pos_t = z, time.monotonic()
 
     def _on_cmd_sent(self, info: dict) -> None:
-        """Планировщик отправил команду: команда зума — в модель зума регулятора (зум ждёт за поворотом)."""
-        code = sent_zoom_code(info)
-        if code is None:
+        """Планировщик отправил команду: команда зума — в модель зума регулятора (зум ждёт за поворотом);
+        pan/tilt и зум — в подстройку скорости (что камера правда получила)."""
+        code, pt = sent_zoom_code(info), sent_pt_codes(info)
+        if code is None and pt is None:
             return
         t = float(info.get("t", time.monotonic()))  # начало отправки — по часам планировщика (monotonic)
         with self._lock:
             if not self.enabled:
                 return
+            if pt is not None:
+                self.adapter.pt_sent(t, pt[0], pt[1], self._zoom_pos)
+                return
+            self.adapter.zoom_sent(t, code)  # и команда прежнего включения: камера её выполнила
             if info.get("priority") == Priority.TRACKING_ZOOM.name and self._zoom_cmd_gen.get(info["cmd"]) != self._gen:
                 return  # команда прежнего включения слежения
-            self.controller.zoom_sent(t, self.calib.zoom.rate(code))
+            self.controller.zoom_sent(t, self.calib.zoom_rate(code))
 
     def _submit_tracking(self, pan: int, tilt: int, zc: int) -> None:
         """Коды слежения → в очередь (вызывать под self._lock)."""
@@ -248,10 +270,11 @@ class Follower:
                 self._set_zoom_pos(z)
             if not self.enabled and time.monotonic() - self._last_manual < MANUAL_QUIET_S:
                 continue  # пока шёл запрос зума, оператор взялся за камеру — положение не спрашиваем
-            if recording and self.query_pan_tilt is not None:
-                self._record_position(z)
+            # при слежении положение нужно всегда (сторож раскачки, подстройка скорости), без него — для записи
+            if (recording or self.enabled) and self.query_pan_tilt is not None:
+                self._poll_position(z, recording)
 
-    def _record_position(self, zoom: int | None) -> None:
+    def _poll_position(self, zoom: int | None, recording: bool) -> None:
         try:
             pt = self.query_pan_tilt()
         except Exception as e:
@@ -260,7 +283,8 @@ class Follower:
         if pt is not None:
             with self._lock:
                 self._pan_tilt, self._pan_tilt_t = (int(pt[0]), int(pt[1])), time.monotonic()
-            safe_event(self.recorder, "position", pan=pt[0], tilt=pt[1], zoom=zoom)
+            if recording:
+                safe_event(self.recorder, "position", pan=pt[0], tilt=pt[1], zoom=zoom)
 
     def _run(self) -> None:
         period = 1.0 / LOOP_HZ
@@ -274,7 +298,7 @@ class Follower:
                 self.disable("внутренняя ошибка")
 
     def _record_tick(self, now, r, measure, zoom, zoom_t, apc, apc_t, out, codes, comp: Composition,
-                     effort: EffortProfile) -> None:
+                     effort: EffortProfile, scale: dict) -> None:
         """Такт регулятора в запись: всё, что нужно, чтобы повторить его без камеры.
 
         Ошибка здесь не должна дойти до цикла слежения (он бы выключил слежение).
@@ -293,9 +317,26 @@ class Follower:
                 out={"pan": out.pan, "tilt": out.tilt, "zoom": out.zoom, "state": out.state,
                      "error": list(out.error), "size_error": out.size_error},
                 codes=list(codes), composition=comp.key, effort=dataclasses.asdict(effort),
+                speed_scale=scale,  # поправка, с которой посчитаны коды: повтор даёт те же
             )
         except Exception as e:
             safe_event(self.recorder, "note", error=f"такт регулятора не записан: {e}")
+
+    def _adapt(self, zoom: int, zoom_t: float | None, apc, apc_t: float | None) -> None:
+        """Новые ответы #GZ и #APC — в подстройку скорости (под self._lock). Сработал сторож — не менять."""
+        frozen = self.controller.diverged
+        if zoom_t is not None and zoom_t != self._adapt_gz_t:
+            self._adapt_gz_t = zoom_t
+            self.adapter.zoom_measured(zoom_t, zoom, frozen)
+        if apc is not None and apc_t is not None and apc_t != self._adapt_apc_t:
+            self._adapt_apc_t = apc_t
+            self.adapter.pan_tilt_measured(apc_t, apc[0], apc[1], zoom, frozen)
+
+    @property
+    def speed_scale(self) -> dict[str, float]:
+        """Текущая поправка скорости камеры (для сохранения в настройки из потока Qt)."""
+        with self._lock:
+            return self.calib.speed_scale
 
     def _tick(self) -> None:
         if self.polling_paused:
@@ -325,11 +366,13 @@ class Follower:
             )
             self.output = out
             diverged = out.state == "diverged"
+            self._adapt(zoom, zoom_t, apc, apc_t)
             self._codes = output_codes(self.calib, out, zoom, self._codes)
             pan, tilt, zc = self._codes
             # отправка под замком: disable() не сможет вклиниться между проверкой enabled и submit
             self._submit_tracking(pan, tilt, zc)
             comp, effort = self.controller.composition, self.controller.effort  # только ссылки: работа записи — вне замка
-        self._record_tick(now, r, measure, zoom, zoom_t, apc, apc_t, out, (pan, tilt, zc), comp, effort)
+            scale = self.calib.speed_scale
+        self._record_tick(now, r, measure, zoom, zoom_t, apc, apc_t, out, (pan, tilt, zc), comp, effort, scale)
         if diverged:
             self.disable("камера раскачивалась — она быстрее, чем ожидалось. Сервис → Калибровка камеры")
