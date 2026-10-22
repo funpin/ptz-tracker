@@ -200,6 +200,8 @@ class Follower:
                 z = None
             if z is not None:
                 self._zoom_pos = z
+            if not self.enabled and time.monotonic() - self._last_manual < MANUAL_QUIET_S:
+                continue  # пока шёл запрос зума, оператор взялся за камеру — положение не спрашиваем
             if recording and self.query_pan_tilt is not None:
                 self._record_position(z)
 

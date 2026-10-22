@@ -186,10 +186,13 @@ def test_idle_position_poll_is_rare_and_yields_to_manual(tmp_path):
         apc = sum(1 for c in list(s.sim.received)[n0:] if c == "#APC")
         assert 1 <= apc <= 3, apc  # при слежении было бы ~10
         end = time.monotonic() + 4.0
-        n1 = len(s.sim.received)
+        n1 = None
         while time.monotonic() < end:  # оператор держит джойстик
             s.set_pan_tilt_velocity(0.2 if int(time.monotonic() * 4) % 2 else -0.2, 0.0)
             time.sleep(0.25)
+            if n1 is None and time.monotonic() > end - 3.2:
+                # опрос, решённый до первой ручной команды, мог уйти сразу после неё (один цикл ~0,5 с + очередь)
+                n1 = len(s.sim.received)
         s.set_pan_tilt_velocity(0.0, 0.0)
         got = list(s.sim.received)[n1:]
         assert not any(c in ("#APC", "#GZ") for c in got), got
