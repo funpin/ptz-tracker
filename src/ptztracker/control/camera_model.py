@@ -258,8 +258,9 @@ class Calibration:
             zoom=ZoomTable([tuple(p) for p in d["zoom"]]),
             dead_time=float(d.get("dead_time", he42.DEAD_TIME_S)),
             tau=float(d.get("tau", he42.RAMP_TAU_S)),
-            video_latency={k: float(v) for k, v in (d.get("video_latency") or {}).items()}
-            or dict(he42.VIDEO_LATENCY_S),
+            # замеры поверх типовых: у старой калибровки нет новых видов потока (mjpeg_2)
+            video_latency={**he42.VIDEO_LATENCY_S,
+                           **{k: float(v) for k, v in (d.get("video_latency") or {}).items()}},
             created=d.get("created"),
         )
 

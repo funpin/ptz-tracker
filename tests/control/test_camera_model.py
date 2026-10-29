@@ -103,3 +103,13 @@ def test_coast_is_stopping_distance():
     far = t + 3.0
     assert abs(d.coast(far)) < 1e-3  # остаток экспоненты
     assert abs(d.position(far) - d.position(t) - 0.5 * (0.08 + 0.37)) < 1e-3
+
+
+def test_old_calibration_gets_default_latency_for_new_stream_kinds():
+    from ptztracker.camera import he42
+
+    d = default_calibration().to_json()
+    d["video_latency"] = {"mjpeg": 0.2}  # сохранено до появления MJPEG (2)
+    c = Calibration.from_json(d)
+    assert c.latency_for("mjpeg") == 0.2
+    assert c.latency_for("mjpeg_2") == he42.VIDEO_LATENCY_S["mjpeg_2"]
