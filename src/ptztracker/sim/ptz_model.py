@@ -1,7 +1,7 @@
 """Виртуальная PTZ-камера: принимает те же команды, что AW-HE42, и двигается как она.
 
-Скорости, разгон и зум — из замеров живой камеры (camera.he42), углы обзора — из паспорта
-(he42.HFOV_*). Шкала APC — условная (только для симулятора).
+Скорости (°/с, от зума не зависят), разгон и зум — из замеров живой камеры (camera.he42), углы обзора —
+из паспорта (he42.HFOV_*), шкала APC — he42.APC_DEG_PER_UNIT.
 """
 
 from __future__ import annotations
@@ -26,10 +26,9 @@ ZOOM_RATIO_MAX = he42.ZOOM_RATIO
 ZOOM_RATE = 0.4  # доля диапазона зума в секунду при переходе к абсолютной позиции
 LENS_MIN, LENS_MAX = 0x555, 0xFFF
 
-# Камера с «Speed with zoom» сама замедляется на теле, и в долях кадра скорость почти не зависит
-# от зума. Поэтому град/с = доли кадра/с × угол обзора на широком угле.
-HE42_FW_S = {50: 0.0, **he42.PAN_FW_S}
-HE42_DEG_S = {c: v * HFOV_WIDE for c, v in HE42_FW_S.items()}
+# Как живая HE42 (площадка 2026-10-29): постоянные °/с при любом зуме, наклон — как поворот; в долях кадра
+# скорость растёт при приближении.
+HE42_DEG_S = {50: 0.0, **he42.PAN_DEG_S}
 HE42_ZOOM_LN_S = {50: 0.0, **he42.ZOOM_LN_S}
 
 
@@ -57,7 +56,8 @@ def he42_zoom_ln_s(code: int) -> float:
 class SimPtz:
     def __init__(
         self,
-        speed_with_zoom: bool = True,
+        # «Speed With Zoom Pos.» ON: камера сама замедляет pan/tilt на теле (в 20 раз). У живой HE42 выключена
+        speed_with_zoom: bool = False,
         min_interval: float | None = None,
         clock: Callable[[], float] = time.monotonic,
         tau: float = TAU_S,

@@ -1,7 +1,7 @@
 """Модель камеры для регулятора: «код скорости ↔ скорость картинки», зум и динамика разгона.
 
-Единицы: pan/tilt — доли ширины кадра в секунду (fw/s), зум — ln(масштаба) в секунду.
-Числа по умолчанию — из замеров живой AW-HE42 (§7 спеки); мастер калибровки их уточняет.
+Единицы: pan/tilt — доли ширины кадра в секунду (fw/s) на данном зуме, зум — ln(масштаба) в секунду.
+Числа по умолчанию — из замеров живой AW-HE42 (§7 спеки, he42.PAN_DEG_S в °/с); мастер калибровки их уточняет.
 """
 
 from __future__ import annotations
@@ -14,6 +14,9 @@ from ptztracker.camera import he42
 from ptztracker.camera import protocol as P
 
 MOVING_THRESHOLD = 0.005  # быстрее этого (fw/s или ln/s) — код «реально двигает»
+# Гистерезис кода pan/tilt: прежний код держится, пока его скорость в пределах этой доли от нужной. Меньше шага
+# между кодами живой HE42 у 65–75 (~10%; см. DECISIONS). Было 0,15 — при выдуманной таблице с шагом ~5%.
+PT_HYSTERESIS = 0.10
 
 
 def _interp_curve(curve: list[tuple[int, float]], n: int) -> float:
@@ -64,7 +67,7 @@ class SpeedTable:
         v = self._speed_pos(n, zoom)
         return v if code >= 50 else -v
 
-    def code_for(self, v: float, zoom: int, current: int = 50, hysteresis: float = 0.15) -> int:
+    def code_for(self, v: float, zoom: int, current: int = 50, hysteresis: float = PT_HYSTERESIS) -> int:
         return _code_for(lambda n: self._speed_pos(n, zoom), v, current, hysteresis)
 
     def to_json(self) -> dict:
@@ -265,11 +268,28 @@ class Calibration:
         )
 
 
+# Ярлык таблицы без калибровки в CameraConfig.speed_scale: поправка, найденная слежением, относится к своей
+# таблице. Без ярлыка — к прежней (одна точка по зуму, до 2026-10-29), к нынешней она не годится.
+DEFAULT_TABLE_ID = "he42-deg-s-2026-10-29"
+
+# Таблица без калибровки — точки по зуму через столько шагов #GZ: угол обзора меняется геометрически, а таблица
+# между точками линейна; при 16 отрезках (×1,2 на отрезок) ошибка середины отрезка ≤ 0,5%.
+DEFAULT_ZOOM_STEPS = 16
+
+
 def default_calibration(safety: float = 1.0) -> Calibration:
-    """Средние значения до калибровки: одна таблица для всех зумов (камера сама замедляет pan на теле).
+    """Средние значения до калибровки: камера держит постоянные °/с (he42.PAN_DEG_S) на любом зуме, поэтому
+    в долях кадра скорость растёт при приближении как 1 / угол обзора; точки — DEFAULT_ZOOM_STEPS + 1 положений
+    зума. Наклон — по той же таблице (у HE42 он в °/с ровно как поворот). Было (до 2026-10-29): одна точка
+    по зуму — одни и те же fw/s на любом зуме (думали, камера сама замедляет pan на теле).
 
     safety > 1 — считать камеру быстрее замеров: ошибиться в «медленную» сторону безопасно
     (регулятор устойчив до ρ≈0.5), а в «быструю» — раскачка (устойчив до ρ≈1.7).
     """
-    pan = [(c, v * safety) for c, v in he42.PAN_FW_S.items()]
-    return Calibration(pan=SpeedTable({he42.MEASURED_AT_ZOOM: pan}), zoom=ZoomTable(list(he42.ZOOM_LN_S.items())))
+    span = P.LENS_MAX - P.LENS_MIN
+    points = {}
+    for k in range(DEFAULT_ZOOM_STEPS + 1):
+        z = P.LENS_MIN + round(span * k / DEFAULT_ZOOM_STEPS)
+        hfov = he42.hfov_deg((z - P.LENS_MIN) / span)
+        points[z] = [(c, deg * safety / hfov) for c, deg in he42.PAN_DEG_S.items()]
+    return Calibration(pan=SpeedTable(points), zoom=ZoomTable(list(he42.ZOOM_LN_S.items())))

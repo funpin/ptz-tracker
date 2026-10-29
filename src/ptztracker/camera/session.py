@@ -33,7 +33,9 @@ ONE_SHOT_TTL_S = 2.0  # пресет/разовый AF, нажатые при о
 STOP_FLUSH_S = 1.5  # сколько ждать отправки «стопов» при остановке (если камера на связи)
 SIM_START_TILT = -8.0
 SIM_VIDEO_LATENCY_S = 0.15  # как MJPEG у живой камеры
-UNCALIBRATED_SAFETY = 1.5  # без калибровки считаем камеру в 1,5 раза быстрее замеров (запас устойчивости)  # чтобы в симуляторе докладчик сразу был в кадре
+# Без калибровки считаем камеру в 1,2 раза быстрее замеров (he42.PAN_DEG_S): запас устойчивости (раскачка —
+# с ρ≈1,7, то есть камера может быть до ×2 быстрее таблицы). Было 1,5 — при таблице одной на все зумы (см. DECISIONS)
+UNCALIBRATED_SAFETY = 1.2
 
 
 class CameraSession:
@@ -209,7 +211,7 @@ class CameraSession:
         safe_event(self.recorder, "cmd", **info)
 
     def calibration(self):
-        from ptztracker.control.camera_model import Calibration, default_calibration
+        from ptztracker.control.camera_model import DEFAULT_TABLE_ID, Calibration, default_calibration
 
         calib = None
         if self.cfg.calibration:
@@ -217,8 +219,13 @@ class CameraSession:
                 calib = Calibration.from_json(self.cfg.calibration)
             except Exception as e:  # повреждённая калибровка — работаем по средним значениям
                 log.warning("Калибровка камеры %s не читается (%s) — беру средние значения", self.cfg.name, e)
-        calib = calib or default_calibration(safety=UNCALIBRATED_SAFETY)
-        calib.set_speed_scale(self.cfg.speed_scale)  # поправка, найденная слежением в прошлые разы
+        scale = self.cfg.speed_scale  # поправка, найденная слежением в прошлые разы
+        if calib is None:
+            calib = default_calibration(safety=UNCALIBRATED_SAFETY)
+            if isinstance(scale, dict) and scale.get("table") != DEFAULT_TABLE_ID:
+                log.info("Поправка скорости камеры %s найдена для прежней таблицы — не беру", self.cfg.name)
+                scale = None
+        calib.set_speed_scale(scale)
         return calib
 
     def stream_kind(self) -> str:

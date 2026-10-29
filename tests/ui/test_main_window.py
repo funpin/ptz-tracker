@@ -351,13 +351,16 @@ def test_operator_follow_off_revokes_agent_control(qtbot, tmp_path):
 def test_speed_scale_saved_at_most_once_a_minute(qtbot, tmp_path):
     """Поправку скорости от слежения окно пишет в настройки камеры (поток Qt), не чаще раза в минуту;
     новая калибровка её сбрасывает."""
+    from ptztracker.control.camera_model import DEFAULT_TABLE_ID
+
     store = ConfigStore(tmp_path / "c.json")
     w = MainWindow(store)
     qtbot.addWidget(w)
     calib = w.session.follower.calib
     calib.pan_scale = 1.4
     w._update_status()
-    assert store.load().cameras[0].speed_scale == {"pan": 1.4, "tilt": 1.0, "zoom": 1.0}
+    # без калибровки — с ярлыком таблицы: поправка к прежней таблице не годится для нынешней
+    assert store.load().cameras[0].speed_scale == {"pan": 1.4, "tilt": 1.0, "zoom": 1.0, "table": DEFAULT_TABLE_ID}
     calib.pan_scale = 1.6
     w._update_status()
     assert store.load().cameras[0].speed_scale["pan"] == 1.4  # минута не прошла
@@ -371,7 +374,7 @@ def test_speed_scale_saved_at_most_once_a_minute(qtbot, tmp_path):
 def test_new_calibration_resets_speed_scale(qtbot, tmp_path, monkeypatch):
     """Мастер калибровки дал новую таблицу: прежняя поправка скорости к ней не относится — сбрасывается
     и в настройках, и в новом слежении."""
-    from ptztracker.control.camera_model import default_calibration
+    from ptztracker.control.camera_model import DEFAULT_TABLE_ID, default_calibration
 
     class FakeDialog:
         def __init__(self, factory, on_saved, parent=None):
@@ -383,7 +386,7 @@ def test_new_calibration_resets_speed_scale(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr("ptztracker.ui.calibration_dialog.CalibrationDialog", FakeDialog)
     store = ConfigStore(tmp_path / "c.json")
     cfg = store.load()
-    cfg.cameras[0].speed_scale = {"pan": 1.4, "tilt": 1.0, "zoom": 1.0}
+    cfg.cameras[0].speed_scale = {"pan": 1.4, "tilt": 1.0, "zoom": 1.0, "table": DEFAULT_TABLE_ID}
     store.save(cfg)
     w = MainWindow(store)
     qtbot.addWidget(w)

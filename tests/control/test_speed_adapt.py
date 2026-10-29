@@ -54,7 +54,7 @@ def test_camera_faster_than_table_adapts_while_walking():
         assert "diverged" not in tr.state, sf
         rev = _stand_reversals(tr)
         assert all(n <= 1 for n in rev), (sf, rev)
-        assert _at(tr, 30.0)[1] == 1.0  # наклон не ездил — его не трогаем
+        assert _at(tr, 30.0)[1] == _at(tr, 30.0)[0]  # наклон не ездил — берёт поправку поворота
         assert abs(_at(tr, 30.0)[2] - 1.0) < 0.02  # таблица зума верна — зум (отъезд у края) почти без поправки
 
 
@@ -103,6 +103,59 @@ def _zoom_model_error_moving(tr, t_from):
     return max(errs)
 
 
+# 0,06 кадра/с на 555 (3,7°/с) — на 0xAAA уже ~0,26 кадра/с; ходьба 8 с, как в тестах Review Focus 1
+ZW_V, ZW_LEG, ZW_STAND = 0.06, 8.0, 8.0
+ZW_APPROACH = 3 * (ZW_LEG + ZW_STAND)  # с этого момента подходит к камере (размер ×4) — отъезд на ходу
+
+
+def _zoom_walk(t):
+    """Ходит туда-сюда с постоянной скоростью в градусах (ZW_V в долях кадра на 555)."""
+    ph = t % (2 * (ZW_LEG + ZW_STAND))
+    x = ZW_V * min(ph, ZW_LEG)
+    if ph > ZW_LEG + ZW_STAND:
+        x -= ZW_V * min(ph - ZW_LEG - ZW_STAND, ZW_LEG)
+    return AX + x
+
+
+def _zoom_walk_u(t):
+    """Мелкий на общем плане: на стояниях камера наезжает 555 → AAA; потом подходит — отъезд к 555 на ходу."""
+    return 0.045 * (1 + 3 * min(1.0, max(0.0, t - ZW_APPROACH) / ZW_LEG))
+
+
+def test_zoom_555_aaa_555_while_walking_no_swing_with_live_he42_speeds():
+    """Площадка 2026-10-29: камера держит постоянные °/с, и в долях кадра на 0xAAA она в ~4 раза быстрее, чем
+    на 555. Камера стенда — как живая HE42 (°/с по he42.PAN_DEG_S), таблица — без калибровки. Наезд 555 → AAA
+    на стояниях, отъезд AAA → 555 на ходу: сторож молчит, за стояние не больше одного разворота поворота (Review Focus 2), за ходьбу наклон
+    меняет знак не больше раза (на наезде 555 → A9D наклон дважды слабо меняет знак, ±0,02 — это наклон и зум
+    мешают друг другу, часть 2, задача 3), человек не ближе 0,15 к краю; поправка остаётся у 1 (таблица — правда).
+    На ходьбе у 0xAAA (≈0,27 кадра/с в кадре — обычная ходьба Review Focus 1 части 1) средняя ошибка
+    без первой 1 с ≤ 0,05 кадра. Было (таблица одна на все зумы): наклон качался, на ~0x9C0 сторож
+    выключал слежение."""
+    from ptztracker.control.framing import WATCHDOG_MOVING_V
+
+    T = ZW_APPROACH + 2 * (ZW_LEG + ZW_STAND)
+    tr = run(_zoom_walk, world_u=_zoom_walk_u, T=T, zoom_pos=P.LENS_MIN, cmd_delay=0.065, gz_period=0.5,
+             apc_period=0.5, adapt=True, cam_he42=True)
+    assert "diverged" not in tr.state
+    gz = [P.LENS_MIN + z / math.log(he42.ZOOM_RATIO) * (P.LENS_MAX - P.LENS_MIN) for z in tr.cam_zoom]
+    assert max(gz) >= 0xA80 and gz[-1] <= 0x5A0, (hex(round(max(gz))), hex(round(gz[-1])))  # 555 → AAA → 555
+    assert min(min(x, 1 - x) for x in tr.img_x) >= 0.15
+    assert all(abs(s[0] - 1.0) <= 0.1 and s[1] == s[0] for s in tr.scale), (min(tr.scale), max(tr.scale))
+    cyc = ZW_LEG + ZW_STAND
+    near_aaa = 0
+    for k in range(int(T // cyc)):
+        ws = k * cyc
+        stand = [i for i, t in enumerate(tr.t) if ws + ZW_LEG <= t < ws + cyc]
+        assert sign_changes([tr.pan[i] for i in stand], eps=WATCHDOG_MOVING_V) <= 1, ws
+        walk = [i for i, t in enumerate(tr.t) if ws <= t < ws + ZW_LEG]
+        assert sign_changes([tr.tilt[i] for i in walk], eps=WATCHDOG_MOVING_V * 9 / 16) <= 1, ws
+        if gz[walk[0]] >= 0xA00:
+            near_aaa += 1
+            late = [abs(tr.img_x[i] - AX) for i in walk if tr.t[i] >= ws + 1.0]
+            assert sum(late) / len(late) <= 0.05, (ws, sum(late) / len(late))
+    assert near_aaa >= 1
+
+
 def test_zoom_table_wrong_model_within_10pct_after_adaptation():
     """Таблица зума врёт в 1,5 раза (и в 0,7): после двух наездов/отъездов модель зума совпадает с #GZ
     в пределах 10% и во время движения зума (часть 1, Review Focus 3; без подстройки — до 20%)."""
@@ -147,6 +200,35 @@ def test_adapter_converges_and_clamps():
     assert 1.95 < calib.pan_scale <= SCALE_MAX  # дальше — не поправка, а другая камера
 
 
+def _drive_axes(adapter, pan_factor, tilt_factor, T=20.0, pan_code=70, tilt_code=50):
+    """Поворот и наклон своими кодами, каждая ось — в свой раз быстрее таблицы; #APC раз в 0,5 с."""
+    from ptztracker.control.camera_model import CameraDynamics
+
+    calib = adapter.calib
+    cams = []
+    for code, f in ((pan_code, pan_factor), (tilt_code, tilt_factor)):
+        cam = CameraDynamics(calib.dead_time, calib.tau)
+        cam.command(0.0, calib.pan.speed(code, Z) * f)
+        cams.append(cam)
+    adapter.pt_sent(0.0, pan_code, tilt_code, Z)
+    for i in range(1, int(T / 0.5) + 1):
+        t = 0.5 * i
+        p, q = (round(0x8000 + c.position(t) * UNITS_PER_FW) for c in cams)
+        adapter.pan_tilt_measured(t, p, q, Z)
+
+
+def test_tilt_takes_pan_scale_until_it_has_its_own():
+    """Площадка 2026-10-29: камера в °/с одинакова по обеим осям, а наклон почти не ездит прямыми отрезками —
+    своей поправки не набирает (была 1,0 при 2,0 у поворота, и наклон качался). Пока своей нет — берётся
+    поправка поворота; когда наклон сам проехал годные отрезки — своя."""
+    calib = default_calibration()
+    _drive_axes(SpeedAdapter(calib), 1.6, 1.0)  # наклон стоит (код 50)
+    assert abs(calib.pan_scale - 1.6) < 0.05 and calib.tilt_scale == calib.pan_scale
+    calib = default_calibration()
+    _drive_axes(SpeedAdapter(calib), 1.6, 0.8, tilt_code=70)  # наклон едет сам и в 0,8 раза
+    assert abs(calib.pan_scale - 1.6) < 0.05 and abs(calib.tilt_scale - 0.8) < 0.05
+
+
 def test_adapter_frozen_while_watchdog_tripped():
     calib = default_calibration()
     _drive(SpeedAdapter(calib), 1.6, frozen=lambda t: True)
@@ -166,8 +248,8 @@ def test_adapter_skips_while_zoom_moves_and_small_moves():
     assert calib.pan_scale == 1.0
     calib = default_calibration()
     # медленный код: за 0,5 с меньше ADAPT_MIN_APC_UNITS — шум положения, не замер
-    assert calib.pan.speed(56, Z) * 1.6 * 0.5 * UNITS_PER_FW < ADAPT_MIN_APC_UNITS
-    _drive(SpeedAdapter(calib), 1.6, code=56)
+    assert calib.pan.speed(55, Z) * 1.6 * 0.5 * UNITS_PER_FW < ADAPT_MIN_APC_UNITS
+    _drive(SpeedAdapter(calib), 1.6, code=55)
     assert calib.pan_scale == 1.0
 
 
@@ -212,12 +294,19 @@ def test_adapter_ignores_early_glitch():
 
 
 def test_session_applies_saved_speed_scale():
-    """Поправка из настроек камеры ложится на её калибровку (и на средние значения без калибровки)."""
+    """Поправка из настроек камеры ложится на её калибровку (и на средние значения без калибровки — если она
+    найдена для нынешней таблицы: с ярлыком DEFAULT_TABLE_ID). Поправка без ярлыка у камеры без калибровки
+    найдена для прежней таблицы (одна точка по зуму; на площадке 2026-10-29 — 2,0) и не берётся."""
     from ptztracker.camera.session import CameraSession
     from ptztracker.config import CameraConfig
+    from ptztracker.control.camera_model import DEFAULT_TABLE_ID
 
-    for calibrated in (False, True):
-        cfg = CameraConfig(id="x", name="X", ip="sim", kind="sim", speed_scale={"pan": 1.3, "zoom": 9.0},
+    def scale_of(speed_scale, calibrated):
+        cfg = CameraConfig(id="x", name="X", ip="sim", kind="sim", speed_scale=speed_scale,
                            calibration=default_calibration().to_json() if calibrated else None)
-        calib = CameraSession(cfg, analysis=False).calibration()
-        assert calib.speed_scale == {"pan": 1.3, "tilt": 1.0, "zoom": SCALE_MAX}, calibrated
+        return CameraSession(cfg, analysis=False).calibration().speed_scale
+
+    want = {"pan": 1.3, "tilt": 1.0, "zoom": SCALE_MAX}
+    assert scale_of({"pan": 1.3, "zoom": 9.0}, True) == want  # у калибровки мастера ярлык не нужен
+    assert scale_of({"pan": 1.3, "zoom": 9.0, "table": DEFAULT_TABLE_ID}, False) == want
+    assert scale_of({"pan": 2.0, "zoom": 9.0}, False) == {"pan": 1.0, "tilt": 1.0, "zoom": 1.0}

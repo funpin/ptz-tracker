@@ -10,8 +10,13 @@ from ptztracker.camera.client import CameraClient
 from ptztracker.control.calibration import CalibrationRunner, fit_ramp, monotone_curve
 from ptztracker.sim.frame_source import SimFrameSource
 from ptztracker.sim.http_server import SimHttpServer
-from ptztracker.sim.ptz_model import HE42_FW_S, SimPtz
+from ptztracker.sim.ptz_model import HE42_DEG_S, SimPtz, he42_deg_s
 from ptztracker.sim.scene import SyntheticStage
+
+
+def wide_fw(code: int) -> float:
+    """Скорость камеры симулятора в долях кадра на широком угле (как у живой HE42 — по he42.PAN_DEG_S)."""
+    return he42_deg_s(code) / he42.HFOV_WIDE_DEG
 
 
 class FlatScene:
@@ -41,7 +46,7 @@ def test_calibration_recovers_sim_table_and_returns_home():
         cal = r.run()
         for code in (60, 65, 70, 75, 80):
             got = cal.pan.speed(code, 0x555)
-            assert abs(got / HE42_FW_S[code] - 1) < 0.15, (code, got, HE42_FW_S[code])
+            assert abs(got / wide_fw(code) - 1) < 0.15, (code, got, wide_fw(code))
         assert 0.2 <= cal.tau <= 0.55
         assert cal.zoom.rate(75) > 0.1
         assert cal.created
@@ -62,7 +67,7 @@ def test_flat_scene_completes_with_warning():
         assert any("однотонн" in m for m in msgs), msgs
         assert cal.video_latency["sim"] == he42.VIDEO_LATENCY_S["sim"]
         for code in (70, 80):
-            assert abs(cal.pan.speed(code, 0x555) / HE42_FW_S[code] - 1) < 0.1
+            assert abs(cal.pan.speed(code, 0x555) / wide_fw(code) - 1) < 0.1
         assert 0.27 <= cal.tau <= 0.47
     finally:
         src.stop()
@@ -211,8 +216,8 @@ def test_wizard_waits_for_zoom_that_starts_late():
     sim.handle = late_zoom
     try:
         cal = CalibrationRunner(client.send, src, lambda m: None, zooms=[0xFFF], codes=(70, 80)).run()
-        # на теле камера медленнее в 20 раз по углу; угол обзора — по доехавшему #GZ
-        truth = {c: HE42_FW_S[c] * he42.HFOV_WIDE_DEG / he42.ZOOM_RATIO / he42.HFOV_TELE_DEG for c in (70, 80)}
+        # °/с камеры от зума не зависят (как у живой HE42); угол обзора — по доехавшему #GZ
+        truth = {c: HE42_DEG_S[c] / he42.HFOV_TELE_DEG for c in (70, 80)}
         for code, want in truth.items():
             assert abs(cal.pan.speed(code, 0xFFF) / want - 1) < 0.1, (code, cal.pan.speed(code, 0xFFF), want)
     finally:
@@ -239,7 +244,7 @@ def test_wizard_near_pan_end_runs_toward_centre():
         stop.set()
         assert max(peak) < 171.0
         for code in (70, 80, 90):
-            assert abs(cal.pan.speed(code, 0x555) / HE42_FW_S[code] - 1) < 0.1
+            assert abs(cal.pan.speed(code, 0x555) / wide_fw(code) - 1) < 0.1
         assert abs(sim.pan_deg - 170.0) <= 1.0
     finally:
         src.stop()

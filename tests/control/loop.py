@@ -14,6 +14,7 @@ from ptztracker.control.effort import EffortProfile
 from ptztracker.control.follower import output_codes
 from ptztracker.control.framing import TILT_FROM_FH, FramingController, FramingInput
 from ptztracker.control.speed_adapt import SpeedAdapter
+from ptztracker.sim.ptz_model import he42_deg_s
 
 CTRL_DT = 0.04  # 25 Гц
 MEAS_DT = 1 / 14  # анализ 14 к/с
@@ -56,6 +57,9 @@ def run(
     cam_dead_time: float | None = None,  # мёртвое время камеры на самом деле (None — как в калибровке)
     meas_dt: float = MEAS_DT,  # период замеров анализа (MJPEG 2: 12,5 к/с → 0,08)
     adapt: bool = False,  # как Follower: скорости → коды камеры (с поправкой), подстройка скорости по #APC/#GZ
+    # камера — как живая HE42 (adapt=True): постоянные °/с по коду (sim.ptz_model.he42_deg_s) при любом зуме,
+    # а не таблица калибровки регулятора: проверяет саму таблицу (площадка 2026-10-29, §3б)
+    cam_he42: bool = False,
 ) -> Trace:
     calib = default_calibration()
     adapter = SpeedAdapter(calib) if adapt else None
@@ -116,6 +120,11 @@ def run(
         while queued and queued[0][0] <= t + 1e-9:
             _, qp, qt = queued.pop(0)
             k = math.exp(cam_z.position(t))
+            if adapter is not None and cam_he42:  # °/с камеры → мировые единицы (доли кадра на зуме старта)
+                adapter.pt_sent(t, qp, qt, gz_pos)
+                cam_x.command(t, speed_factor * he42_deg_s(qp) / hfov_at(zoom_pos))
+                cam_y.command(t, speed_factor * he42_deg_s(qt) / hfov_at(zoom_pos) / TILT_FROM_FH)
+                continue
             if adapter is not None:  # камера едет по таблице без поправки, только в speed_factor раз быстрее
                 adapter.pt_sent(t, qp, qt, gz_pos)
                 qp, qt = calib.pan.speed(qp, gz_pos), calib.pan.speed(qt, gz_pos) / TILT_FROM_FH

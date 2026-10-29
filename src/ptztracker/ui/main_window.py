@@ -28,6 +28,7 @@ from ptztracker import __version__
 from ptztracker.api.backend import start_window_api
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import AppConfig, CameraConfig, ConfigStore, get_password, set_password
+from ptztracker.control.camera_model import DEFAULT_TABLE_ID
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
 from ptztracker.tally import atem_input_of
@@ -806,9 +807,13 @@ class MainWindow(QMainWindow):
         cam = next((c for c in self.cfg.cameras if c.id == s.cfg.id), None)  # симулятор в настройки не пишем
         if cam is None:
             return
-        scale = {k: round(v, 3) for k, v in f.speed_scale.items()}
+        scale: dict = {k: round(v, 3) for k, v in f.speed_scale.items()}
         old = cam.speed_scale if isinstance(cam.speed_scale, dict) else {}
-        if all(abs(v - float(old.get(k, 1.0))) < SPEED_SCALE_SAVE_DIFF for k, v in scale.items()):
+        if cam.calibration is None:
+            scale["table"] = DEFAULT_TABLE_ID  # поправка к таблице без калибровки — с её ярлыком
+        if old.get("table") == scale.get("table") and all(
+            abs(v - float(old.get(k, 1.0))) < SPEED_SCALE_SAVE_DIFF for k, v in scale.items() if k != "table"
+        ):
             return
         cam.speed_scale = scale
         self._speed_scale_saved_t = time.monotonic()

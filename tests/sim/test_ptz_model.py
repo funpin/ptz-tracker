@@ -47,8 +47,18 @@ def test_no_instant_jump_on_start():
     assert s.pan_vel < 90 * 0.2  # инерция
 
 
-def test_slower_at_tele_when_speed_with_zoom():
+def test_constant_deg_s_at_any_zoom_like_live_he42():
+    """Площадка 2026-10-29: у живой HE42 «Speed With Zoom Pos.» выключена — °/с одни на любом зуме."""
     a, b = SimPtz(), SimPtz()
+    a.zoom, b.zoom = 0.0, 1.0
+    for s in (a, b):
+        s.handle("#PTS7070")
+        run(s, 1.0)
+    assert abs(b.pan_deg / a.pan_deg - 1) < 1e-6 and abs(a.tilt_deg / a.pan_deg - 1) < 1e-6
+
+
+def test_slower_at_tele_when_speed_with_zoom():
+    a, b = SimPtz(speed_with_zoom=True), SimPtz(speed_with_zoom=True)
     a.zoom, b.zoom = 0.0, 1.0
     for s in (a, b):
         s.handle("#PTS7050")
@@ -126,29 +136,29 @@ def test_received_log_capped():
 
 
 def test_he42_speed_table_shape():
-    # таблица по замерам живой AW-HE42: 55 почти стоит, 70 ≈ 0.33 кадра/с = 20.5°/с на широком угле
-    s = SimPtz(speed_with_zoom=False)
+    # таблица по замерам живой AW-HE42 (2026-10-29): 55 — 0,32°/с, 70 — 13,6°/с
+    s = SimPtz()
     s.handle("#PTS7050")
     run(s, 3.0)
-    s2 = SimPtz(speed_with_zoom=False)
+    s2 = SimPtz()
     s2.handle("#PTS5550")
     run(s2, 3.0)
-    assert abs(s.pan_vel - 0.33 * 62.1) < 0.5 and abs(s2.pan_vel) < 0.2
+    assert abs(s.pan_vel - 13.62) < 0.3 and abs(s2.pan_vel - 0.32) < 0.05
 
 
 def test_ramp_like_he42():
     # до 90% скорости — за 0.75–1.0 с после команды (замер: ~0.85 с)
-    s = SimPtz(speed_with_zoom=False)
+    s = SimPtz()
     s.handle("#PTS8050")
     t = 0.0
-    while s.pan_vel < 0.9 * 0.50 * 62.1 and t < 3:
+    while s.pan_vel < 0.9 * 32.99 and t < 3:
         s.update(0.01)
         t += 0.01
     assert 0.75 <= t <= 1.0
 
 
 def test_dead_time():
-    s = SimPtz(speed_with_zoom=False)
+    s = SimPtz()
     s.handle("#PTS8050")
     run(s, 0.05)
     assert s.pan_vel == 0.0

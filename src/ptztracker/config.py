@@ -43,7 +43,8 @@ class CameraConfig:
     stream: str = "auto"  # "auto" | "mjpeg_1" | "mjpeg_2" | "h264_1"
     calibration: dict | None = None  # результат мастера калибровки (control.camera_model.Calibration.to_json)
     # поправка скорости по ходу слежения (control.speed_adapt): {"pan", "tilt", "zoom"} — камера быстрее
-    # таблицы калибровки во столько раз; новая калибровка её сбрасывает
+    # таблицы калибровки во столько раз; новая калибровка её сбрасывает. Без калибровки — с ярлыком таблицы
+    # "table" (camera_model.DEFAULT_TABLE_ID): поправка без ярлыка найдена для прежней таблицы и не берётся
     speed_scale: dict | None = None
     composition: str = "waist_center"  # control.composition.COMPOSITIONS
     effort: float = 0.5  # 0 — мягко, 1 — резко

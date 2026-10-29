@@ -5,7 +5,8 @@
 который дали бы отправленные коды по таблице (через ту же модель разгона, что у регулятора: мёртвое
 время + τ). Зум: так же между двумя ответами #GZ (ln масштаба). Отношение «правда / таблица» —
 во сколько раз камера быстрее таблицы; поправка (Calibration.pan_scale/tilt_scale/zoom_scale) плавно
-идёт к медиане последних отношений и не выходит за SCALE_MIN…SCALE_MAX.
+идёт к медиане последних отношений и не выходит за SCALE_MIN…SCALE_MAX. Пока у наклона нет своих отношений,
+его поправка — та же, что у поворота (камера одинакова по обеим осям в °/с).
 
 Отрезок годится, только если камера на нём ехала (коды, двигающие камеру, — не меньше ADAPT_STEADY_S),
 почти всё время в одну сторону, со скоростью модели на концах почти одной (ошибка разгона не сказывается)
@@ -190,10 +191,21 @@ class SpeedAdapter:
 
     # --- поправка ---------------------------------------------------------
 
+    def _has_own(self, axis: str) -> bool:
+        """У оси есть своя поправка: набралось ADAPT_MIN_RATIOS отношений или был длинный отрезок."""
+        hist = self._ratios[axis]
+        return len(hist) >= ADAPT_MIN_RATIOS or any(d >= ADAPT_MIN_EVIDENCE_S for _, d in hist)
+
     def _apply(self, axis: str, log_ratio: float, dt: float) -> None:
         hist = self._ratios[axis]
         hist.append((max(math.log(SCALE_MIN), min(math.log(SCALE_MAX), log_ratio)), dt))
         del hist[:-ADAPT_MEDIAN_N]
+        # У HE42 наклон в °/с ровно как поворот, а сам наклон годных отрезков почти не даёт (площадка 2026-10-29:
+        # поправка наклона 1,0 при 2,0 у поворота — наклон качался на приближении). Пока своей нет, у наклона
+        # поправка поворота, а его отношения только копятся; потом своя — от поправки поворота.
+        if axis == "tilt" and not self._has_own("tilt"):
+            self.calib.tilt_scale = self.calib.pan_scale
+            return
         cur = math.log(getattr(self.calib, f"{axis}_scale"))
         vals = [r for r, _ in hist]
         if len(vals) < ADAPT_MIN_RATIOS and max(d for _, d in hist) < ADAPT_MIN_EVIDENCE_S:
@@ -201,3 +213,5 @@ class SpeedAdapter:
         target = statistics.median(vals)
         new = cur + (target - cur) * (1 - math.exp(-dt / ADAPT_TAU_S))
         setattr(self.calib, f"{axis}_scale", min(SCALE_MAX, max(SCALE_MIN, math.exp(new))))
+        if axis == "pan" and not self._has_own("tilt"):
+            self.calib.tilt_scale = self.calib.pan_scale

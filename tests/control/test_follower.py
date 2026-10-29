@@ -208,10 +208,12 @@ def test_divergence_disables_with_calibration_hint():
 
 
 def test_uncalibrated_uses_conservative_table():
+    from ptztracker.camera.session import UNCALIBRATED_SAFETY
     from ptztracker.control.camera_model import default_calibration
 
     s = CameraSession(CameraConfig(id="x", name="X", ip="sim", kind="sim"), analysis=False)
-    assert abs(s.calibration().pan.speed(70, 0x73F) - 1.5 * default_calibration().pan.speed(70, 0x73F)) < 1e-9
+    want = UNCALIBRATED_SAFETY * default_calibration().pan.speed(70, 0x73F)
+    assert UNCALIBRATED_SAFETY > 1 and abs(s.calibration().pan.speed(70, 0x73F) - want) < 1e-9
 
 
 def test_zoom_model_matches_camera_on_sim():
@@ -259,6 +261,40 @@ def test_speed_adapts_on_sim_when_camera_faster_than_table():
         assert s.follower.enabled, s.follower.last_reason
         scale = s.follower.speed_scale
         assert abs(scale["pan"] - 1.6) <= 0.15, scale
+    finally:
+        s.stop()
+
+
+def test_zoom_555_aaa_555_while_walking_no_swing_on_sim():
+    """Часть 2, задача 2: симулятор как живая HE42 — °/с от зума не зависят, в долях кадра на приближении камера
+    в разы быстрее, чем на общем плане. Без калибровки (таблица в °/с с запасом UNCALIBRATED_SAFETY):
+    «Пояс» с общего плана — наезд дальше 0xAAA, прохаживание на приближении, затем на ходу «Общий» — отъезд
+    к общему плану (не дальше 0x6EB: «Общему» нужен чуть больший человек, чем на 555). Слежение не выключается (сторож молчит), нос в кадре, поправка — около 1 / запас, у наклона —
+    как у поворота. Было (таблица одна на все зумы): на площадке поправка упёрлась в 2,0, наклон качался."""
+    from ptztracker.camera.session import UNCALIBRATED_SAFETY
+    from ptztracker.control.composition import COMPOSITIONS
+
+    s = sim_session(script="lecture")
+    try:
+        select_person(s)
+        assert s.follower.enable()
+        t0, zooms, xs, switched = time.monotonic(), [], [], None
+        while time.monotonic() - t0 < 42 and s.follower.enabled:
+            el = time.monotonic() - t0
+            if switched is None and el > 28:  # «lecture»: со 26 с идёт влево — отъезд на ходу
+                s.follower.set_composition(COMPOSITIONS["wide"])
+                switched = len(zooms)
+            fr = s.frames.latest()
+            kp = fr.meta["people"][0]
+            zooms.append(s.sim.zoom)
+            if kp[0, 2] > 0:
+                xs.append(kp[0, 0] / fr.image.shape[1])
+            time.sleep(0.05)
+        assert s.follower.enabled, s.follower.last_reason
+        assert max(zooms[:switched]) >= 0.5 and zooms[-1] <= 0.2, (max(zooms[:switched]), zooms[-1])
+        assert 0.1 <= min(xs) and max(xs) <= 0.9, (min(xs), max(xs))
+        scale = s.follower.speed_scale
+        assert abs(scale["pan"] * UNCALIBRATED_SAFETY - 1) <= 0.15 and scale["tilt"] == scale["pan"], scale
     finally:
         s.stop()
 

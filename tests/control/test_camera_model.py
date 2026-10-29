@@ -13,17 +13,17 @@ Z = 0x73F
 
 def test_speed_interpolates_and_symmetric():
     t = default_calibration().pan
-    assert abs(t.speed(60, Z) - 0.034) < 1e-9 and abs(t.speed(40, Z) + 0.034) < 1e-9
+    v60, v62 = t.speed(60, Z), t.speed(62, Z)
+    assert v60 > 0 and abs(t.speed(40, Z) + v60) < 1e-12
     assert t.speed(50, Z) == 0.0
-    mid = t.speed(61, Z)
-    assert 0.034 < mid < 0.07
+    assert v60 < t.speed(61, Z) < v62
 
 
 def test_code_for_minimal_and_deadband():
     t = default_calibration().pan
     assert t.code_for(0.0005, Z) == 50
-    assert t.code_for(0.034, Z) == 60
-    assert t.code_for(-0.33, Z) == 30
+    assert t.code_for(t.speed(60, Z), Z) == 60
+    assert t.code_for(-t.speed(70, Z), Z) == 30
     assert t.code_for(5.0, Z) == 99
 
 
@@ -32,6 +32,23 @@ def test_code_for_hysteresis():
     want = t.speed(64, Z) * 1.08
     assert t.code_for(want, Z, current=64) == 64
     assert t.code_for(want, Z, current=50) == 65
+
+
+def test_default_table_constant_deg_s_like_live_he42():
+    """Площадка 2026-10-29 (§3б): HE42 держит постоянные °/с на любом зуме («Speed With Zoom Pos.» выключена),
+    поворот и наклон одинаково; код 70 — около 13°/с. В долях кадра скорость растёт при приближении как
+    hfov(555)/hfov(z). Было: одна точка по зуму — одни и те же fw/s на любом зуме."""
+    from ptztracker.control.calibration import hfov_at
+
+    c = default_calibration()
+    for z in (0x555, 0x6A9, 0x800, 0x954, 0xAAA, 0xC00, 0xD55, 0xFFF):
+        assert abs(c.pan_fw(70, z) * hfov_at(z) / 13.0 - 1) <= 0.1, hex(z)
+        grow = c.pan_fw(70, z) / c.pan_fw(70, 0x555)
+        assert abs(grow / (hfov_at(0x555) / hfov_at(z)) - 1) <= 0.1, hex(z)
+        assert c.pan_fw(70, z, axis="tilt") == c.pan_fw(70, z)
+    # прямой замер по #APC на 555 (°/с): таблица мастера калибровки сходится с ним в пределах 10%
+    for code, deg in ((55, 0.31), (60, 1.70), (63, 3.65), (65, 6.05), (70, 13.0), (75, 21.5)):
+        assert abs(c.pan_fw(code, 0x555) * hfov_at(0x555) / deg - 1) <= 0.1, code
 
 
 def test_zoom_interpolation_between_positions():
