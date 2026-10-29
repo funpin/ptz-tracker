@@ -53,6 +53,7 @@ RETURN_GAIN, RETURN_V_MAX, RETURN_WINDOW_S, WALK_BACK_V = 2.5, 0.25, 3.0, 0.1
 # ESCAPE_ERR — сразу ESCAPE_ZOOM ln/с: поворотом уже не успеть (быстрая ходьба на «Поясе»).
 EDGE_ZOOM_ERR, EDGE_ZOOM, EDGE_ZOOM_ACCEL = 0.3, 1.5, 2.0
 ESCAPE_ERR, ESCAPE_ZOOM, ESCAPE_ZOOM_ACCEL = 0.4, 0.6, 10.0
+SAT_FRAC, EDGE_SHORTFALL, HARD_EDGE_ERR = 0.9, 0.08, 0.39  # отъезд — когда v_cmd ≥ 0,9·потолок; полная скорость при недостаче ≥ 0,08
 # Сторож раскачки: столько настоящих разворотов за окно — стоп и выключение. Часть 0 (B3): 61% прежних
 # «разворотов» — при команде, на которой камера стоит, 81% — во время зума; правила — в SwingWatch.
 WATCHDOG_REVERSALS, WATCHDOG_WINDOW_S = 3, 6.0
@@ -576,7 +577,18 @@ class FramingController:
         elif self._still_since is None:
             self._still_since = now
         walking = state == "moving" or self._still_since is None
-        zoom, size_err = self._zoom(now, dt, active, walking, e, inp.zoom_pos)
+        caps = ((self.x, v_cap, e.soft_x), (self.y, min(e.v_max, self.calib.pan_max_fw(inp.zoom_pos, axis="tilt") / TILT_FROM_FH), e.soft_y))
+        # недостача: на сколько догон не успевает (прогноз ухода минус порог). В середине зоны (EDGE_ZOOM_ERR…
+        # HARD_EDGE_ERR) — только если поворот на пределе (v_cmd ≥ SAT_FRAC·потолок), а ошибка растёт: иначе
+        # камера справится поворотом сама. Человек уже у самого края — отъезд сразу, не дожидаясь разгона.
+        shortfall = 0.0
+        for ax, cap, soft in caps:
+            a, thr = abs(ax.err), max(soft, EDGE_ZOOM_ERR)
+            if a > HARD_EDGE_ERR:
+                shortfall = max(shortfall, a - thr)
+            elif a > thr and ax.escape > a and (abs(ax.v_cmd) >= SAT_FRAC * cap or ax.escape > ESCAPE_ERR):
+                shortfall = max(shortfall, ax.escape - thr)
+        zoom, size_err = self._zoom(now, dt, active, walking, e, inp.zoom_pos, shortfall)
         return FramingOutput(pan, tilt, zoom, state, (self.x.err, self.y.err), size_err)
 
     def _k(self, t: float) -> float:
@@ -584,14 +596,15 @@ class FramingController:
         return math.exp(self.zdyn.position(t))
 
     def _zoom(
-        self, now: float, dt: float, active: bool, walking: bool, e: EffortProfile, zoom_pos: int
+        self, now: float, dt: float, active: bool, walking: bool, e: EffortProfile, zoom_pos: int,
+        shortfall: float = 0.0,
     ) -> tuple[float, float | None]:
         want = 0.0
         size_err = None
         escaping = False
         if active:
-            at_edge = abs(self.x.err) > max(e.soft_x, EDGE_ZOOM_ERR) or abs(self.y.err) > max(e.soft_y, EDGE_ZOOM_ERR)
-            escaping = self.x.escape > ESCAPE_ERR
+            at_edge = shortfall > 0
+            escaping = self.x.escape > ESCAPE_ERR and self.x.escape > abs(self.x.err)
             if self._u is not None and self._u > 0:
                 size_err = math.log(self._u / self.composition.u_frac)
                 a = abs(size_err)
@@ -607,9 +620,11 @@ class FramingController:
                     if want > 0 and not calm:
                         want = 0.0
             if at_edge:
-                want = -e.zoom_max * EDGE_ZOOM  # человек уходит из кадра — сразу шире
+                # человек уходит из кадра, а поворот на пределе — шире, со скоростью по недостаче
+                want = -e.zoom_max * EDGE_ZOOM * min(1.0, shortfall / EDGE_SHORTFALL)
             if escaping:
-                want = min(want, -ESCAPE_ZOOM)
+                miss = self.x.escape - ESCAPE_ERR  # прогноз ухода дальше ESCAPE_ERR — отъезд по недостаче
+                want = min(want, -ESCAPE_ZOOM * min(1.0, miss / EDGE_SHORTFALL))
         elif any(ax.exit_cmd and now - ax.active_t <= LOST_COAST_S for ax in (self.x, self.y)) and not self.diverged:
             want, escaping = -ESCAPE_ZOOM, True  # ушёл за край и пропал: идём за ним и шире, чтобы снова увидеть
         # у края диапазона объектива дальше не зумируем

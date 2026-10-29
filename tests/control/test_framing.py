@@ -579,3 +579,16 @@ def test_sway_shuffle_does_not_trip_watchdog_or_overswing():
                 cam.command(t + delay, p)
             pos = [cam.position(t) for t in tr.t if t > 5]
             assert max(pos) - min(pos) <= 0.12, (eff, delay, max(pos) - min(pos))
+
+
+def test_edge_zoom_out_only_when_saturated():
+    """Часть 1, задача 6: отъезд у края — только когда поворот уже на пределе и ошибка за мягкой зоной растёт.
+    Человек вышел из мёртвой зоны к краю, но стоит: камера догоняет поворотом, зум не трогаем.
+    Быстрая ходьба (поворот на пределе, человек всё равно уходит) — отъезд есть, плавный."""
+    sx = 0.33  # стоит на 0,33 кадра правее якоря: за EDGE_ZOOM_ERR, но не у самого края — поворот справится сам
+    tr = _follow(lambda t: AX + sx, 12.0)
+    assert "diverged" not in tr.state
+    assert min(tr.cam_zoom) >= -0.03, min(tr.cam_zoom)  # отъезда нет
+    f, walks, T = _walks(0.77, 4.0)
+    tr = _follow(f, T, cmd_delay=0.13)
+    assert min(tr.cam_zoom) < -0.1  # а на пределе — отъезжает
