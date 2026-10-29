@@ -156,6 +156,31 @@ def test_zoom_555_aaa_555_while_walking_no_swing_with_live_he42_speeds():
     assert near_aaa >= 1
 
 
+def test_tilt_quiet_while_standing_during_zoom_in_with_live_he42_speeds():
+    """Площадка 2026-10-29, прогон 4б: после наезда зума до ~0xA8E наклон закачался (коды 23↔75, ошибка до ±0,58,
+    сторож выключил слежение). Человек стоит, мелкий на общем плане, камера наезжает 555 → ~AA0 (сдвиг якоря
+    от зума доворачивается вместе с ним), камера — как живая HE42 (°/с), и ещё в 1,5–2 раза быстрее по вертикали:
+    ошибка по y не больше 0,09 кадра, за любую секунду не больше одного разворота наклона (за команду
+    сильнее WATCHDOG_MOVING_V·9/16), после наезда наклон молчит, сторож не срабатывает. Дрожание носа по y
+    на записи 0,005–0,01 кадра (σ) — раскачку не даёт, в тесте его нет."""
+    from ptztracker.control.framing import WATCHDOG_MOVING_V
+
+    eps = WATCHDOG_MOVING_V * 9 / 16
+    ay = COMPOSITIONS["waist_center"].anchor[1]
+    for wy, sf in ((0.25, 1.0), (0.35, 1.0), (0.25, 1.5), (0.25, 2.0)):
+        tr = run(lambda t: AX, world_y=lambda t, wy=wy: wy, world_u=lambda t: 0.045, T=45, zoom_pos=P.LENS_MIN,
+                 cmd_delay=0.065, gz_period=0.5, apc_period=0.5, adapt=True, cam_he42=True, speed_factor=sf)
+        gz = [P.LENS_MIN + z / math.log(he42.ZOOM_RATIO) * (P.LENS_MAX - P.LENS_MIN) for z in tr.cam_zoom]
+        key = (wy, sf)
+        assert "diverged" not in tr.state, key
+        assert max(gz) >= 0xA00, (key, hex(round(max(gz))))
+        assert max(abs(y - ay) for y in tr.img_y[25:]) <= 0.09, key
+        for k in range(45):
+            win = [tr.tilt[i] for i, t in enumerate(tr.t) if k <= t < k + 1]
+            assert sign_changes(win, eps=eps) <= 1, (key, k)
+        assert max(abs(x) for x in tr.tilt[round(30 / 0.04):]) <= eps, key  # наезд кончился — наклон молчит
+
+
 def test_zoom_table_wrong_model_within_10pct_after_adaptation():
     """Таблица зума врёт в 1,5 раза (и в 0,7): после двух наездов/отъездов модель зума совпадает с #GZ
     в пределах 10% и во время движения зума (часть 1, Review Focus 3; без подстройки — до 20%)."""

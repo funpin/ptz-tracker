@@ -4,7 +4,11 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-ALLOWED_ZIPS = {"tests/data/episodes/sim_walk_30s.zip"}  # эпизод симулятора, без паролей
+ALLOWED_ZIPS = {  # эпизоды без паролей (в meta username = null; кадров нет), для тестов регулятора на записях площадки
+    "tests/data/episodes/sim_walk_30s.zip",
+    "tests/data/episodes/2026-10-29-r1-waist.zip",
+    "tests/data/episodes/2026-10-29-r4d-sharp.zip",
+}
 
 
 def tracked() -> list[str]:
