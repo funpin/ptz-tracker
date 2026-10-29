@@ -217,6 +217,7 @@ def test_target_adopts_new_track_at_predicted_place():
     # через 0,2 с рядом с предсказанным местом (500, 140) — в стороне на 90 px, модель камеры неточна —
     # появляется новый трек почти того же размера: обычное сопоставление (IoU < 0,3) его не берёт, а переход по месту берёт
     feed(tr, t, [person(150, 200), person(410, 140, 124, 305)], motion)
+    feed(tr, t + DT, [person(150, 200), person(410, 140, 124, 305)], motion)  # одного кадра мало (hits >= 2)
     assert tr.target_id == 2 and tr.target_state == "tracking"
     assert tr.target.box[0] > 300  # это новый человек справа, а не сосед
     ad = tr.pop_adoptions()
@@ -250,5 +251,71 @@ def test_no_adoption_when_new_track_too_late_wrong_size_or_wrong_place():
         else:
             newcomer = person(900, 400)
         feed(tr, t, [person(150, 200), newcomer], motion)
+        feed(tr, t + DT, [person(150, 200), newcomer], motion)
         assert tr.target_state == "lost", kind
         assert tr.pop_adoptions() == [], kind
+
+
+def test_predicted_shift_the_camera_did_not_make_gives_no_false_velocity():
+    """Модель камеры обещает сдвиг, а картинка не двинулась (камера отстаёт): человек стоит, скорость ~0."""
+    tr = PersonTracker()
+    for i in range(5):
+        feed(tr, i * DT, [person(500, 200)])
+    tr.select(1)
+    motion = shift_motion(-100, -60, 5 * DT - 0.01)
+    for k in range(5, 8):
+        feed(tr, k * DT, [person(500, 200)], motion)
+    assert tr.target_state == "tracking"
+    assert abs(tr.target.velocity[0]) < 5 and abs(tr.target.velocity[1]) < 5
+
+
+# --- переход цели на новый трек: внешность и устойчивость ---------------------------------------
+
+
+def _img_feed(tr, t, specs, motion=None):
+    """specs: (cx, top, color[, green_frac]) — человек с долей рубашки другого цвета (фраза 0,5 -> расстояние ~0,54)."""
+    img, ppl = scene(*[s[:3] for s in specs])
+    for s in specs:
+        if len(s) > 3:
+            x1 = int(s[0] - 60)
+            img[int(s[1] + 45) : int(s[1] + 180), x1 : x1 + int(120 * s[3])] = GREEN
+    return tr.update(ppl, t, img, motion=motion)
+
+
+def _lose_with_images(tr, motion):
+    for i in range(5):
+        _img_feed(tr, i * DT, [(150, 200, BLUE), (600, 200, RED)])
+    tr.select(2)
+    t = 5 * DT
+    for _ in range(3):
+        _img_feed(tr, t, [(150, 200, BLUE)], motion)
+        t += DT
+    return t
+
+
+def test_no_adoption_of_newcomer_with_different_appearance():
+    tr = PersonTracker()
+    motion = shift_motion(-100, -60, 5 * DT + 0.01)
+    t = _lose_with_images(tr, motion)
+    for k in range(3):  # рядом с предсказанным местом (500, 140) другой по одежде человек: расстояние между 0,35 и 0,6
+        _img_feed(tr, t + k * DT, [(150, 200, BLUE), (410, 140, RED, 0.5)], motion)
+    assert tr.target_state == "lost" and tr.pop_adoptions() == []
+
+
+def test_adoption_picks_similar_candidate_not_just_best_iou():
+    tr = PersonTracker()
+    motion = shift_motion(-100, -60, 5 * DT + 0.01)
+    t = _lose_with_images(tr, motion)
+    for k in range(3):  # (500, 320) — чуть ближе к месту (IoU 0,25), но другой по одежде; (410, 140) — хуже по месту, но наш
+        _img_feed(tr, t + k * DT, [(150, 200, BLUE), (500, 320, RED, 0.3), (410, 140, RED)], motion)
+    assert tr.target_state == "tracking" and tr.target.box[1] < 200
+    ad = tr.pop_adoptions()
+    assert len(ad) == 1
+
+
+def test_one_frame_false_detection_is_not_adopted():
+    tr = PersonTracker()
+    motion = shift_motion(-100, -60, 5 * DT + 0.01)
+    t = lose_target(tr, motion)
+    feed(tr, t, [person(150, 200), person(410, 140, 124, 305)], motion)  # вспышка в один кадр
+    assert tr.target_state == "lost" and tr.pop_adoptions() == []

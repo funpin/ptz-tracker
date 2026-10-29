@@ -289,4 +289,4 @@ def test_analyzer_records_target_adoption_and_passes_camera_motion():
     finally:
         an.stop()
     ev = next(d for k, d in rec.events if k == "target" and d.get("how", "").startswith("adopt"))
-    assert ev["how"] == "adopt_place" and ev["id"] == tid and ev["from_id"] != tid and calls
+    assert ev["how"] in ("adopt_place", "adopt_appearance") and ev["id"] == tid and ev["from_id"] != tid and calls

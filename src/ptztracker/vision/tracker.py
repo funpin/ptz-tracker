@@ -346,7 +346,13 @@ class PersonTracker:
         dt = t - tr.last_seen
         if dt > 0:
             dt = max(dt, MIN_VELOCITY_DT)
-            old = self._view.warp(tr.box, tr.last_seen, t) if self._view is not None else tr.box
+            old = tr.box
+            if self._view is not None:
+                warped = self._view.warp(tr.box, tr.last_seen, t)
+                # сдвиг учитываем, только если рамка и правда пришла «туда, куда сдвинула камера»; модель отстаёт —
+                # если картинка не двинулась (обычный IoU не хуже), прежний бокс без поправки, иначе ложная скорость
+                if _iou(warped, p.box) > _iou(tr.box, p.box):
+                    old = warped
             ocx, ocy = (old[0] + old[2]) / 2, (old[1] + old[3]) / 2  # скорость человека, без сдвига от камеры
             ncx, ncy = (p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2
             vx = max(-MAX_SPEED_PX_S, min(MAX_SPEED_PX_S, (ncx - ocx) / dt))
@@ -405,20 +411,26 @@ class PersonTracker:
         if tgt is None or t - tgt.last_seen > ADOPT_WINDOW_S or self._target_lost_since is None:
             return False
         pbs = tgt.predicted_boxes(t, self._view)
-        best, best_iou = None, ADOPT_IOU
+        best, best_key = None, None
         for tr in self._tracks.values():
             if tr.id == self.target_id or tr.last_seen != t or tr.created < self._target_lost_since:
                 continue  # только трек, появившийся уже после потери цели: старый — это другой человек
             ratio = _area(tr.box) / max(1e-9, _area(tgt.box))
             if not (1 / ADOPT_AREA_RATIO <= ratio <= ADOPT_AREA_RATIO):
                 continue
-            if self._target_app is not None and tr.appearance is not None and (
-                appearance_distance(self._target_app, tr.appearance) > self.reid_hard_distance
-            ):
-                continue
+            if tr.hits < 2:
+                continue  # вспышка в один кадр — не человек
+            d = None
+            if self._target_app is not None and tr.appearance is not None:
+                d = appearance_distance(self._target_app, tr.appearance)
+                if d >= self.reid_max_distance:
+                    continue
             iou = max(_iou(pb, tr.box) for pb in pbs)
-            if iou >= best_iou:
-                best, best_iou = tr, iou
+            if iou < ADOPT_IOU:
+                continue
+            key = (0.0 if d is None else d, -iou)  # сначала похожий по одежде, затем ближе к предсказанному месту
+            if best_key is None or key < best_key:
+                best, best_key = tr, key
         if best is None:
             return False
         self._take_over(best, t, "place")
