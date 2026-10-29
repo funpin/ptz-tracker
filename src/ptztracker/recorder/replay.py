@@ -16,7 +16,7 @@ import dataclasses
 import math
 from dataclasses import dataclass, field, fields
 
-from ptztracker.control.camera_model import Calibration, default_calibration
+from ptztracker.control.camera_model import Calibration, CameraDynamics, default_calibration
 from ptztracker.control.composition import COMPOSITIONS, DEFAULT_COMPOSITION, BodyMeasure, Composition
 from ptztracker.control.effort import EffortProfile
 from ptztracker.control.follower import output_codes, sent_zoom_code
@@ -37,7 +37,7 @@ class ReplaySummary:
     steps: int
     pan_reversals_rec: int
     pan_reversals_new: int
-    max_accel_rec: float  # fw/s², по скоростям кодов pan/tilt
+    max_accel_rec: float  # fw/s², камеры: коды pan/tilt через модель разгона калибровки
     max_accel_new: float
     out_of_soft_pct: float  # % времени слежения, когда цель вне мягкой зоны (по новому прогону)
     target_losses: int
@@ -51,7 +51,7 @@ class ReplaySummary:
         lines = [
             f"Слежение: {self.following_s:.1f} с, тактов регулятора: {self.steps}",
             f"Развороты pan: было {self.pan_reversals_rec}, стало {self.pan_reversals_new}",
-            f"Макс. ускорение по командам: было {self.max_accel_rec:.2f}, стало {self.max_accel_new:.2f} fw/s²",
+            f"Макс. ускорение камеры: было {self.max_accel_rec:.2f}, стало {self.max_accel_new:.2f} fw/s²",
             f"Цель вне мягкой зоны: {self.out_of_soft_pct:.1f}% времени слежения",
             f"Потери цели: {self.target_losses}",
             f"Смены цели: {self.target_switches}",
@@ -128,13 +128,21 @@ class ReplayResult:
         return n
 
     def _max_accel(self, codes: list[Codes]) -> float:
-        speed = (self.calib or default_calibration()).pan.speed
+        """Наибольшее ускорение камеры (fw/s²): скорости кодов pan/tilt через модель разгона (мёртвое время
+        + τ калибровки). Команда может опережать камеру — плавность у движения самой камеры (часть 1, задача 4)."""
+        calib = self.calib or default_calibration()
         best = 0.0
-        for a, b in self._pairs():
-            dt = max(1e-3, self.t[b] - self.t[a])
-            for k in (0, 1):  # pan и tilt — по одной таблице скоростей
-                dv = speed(codes[b][k], self.zoom_pos[b]) - speed(codes[a][k], self.zoom_pos[a])
-                best = max(best, abs(dv) / dt)
+        for k in (0, 1):  # pan и tilt — по одной таблице скоростей
+            dyn, seg, prev = None, None, None
+            for i, c in enumerate(codes):
+                if self.segment[i] != seg:
+                    seg, prev = self.segment[i], None
+                    dyn = CameraDynamics(calib.dead_time, calib.tau)
+                dyn.command(self.t[i], calib.pan_fw(c[k], self.zoom_pos[i]))
+                v = dyn.velocity(self.t[i])
+                if prev is not None and 0 < self.t[i] - prev[0] <= MAX_DT_S:
+                    best = max(best, abs(v - prev[1]) / (self.t[i] - prev[0]))
+                prev = (self.t[i], v)
         return best
 
     def _out_of_soft_pct(self) -> float:

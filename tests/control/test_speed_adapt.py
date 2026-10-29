@@ -45,14 +45,15 @@ def _stand_reversals(tr):
 
 def test_camera_faster_than_table_adapts_while_walking():
     """Камера в 1,6 раза быстрее таблицы (и в 0,6 — медленнее): за 30 с ходьбы поправка подходит к правде
-    ±0,15, раскачки нет: сторож молчит, за стояние — не больше одного разворота камеры (за первое,
-    пока поправка не дошла, — двух). Без подстройки (коды по таблице) при ×1,6 — до 4 разворотов."""
+    ±0,15, раскачки нет: сторож молчит, за стояние — не больше одного разворота камеры, и за первое, пока
+    поправка не дошла (Review Focus 2; до части 1, задачи 4 — двух). Без подстройки (коды по таблице) при ×1,6
+    — до 4 разворотов."""
     for sf in (1.6, 0.6):
         tr = run(_walk, T=32, speed_factor=sf, cmd_delay=0.13, gz_period=0.5, apc_period=0.5, adapt=True)
         assert abs(_at(tr, 30.0)[0] - sf) <= 0.15, (sf, _at(tr, 30.0))
         assert "diverged" not in tr.state, sf
         rev = _stand_reversals(tr)
-        assert rev[0] <= 2 and all(n <= 1 for n in rev[1:]), (sf, rev)
+        assert all(n <= 1 for n in rev), (sf, rev)
         assert _at(tr, 30.0)[1] == 1.0  # наклон не ездил — его не трогаем
         assert abs(_at(tr, 30.0)[2] - 1.0) < 0.02  # таблица зума верна — зум (отъезд у края) почти без поправки
 
@@ -63,8 +64,12 @@ def test_adaptation_prevents_swing_at_x2():
     tr = run(_walk, T=40, speed_factor=2.0, cmd_delay=0.13, gz_period=0.5, apc_period=0.5, adapt=True)
     assert "diverged" not in tr.state
     assert abs(_at(tr, 30.0)[0] - 2.0) <= 0.15
-    assert all(n <= 1 for n in _stand_reversals(tr)[1:])
-    assert "diverged" in run(_walk, T=40, speed_factor=2.0, cmd_delay=0.13, apc_period=0.5).state
+    assert all(n <= 1 for n in _stand_reversals(tr))
+    # без подстройки (коды по таблице) при ×2 камера качается (развороты 2–4 за стояние); раскачку, которую
+    # ловит сторож, — при ×3 (часть 1, задача 4: с полным упреждением и торможением ×2 сторож уже не видит)
+    no_adapt = run(_walk, T=40, speed_factor=2.0, cmd_delay=0.13, apc_period=0.5)
+    assert max(_stand_reversals(no_adapt)) >= 2
+    assert "diverged" in run(_walk, T=40, speed_factor=3.0, cmd_delay=0.13, apc_period=0.5).state
 
 
 def test_scale_unchanged_without_motion():

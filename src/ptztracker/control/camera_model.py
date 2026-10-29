@@ -123,6 +123,10 @@ class CameraDynamics:
         return x + target * dt + (v - target) * self.tau * (1 - e), target + (v - target) * e
 
     def _state(self, t: float) -> tuple[float, float]:
+        return self._full_state(t)[:2]
+
+    def _full_state(self, t: float) -> tuple[float, float, float]:
+        """(положение, скорость, цель) в момент t."""
         tb, x, v, target = self._base
         cur_t = tb
         for t_eff, new_target in self._cmds:
@@ -130,7 +134,23 @@ class CameraDynamics:
                 break
             x, v = self._advance(cur_t, x, v, target, t_eff)
             cur_t, target = t_eff, new_target
-        return self._advance(cur_t, x, v, target, t)
+        x, v = self._advance(cur_t, x, v, target, t)
+        return x, v, target
+
+    def coast(self, t: float) -> float:
+        """Тормозной путь: сколько картинка ещё сдвинется, если в момент t скомандовать «стоп».
+
+        Уже отправленные команды доходят за мёртвое время, потом скорость гаснет с τ (путь v·τ).
+        """
+        x0, v, target = self._full_state(t)
+        x, cur_t = x0, t
+        for t_eff, new_target in self._cmds:
+            if t_eff <= t:
+                continue
+            x, v = self._advance(cur_t, x, v, target, t_eff)
+            cur_t, target = t_eff, new_target
+        x, v = self._advance(cur_t, x, v, target, t + self.dead_time)
+        return x - x0 + v * self.tau
 
     def _fold(self, before: float) -> None:
         while self._cmds and self._cmds[0][0] < before:

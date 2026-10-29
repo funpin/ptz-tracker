@@ -5,9 +5,10 @@ from pathlib import Path
 
 from loop import CTRL_DT, run, sign_changes
 
+from ptztracker.control.camera_model import CameraDynamics, default_calibration
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
-from ptztracker.control.framing import SwingWatch
+from ptztracker.control.framing import BRAKE, WATCHDOG_MOVING_V, SwingWatch
 
 AX = COMPOSITIONS["waist_center"].anchor[0]
 E = EffortProfile.at(0.5)
@@ -18,11 +19,29 @@ def test_holds_still_when_inside_dead_zone():
     assert all(p == 0 for p in tr.pan)
 
 
+def _camera_motion(tr):
+    """Скорость, ускорение и рывок камеры по командам стенда (модель разгона калибровки, шаг 0,01 с)."""
+    c = default_calibration()
+    cam = CameraDynamics(c.dead_time, c.tau)
+    for t, p in zip(tr.t, tr.pan):
+        cam.command(t, p)
+    ts = [i * 0.01 for i in range(round(tr.t[-1] / 0.01))]
+    v = [cam.velocity(t) for t in ts]
+    acc = [(b - a) / 0.01 for a, b in zip(v, v[1:])]
+    jerk = [(b - a) / CTRL_DT for a, b in zip(acc[::4], acc[4::4])]
+    return v, acc, jerk
+
+
 def test_starts_smoothly_and_accel_limited():
-    tr = run(lambda t: AX + 0.2, T=4)
-    steps = [abs(b - a) for a, b in zip(tr.pan, tr.pan[1:])]
-    assert max(steps) <= E.a_max * CTRL_DT + 1e-9
-    assert next(p for p in tr.pan if p != 0) > 0  # человек справа → камера вправо
+    """Плавность — у движения камеры: её ускорение (модель разгона) не больше a_max, рывок — не больше j_max.
+    Команда может опережать камеру на a_max·τ: камера сама разгоняется с τ (часть 1, задача 4)."""
+    for eff in (0.0, 0.5):
+        e = EffortProfile.at(eff)
+        tr = run(lambda t: AX + 0.15, T=4, effort=eff)
+        _, acc, jerk = _camera_motion(tr)
+        assert max(map(abs, acc)) <= e.a_max * 1.02, eff
+        assert max(map(abs, jerk)) <= e.j_max * 1.02, eff
+        assert next(p for p in tr.pan if p != 0) > 0  # человек справа → камера вправо
 
 
 def test_feedforward_matches_walking_speed():
@@ -55,18 +74,28 @@ def test_stops_without_overshoot_after_walk():
 
 
 def test_latency_compensation_reduces_overshoot():
-    def over(ctrl_latency):
-        tr = run(lambda t: walk_then_stop(t, 0.35), T=9, latency=0.35, ctrl_latency=ctrl_latency)
-        return max(AX - x for x, t in zip(tr.img_x, tr.t) if t > 3.0)
-
-    assert over(0.35) < over(0.0)
+    """Компенсация задержки видео (0,35 с): на ходу человек ближе к якорю, после остановки перелёт меньше,
+    разворотов меньше. Ходьба 8 с — упреждение успевает выйти на скорость человека (на 3 с ходьбы с места
+    перелёт задаёт догон, а не компенсация)."""
+    for speed in (0.25, 0.35):
+        res = {}
+        for ctrl_latency in (0.35, 0.0):
+            tr = run(lambda t, s=speed: walk_then_stop(t, s, 8.0), T=14, latency=0.35, ctrl_latency=ctrl_latency)
+            walk = [abs(x - AX) for x, t in zip(tr.img_x, tr.t) if 1.5 < t < 8.0]
+            res[ctrl_latency] = (sum(walk) / len(walk), max(AX - x for x, t in zip(tr.img_x, tr.t) if t > 8.0),
+                                 sign_changes(tr.pan, WATCHDOG_MOVING_V))
+        (err_c, over_c, rev_c), (err_0, over_0, rev_0) = res[0.35], res[0.0]
+        assert err_c < 0.5 * err_0 and over_c < over_0 and rev_c < rev_0, (speed, res)
 
 
 def test_no_target_ramps_to_zero():
     tr = run(lambda t: AX + 0.3 * t, visible=lambda t: t < 3, T=7)
     assert tr.pan[-1] == 0 and tr.state[-1] == "idle"
-    steps = [abs(b - a) for a, b in zip(tr.pan, tr.pan[1:])]
-    assert max(steps) <= E.a_max * CTRL_DT + 1e-9
+    # без цели (последний кадр — 3,0 + задержка): торможение как у камеры, BRAKE·a_max; пока цель видна,
+    # команда может опережать камеру на a_max·τ — плавность там проверяет test_starts_smoothly_and_accel_limited
+    lost = [p for p, t in zip(tr.pan, tr.t) if t >= 3.15]
+    steps = [abs(b - a) for a, b in zip(lost, lost[1:])]
+    assert max(steps) <= BRAKE * E.a_max * CTRL_DT + 1e-9
 
 
 def test_zoom_in_only_when_holding_and_zoom_out_at_edge():
@@ -98,15 +127,29 @@ def test_tilt_follows_vertical():
 # --- устойчивость (финальное ревью этапа 3) -------------------------------------
 
 
+def _adapt_lead_in(t):
+    """20 с подстройки скорости (как test_speed_adapt): ходит 5 с по 0,2 fw/s, стоит 5 с, обратно, стоит."""
+    ph = t % 20.0
+    x = 0.2 * min(ph, 5.0)
+    if ph > 10.0:
+        x -= 0.2 * min(ph - 10.0, 5.0)
+    return AX + x
+
+
 def test_robust_when_camera_faster_than_model():
-    # Калибровка неточна (камера в 1.7 раза быстрее или вдвое медленнее) + очередь 0.13 с — без раскачки
-    for rho in (0.5, 1.7):
-        tr = run(lambda t: AX + 0.2 * min(t, 3.0), T=15, speed_factor=rho, cmd_delay=0.13)
-        assert 0.3 < min(tr.img_x) and max(tr.img_x) < 0.8, rho
-        assert sign_changes(tr.pan) <= 2 and "diverged" not in tr.state, rho
-    tr = run(lambda t: AX + 0.2 * min(t, 3.0), T=15, speed_factor=1.7, cmd_delay=0.13)
-    assert 0.3 < min(tr.img_x) and max(tr.img_x) < 0.75
-    assert sign_changes(tr.pan) <= 3 and "diverged" not in tr.state
+    """Калибровка неточна (камера в 1,7 и 2 раза быстрее или вдвое медленнее) + очередь 0,13 с — без раскачки.
+
+    С полным упреждением (FF_GAIN 1,0) устойчивость держит подстройка скорости по #APC (speed_adapt), как
+    в Follower: первые 20 с человек ходит и подстройка находит ρ (сторож молчит и тогда), потом — шаг
+    0,2 fw/s × 3 с, как в этом тесте до части 1."""
+    for rho in (0.5, 1.7, 2.0):
+        tr = run(lambda t: _adapt_lead_in(t) if t < 20 else AX + 0.2 * min(max(t - 22, 0.0), 3.0), T=37,
+                 speed_factor=rho, cmd_delay=0.13, apc_period=0.5, gz_period=0.5, adapt=True)
+        assert "diverged" not in tr.state, rho
+        late = [i for i, t in enumerate(tr.t) if t >= 20]
+        xs = [tr.img_x[i] for i in late]
+        assert 0.3 < min(xs) and max(xs) < (0.75 if rho > 1 else 0.8), rho
+        assert sign_changes([tr.pan[i] for i in late]) <= 2, rho
 
 
 def test_never_sustained_oscillation_either_stable_or_stopped():
@@ -320,13 +363,26 @@ def _walk_then_stand(t):
 
 
 def test_watchdog_stops_hunting_on_standing_person():
-    """«Резко», задержка видео у регулятора 0 при настоящей 0,15 (часть 0, B4): человек дошёл и стоит, наезд
-    раскачивает наклон ±0,12 кадра с периодом ~3 с без конца. Сторож останавливает (замер: 31 с, качание с 23 с).
-    С верной задержкой качания нет — сторож молчит."""
+    """Неверная задержка видео у регулятора, «Резко», очередь 0,13 с.
+
+    Часть 0, B4: 0 вместо 0,15 давало качание наклона ±0,12 кадра без конца, пока человек стоит, — сторож
+    останавливал на 31 с. С частью 1 (задача 4: торможение по тормозному пути, «пошёл» по скорости и
+    направлению) стоящего человека камера больше не «ищет»: после остановки — несколько затухающих
+    разворотов (или сторож останавливает сразу, если #APC нет), а когда человек стоит (с 20 с), — не больше
+    одного разворота за 20 с. Ошибка 0 вместо 0,3
+    раскачивает по-настоящему — сторож останавливает, все оси в ноль. С верной задержкой сторож молчит."""
     for apc in (None, 0.5):
-        bad = run(_walk_then_stand, T=40, effort=1.0, ctrl_latency=0.0, cmd_delay=0.13, apc_period=apc)
+        mild = run(_walk_then_stand, T=40, effort=1.0, ctrl_latency=0.0, cmd_delay=0.13, apc_period=apc)
+        i = next((i for i, s in enumerate(mild.state) if s == "diverged"), None)
+        if i is None:
+            late = [k for k, t in enumerate(mild.t) if t > 20]  # стоит (с 16 с) после перелёта
+            assert sign_changes([mild.pan[k] for k in late], WATCHDOG_MOVING_V) <= 1, apc
+            assert sign_changes([mild.tilt[k] for k in late], WATCHDOG_MOVING_V) <= 1, apc  # доводка при наезде
+        else:
+            assert all(p == 0 and q == 0 for p, q in zip(mild.pan[i + 25 :], mild.tilt[i + 25 :])), apc
+        bad = run(_walk_then_stand, T=40, effort=1.0, latency=0.3, ctrl_latency=0.0, cmd_delay=0.13, apc_period=apc)
         i = next((i for i, s in enumerate(bad.state) if s == "diverged"), None)
-        assert i is not None and 22 < bad.t[i] <= 36, apc
+        assert i is not None, apc
         assert all(p == 0 and q == 0 for p, q in zip(bad.pan[i + 25 :], bad.tilt[i + 25 :])), apc
         good = run(_walk_then_stand, T=40, effort=1.0, cmd_delay=0.13, apc_period=apc)
         assert "diverged" not in good.state, apc
@@ -392,3 +448,134 @@ def test_watchdog_part0_false_alarms_gone():
     """
     tripped = _replay_part0()
     assert not {k: v for k, v in tripped.items() if k != REAL_SWING}
+
+
+# --- догонять без отставания (часть 1, задача 4; Review Focus 1, 2, 5) ---------------
+
+def _walks(v, walk, stand0=4.0, stand=10.0):
+    """Стоит stand0, идёт walk со скоростью v (fw/s), стоит stand, идёт обратно, стоит."""
+    def f(t):
+        if t < stand0:
+            return AX
+        if t < stand0 + walk:
+            return AX + v * (t - stand0)
+        if t < stand0 + walk + stand:
+            return AX + v * walk
+        return AX + v * walk - v * min(t - stand0 - walk - stand, walk)
+    return f, [(stand0, walk, 1), (stand0 + walk + stand, walk, -1)], stand0 + 2 * walk + stand + 10.0
+
+
+def _follow(f, T, lead_in=0.0, **kw):
+    """Как Follower: коды по таблице с поправкой, подстройка скорости по #APC/#GZ (опрос раз в 0,5 с).
+    lead_in — сначала столько секунд подстройки (_adapt_lead_in), сценарий f сдвинут на это время."""
+    g = f if not lead_in else (lambda t: _adapt_lead_in(t) if t < lead_in else f(t - lead_in))
+    kw.setdefault("cmd_delay", 0.065)
+    return run(g, T=T + lead_in, apc_period=0.5, gz_period=0.5, adapt=True, **kw)
+
+
+def _phases(tr, walks, lead_in=0.0):
+    """По каждой ходьбе: (средняя |ошибка| без первой 1 с, ближе всего к краю, отъезд зума во сколько раз,
+    средняя |ошибка| 1–5 с после остановки, развороты камеры за 10 с стояния, самый быстрый ход назад)."""
+    out = []
+    for ws, wd, sg in walks:
+        ws += lead_in
+        walk = [i for i, t in enumerate(tr.t) if ws <= t < ws + wd]
+        late = [i for i in walk if tr.t[i] >= ws + 1.0]
+        stand = [i for i, t in enumerate(tr.t) if ws + wd <= t < ws + wd + 10.0]
+        settle = [i for i in stand if tr.t[i] >= ws + wd + 1.0 and tr.t[i] < ws + wd + 5.0]
+        k0 = math.exp(tr.cam_zoom[walk[0]])
+        out.append(dict(
+            mean=sum(abs(tr.img_x[i] - AX) for i in late) / len(late),
+            edge=min(min(tr.img_x[i], 1 - tr.img_x[i]) for i in walk + stand[:25]),
+            zoom_out=k0 / min(math.exp(tr.cam_zoom[i]) for i in walk + stand[:25]),
+            settle=sum(abs(tr.img_x[i] - AX) for i in settle) / len(settle),
+            over=max(0.0, max(-(tr.img_x[i] - AX) * sg for i in stand)),
+            reversals=sign_changes([tr.pan[i] for i in stand], WATCHDOG_MOVING_V),
+            back=max(0.0, max(-tr.pan[i] * sg for i in stand)),
+        ))
+    return out
+
+
+def test_lecture_walk_no_lag():
+    """Review Focus 1: прохаживается (до 0,35 fw/s ≈ 0,5 м/с на «Поясе»), «Обычно». Без первой 1 с ходьбы
+    (раньше камера ответить не может: видео + очередь + мёртвое время + разгон) средняя ошибка ≤ 0,05 кадра,
+    человек не ближе 0,15 к краю, зум не отъезжает больше чем в 1,3 раза. Было (до части 1, 0,31 fw/s):
+    0,18 / 0,16 / ×1,5."""
+    for v in (0.2, 0.31, 0.35):
+        f, walks, T = _walks(v, 8.0)
+        tr = _follow(f, T)
+        assert "diverged" not in tr.state, v
+        for p in _phases(tr, walks):
+            assert p["mean"] <= 0.05 and p["edge"] >= 0.15 and p["zoom_out"] <= 1.3, (v, p)
+
+
+def test_lecture_walk_no_lag_with_calibration_error():
+    """То же при таблице скоростей, неверной в 0,5 и 2 раза (после 20 с подстройки по #APC)."""
+    for rho in (0.5, 2.0):
+        f, walks, T = _walks(0.31, 8.0)
+        tr = _follow(f, T, lead_in=20.0, speed_factor=rho)
+        assert "diverged" not in tr.state, rho
+        for p in _phases(tr, walks, 20.0):
+            assert p["mean"] <= 0.05 and p["edge"] >= 0.15 and p["zoom_out"] <= 1.3, (rho, p)
+
+
+def test_fast_walk_stays_in_frame():
+    """Review Focus 1, быстрая ходьба (до 1,2 м/с ≈ 0,77 fw/s на «Поясе», с места): человек в кадре всё время
+    (нос не дальше 0,08 за краем, ненадолго — плечо и корпус в кадре: с места быстрее не ответить, камера
+    трогается через ~0,4 с и разгоняется с τ), зум отъезжает плавно
+    (скорость меняется не быстрее ZOOM_ACCEL·ESCAPE_ZOOM_ACCEL, без «туда-обратно»), слежение не сбрасывается.
+    Было: 1,25 м/с — человек уходил из кадра на каждой ходьбе вправо."""
+    from ptztracker.control.framing import ESCAPE_ZOOM_ACCEL, ZOOM_ACCEL
+
+    for v, walk in ((0.51, 6.0), (0.77, 4.0)):
+        for delay in (0.065, 0.13):
+            f, walks, T = _walks(v, walk)
+            tr = _follow(f, T, cmd_delay=delay)
+            assert "diverged" not in tr.state and "idle" not in tr.state[10:], (v, delay)
+            assert -0.08 <= min(tr.img_x) and max(tr.img_x) <= 1.08, (v, delay, min(tr.img_x), max(tr.img_x))
+            dz = [abs(b - a) for a, b in zip(tr.zoom, tr.zoom[1:])]
+            assert max(dz) <= ZOOM_ACCEL * ESCAPE_ZOOM_ACCEL * CTRL_DT + 1e-9, (v, delay)
+            for ws, wd, _ in walks:  # за ходьбу зум не дёргается туда-обратно
+                zs = [z for z, t in zip(tr.zoom, tr.t) if ws <= t < ws + wd + 2.0]
+                assert sign_changes(zs, 0.02) <= 1, (v, delay, ws)
+
+
+def test_no_swing_with_calibration_error_x05_x2():
+    """Review Focus 2: таблица скоростей неверна в 0,5…2 раза, очередь до 0,13 с — сторож молчит, за 10 с
+    стояния камера разворачивается не больше одного раза (подстройка по #APC, как в Follower)."""
+    for rho in (0.5, 1.0, 1.5, 2.0):
+        for delay in (0.065, 0.13):
+            f, walks, T = _walks(0.31, 8.0)
+            tr = _follow(f, T, lead_in=20.0, speed_factor=rho, cmd_delay=delay)
+            assert "diverged" not in tr.state, (rho, delay)
+            assert all(p["reversals"] <= 1 for p in _phases(tr, walks, 20.0)), (rho, delay)
+
+
+def test_stop_settles_without_snap_back():
+    """Review Focus 5: после остановки (до 0,35 fw/s) средняя |ошибка| 1–5 с после остановки ≤ 0,08 кадра,
+    назад камера не дёргается: в мягкой зоне — не быстрее RETURN_V_SOFT, за ней — не быстрее RETURN_V_MAX,
+    разворот не больше одного. Пиковый перелёт физически ~0,6–0,8·v (видео + очередь + мёртвое время + τ)."""
+    from ptztracker.control.framing import RETURN_V_MAX
+
+    for v in (0.2, 0.31, 0.35):
+        f, walks, T = _walks(v, 8.0)
+        tr = _follow(f, T)
+        for p in _phases(tr, walks):
+            assert p["settle"] <= 0.08 and p["back"] <= RETURN_V_MAX + 1e-9 and p["reversals"] <= 1, (v, p)
+            assert p["over"] <= 0.9 * v, (v, p)
+
+
+def test_sway_shuffle_does_not_trip_watchdog_or_overswing():
+    """Человек переминается ±0,06 кадра (период 3 с) при «Обычно» и «Резко»: сторож молчит, камера ходит
+    не шире самого человека (было: в 2,5–5 раз шире — BACKLOG, задача 2)."""
+    for eff in (0.5, 1.0):
+        for delay in (0.065, 0.13):
+            tr = run(lambda t: AX + 0.06 * math.sin(2 * math.pi * t / 3.0), T=30, effort=eff, cmd_delay=delay,
+                     apc_period=0.5)
+            assert "diverged" not in tr.state, (eff, delay)
+            c = default_calibration()
+            cam = CameraDynamics(c.dead_time, c.tau)
+            for t, p in zip(tr.t, tr.pan):
+                cam.command(t + delay, p)
+            pos = [cam.position(t) for t in tr.t if t > 5]
+            assert max(pos) - min(pos) <= 0.12, (eff, delay, max(pos) - min(pos))

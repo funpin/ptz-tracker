@@ -88,3 +88,18 @@ def test_position_continuous_after_old_commands_folded():
     d.command(16.0, 0.02)
     assert abs(d.position(11.9) - before) < 1e-9
     assert abs(d.displacement(11.0, 11.9) - (d.position(11.9) - d.position(11.0))) < 1e-12
+
+
+def test_coast_is_stopping_distance():
+    """Тормозной путь: команды в пути (мёртвое время) доходят, потом скорость гаснет с τ (путь v·τ)."""
+    from ptztracker.control.camera_model import CameraDynamics
+
+    d = CameraDynamics(dead_time=0.08, tau=0.37)
+    d.command(0.0, 0.5)
+    t = 5.0  # давно едет 0,5: дальше ещё 0,5·(0,08 + 0,37)
+    assert abs(d.coast(t) - 0.5 * (0.08 + 0.37)) < 1e-6
+    d.command(t, 0.0)  # «стоп» уже отправлен: остаётся тот же путь (стоп ещё в пути)
+    assert abs(d.coast(t) - 0.5 * (0.08 + 0.37)) < 1e-6
+    far = t + 3.0
+    assert abs(d.coast(far)) < 1e-3  # остаток экспоненты
+    assert abs(d.position(far) - d.position(t) - 0.5 * (0.08 + 0.37)) < 1e-3
