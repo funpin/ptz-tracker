@@ -114,10 +114,11 @@ def test_credentials_helpers():
 def test_stream_urls_specific_and_auto():
     from ptztracker.video.rtsp import STREAM_CHOICES, stream_urls
 
-    assert set(STREAM_CHOICES) == {"auto", "h264_1", "h264_2", "mjpeg"}
+    assert set(STREAM_CHOICES) == {"auto", "mjpeg_1", "mjpeg_2", "h264_1"}
     assert stream_urls("h", "h264_2", "admin", "pw", None) == ["rtsp://admin:pw@h/MediaInput/h264/stream_2"]
     assert stream_urls("h", "h264_1", None, None, "rtsp://h/saved") == ["rtsp://h/MediaInput/h264/stream_1"]
-    assert stream_urls("h", "mjpeg", None, None, None) == ["http://h/cgi-bin/mjpeg?resolution=640x360&framerate=25"]
+    assert stream_urls("h", "mjpeg_1", None, None, None) == ["http://h/cgi-bin/mjpeg?resolution=640x360&framerate=25"]
+    assert stream_urls("h", "mjpeg_2", None, None, None) == ["http://h/cgi-bin/mjpeg?resolution=1280x720"]
     a = stream_urls("h", "auto", None, None, "rtsp://h/saved")
     assert a[0] == "rtsp://h/saved" and len(a) > 1 and len(a) == len(set(a))
 

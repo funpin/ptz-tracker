@@ -225,7 +225,9 @@ class CameraSession:
         if self.cfg.kind == "sim":
             return "sim"
         url = getattr(self.frames, "url", "") or ""
-        return "mjpeg" if url.startswith("http") else "h264"
+        if not url.startswith("http"):
+            return "h264"
+        return "mjpeg_2" if "1280x720" in url else "mjpeg"  # «mjpeg» — 640×360; под этим видом сохранены калибровки
 
     def _start_follower(self) -> None:
         from ptztracker.control.composition import COMPOSITIONS, DEFAULT_COMPOSITION

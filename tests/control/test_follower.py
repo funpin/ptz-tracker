@@ -5,6 +5,7 @@ import pytest
 
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import CameraConfig
+from ptztracker.control.follower import APC_POLL_MOVING_S, GZ_POLL_STILL_S
 
 pytestmark = pytest.mark.slow  # реальное время на симуляторе
 
@@ -258,5 +259,58 @@ def test_speed_adapts_on_sim_when_camera_faster_than_table():
         assert s.follower.enabled, s.follower.last_reason
         scale = s.follower.speed_scale
         assert abs(scale["pan"] - 1.6) <= 0.15, scale
+    finally:
+        s.stop()
+
+
+def _count(s, start):
+    cmds = list(s.sim.received)[start:]
+    return {k: sum(1 for c in cmds if c.startswith(k)) for k in ("#APC", "#GZ")}, len(cmds)
+
+
+def test_polls_slow_down_while_camera_stands():
+    """Камера стоит: #APC ~1/с, #GZ не чаще раза в 2 с."""
+    s = sim_session(composition="full", calibrated=True, script="stand")
+    try:
+        select_person(s)
+        assert s.follower.enable()
+        t_still, t_end = None, time.monotonic() + 16.0  # кадр доводится ~9 с, затем коды — стоп
+        while time.monotonic() < t_end:
+            if s.follower.codes != (50, 50, 50):
+                t_still = None
+            elif t_still is None:
+                t_still = time.monotonic()
+            elif time.monotonic() - t_still > 1.5:
+                break
+            time.sleep(0.05)
+        assert t_still is not None and time.monotonic() - t_still > 1.5, "камера не успокоилась"
+        n0, t0 = len(s.sim.received), time.monotonic()
+        time.sleep(6.0)
+        polls, _ = _count(s, n0)
+        dt = time.monotonic() - t0
+        assert dt * 0.7 <= polls["#APC"] <= dt * 1.0 + 1.5, polls
+        assert polls["#GZ"] <= dt / 2.0 + 1.5, polls
+    finally:
+        s.stop()
+
+
+def test_polls_are_fewer_while_walking():
+    """Человек идёт: #APC не чаще 0,5 с, #GZ — пока зум стоит — раз в 2 с.
+
+    До изменения оба опроса шли каждые 0,5 с (по 16 за 8 с, вместе 32); доля опросов среди запросов
+    на симуляторе зависит от числа команд движения (они уходят только при смене кода), поэтому считаем сами опросы.
+    """
+    s = sim_session(composition="full", calibrated=True, script="lecture")
+    try:
+        select_person(s)
+        assert s.follower.enable()
+        time.sleep(9.5)  # первые 8 с человек стоит, камера доводит кадр
+        n0, t0 = len(s.sim.received), time.monotonic()
+        time.sleep(8.0)
+        polls, _ = _count(s, n0)
+        dt = time.monotonic() - t0
+        assert polls["#APC"] <= dt / APC_POLL_MOVING_S + 1.5, polls
+        assert polls["#GZ"] <= dt / GZ_POLL_STILL_S + 2.5, polls  # зум почти не едет: редкий опрос
+        assert polls["#APC"] + polls["#GZ"] <= 0.7 * 2 * dt / 0.5, polls
     finally:
         s.stop()

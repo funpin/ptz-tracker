@@ -79,11 +79,11 @@ def test_stream_combo_saves_and_restarts(qtbot, tmp_path):
     w = MainWindow(store)
     qtbot.addWidget(w)
     old = w.session
-    w.stream_combo.setCurrentIndex(w.stream_combo.findData("h264_2"))
+    w.stream_combo.setCurrentIndex(w.stream_combo.findData("h264_1"))
     assert w.session is not old
-    assert w.session.frames.urls == ["rtsp://10.0.0.12/MediaInput/h264/stream_2"]
+    assert w.session.frames.urls == ["rtsp://10.0.0.12/MediaInput/h264/stream_1"]
     w.close()
-    assert store.load().cameras[0].stream == "h264_2"
+    assert store.load().cameras[0].stream == "h264_1"
 
 
 def test_stream_combo_disabled_for_sim(qtbot, tmp_path):

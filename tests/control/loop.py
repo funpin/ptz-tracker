@@ -54,6 +54,7 @@ def run(
     controller_hook=None,
     cam_tau: float | None = None,  # разгон камеры на самом деле (None — как в калибровке)
     cam_dead_time: float | None = None,  # мёртвое время камеры на самом деле (None — как в калибровке)
+    meas_dt: float = MEAS_DT,  # период замеров анализа (MJPEG 2: 12,5 к/с → 0,08)
     adapt: bool = False,  # как Follower: скорости → коды камеры (с поправкой), подстройка скорости по #APC/#GZ
 ) -> Trace:
     calib = default_calibration()
@@ -77,7 +78,7 @@ def run(
     apc, apc_t, next_apc = None, None, 0.0
     while t < T:
         if t >= next_meas:
-            next_meas += MEAS_DT
+            next_meas += meas_dt
             if visible(t):
                 zx = math.exp(cam_z.position(t))
                 ix = 0.5 + (world_x(t) - cam_x.position(t) - 0.5) * zx

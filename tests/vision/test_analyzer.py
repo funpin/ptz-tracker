@@ -217,3 +217,17 @@ def test_detector_failure_logged_once_and_recreated(caplog):
         assert sum("Traceback" in (r.exc_text or "") or r.exc_info is not None for r in caplog.records) <= 1
     finally:
         monkeypatch_fail.stop()
+
+
+def test_pose_detector_on_1280x720_frame_through_analyzer():
+    """MJPEG (2): кадр 1280×720 — анализ работает, координаты в пикселях кадра, размер кадра в результате."""
+    img = cv2.resize(cv2.imread(str(PHOTO)), (1280, 720))
+    a = Analyzer(FakeSource(img), PoseDetector)
+    a.start()
+    try:
+        assert wait_until(lambda: a.latest() is not None and len(a.latest().tracks) >= 3, 5)
+        r = a.latest()
+        assert r.frame_size == (1280, 720)
+        assert all(0 <= t.box[0] < t.box[2] <= 1280 + 1 and 0 <= t.box[1] < t.box[3] <= 720 + 1 for t in r.tracks)
+    finally:
+        a.stop()

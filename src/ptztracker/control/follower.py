@@ -26,7 +26,13 @@ log = logging.getLogger(__name__)
 
 LOOP_HZ = 25.0
 STALE_S = 0.6  # результат анализа старше — анализ встал, камеру останавливаем
-ZOOM_POLL_S = 0.5  # при слежении: зум и положение #APC (сторож, подстройка скорости, запись); чаще — опрос отнимает окна у команд
+POLL_TICK_S = 0.25  # шаг цикла опроса: решает, что из #APC/#GZ пора спросить
+APC_POLL_MOVING_S = 0.5  # при слежении, пока камера поворачивается (и 0,5 с после): подстройка скорости ждёт свежего #APC
+APC_POLL_STILL_S = 1.0  # при слежении, камера стоит: сторожу и записи хватает раза в секунду
+GZ_POLL_MOVING_S = 0.5  # зум едет (и 1 с после остановки): модель зума сверяется с #GZ
+GZ_POLL_STILL_S = 2.0  # зум стоит: редкий опрос только чтобы модель зума не уходила от камеры
+APC_MOVE_TAIL_S = 0.5
+GZ_MOVE_TAIL_S = 1.0
 IDLE_POSITION_POLL_S = 2.0  # слежение выкл., идёт запись: положение и зум реже — не мешать ручному управлению
 MANUAL_QUIET_S = 2.0  # после ручной команды столько не опрашиваем (запрос занимает окно ~130 мс)
 _ZOOM_CMD = re.compile(r"#Z(\d\d)")
@@ -106,6 +112,8 @@ class Follower:
         self._codes = (50, 50, 50)
         self._last_u: float | None = None
         self._last_manual = float("-inf")
+        self._pt_move_t = float("-inf")  # когда слежение в последний раз слало ненулевой поворот/наклон
+        self._zoom_move_t = float("-inf")  # то же для зума
         self.polling_paused = False  # калибровка: опросы зума и положения молчат, поток живёт
         self._stop = threading.Event()
         scheduler.add_sent_listener(self._on_cmd_sent)
@@ -139,6 +147,7 @@ class Follower:
             self._gen += 1
             self._zoom_cmd_gen.clear()
             self._codes = (50, 50, 50)
+            self._pt_move_t = self._zoom_move_t = float("-inf")
             self._last_u = None
             self.enabled = True
             self.last_reason = None
@@ -246,33 +255,48 @@ class Follower:
     # --- потоки ---------------------------------------------------------
 
     def _poll_zoom(self) -> None:
-        # при слежении — каждые 0,5 с; без слежения, но с записью — раз в 2 с и не сразу после ручной команды
+        # при слежении: #APC раз в секунду (0,5 с, пока камера движется), #GZ только пока едет зум
+        # и 1 с после (иначе раз в 2 с); без слежения, но с записью — раз в 2 с и не сразу после ручной команды
         last_idle_poll = float("-inf")
-        while not self._stop.wait(ZOOM_POLL_S):
+        last_apc = last_gz = float("-inf")
+        while not self._stop.wait(POLL_TICK_S):
             try:
                 recording = bool(self.recorder.active)
             except Exception:
                 recording = False
             if self.polling_paused:
                 continue
+            now = time.monotonic()
             if not self.enabled:
-                now = time.monotonic()
                 if (not recording or now - last_idle_poll < IDLE_POSITION_POLL_S
                         or now - self._last_manual < MANUAL_QUIET_S):
                     continue
                 last_idle_poll = now
-            try:
-                z = self.query_zoom()
-            except Exception as e:
-                log.debug("Запрос зума не удался: %s", e)
-                z = None
-            if z is not None:
-                self._set_zoom_pos(z)
-            if not self.enabled and time.monotonic() - self._last_manual < MANUAL_QUIET_S:
-                continue  # пока шёл запрос зума, оператор взялся за камеру — положение не спрашиваем
+                do_gz = do_apc = True
+            else:
+                apc_every = APC_POLL_MOVING_S if now - self._pt_move_t < APC_MOVE_TAIL_S or self._codes[:2] != (50, 50) \
+                    else APC_POLL_STILL_S
+                gz_every = GZ_POLL_MOVING_S if now - self._zoom_move_t < GZ_MOVE_TAIL_S or self._codes[2] != 50 \
+                    else GZ_POLL_STILL_S
+                do_gz = now - last_gz >= gz_every - 1e-3
+                do_apc = now - last_apc >= apc_every - 1e-3
+                if not (do_gz or do_apc):
+                    continue
+            z = None
+            if do_gz:
+                last_gz = now
+                try:
+                    z = self.query_zoom()
+                except Exception as e:
+                    log.debug("Запрос зума не удался: %s", e)
+                if z is not None:
+                    self._set_zoom_pos(z)
+                if not self.enabled and time.monotonic() - self._last_manual < MANUAL_QUIET_S:
+                    continue  # пока шёл запрос зума, оператор взялся за камеру — положение не спрашиваем
             # при слежении положение нужно всегда (сторож раскачки, подстройка скорости), без него — для записи
-            if (recording or self.enabled) and self.query_pan_tilt is not None:
-                self._poll_position(z, recording)
+            if do_apc and (recording or self.enabled) and self.query_pan_tilt is not None:
+                last_apc = now
+                self._poll_position(z if z is not None else self._zoom_pos, recording)
 
     def _poll_position(self, zoom: int | None, recording: bool) -> None:
         try:
@@ -369,6 +393,10 @@ class Follower:
             self._adapt(zoom, zoom_t, apc, apc_t)
             self._codes = output_codes(self.calib, out, zoom, self._codes)
             pan, tilt, zc = self._codes
+            if pan != 50 or tilt != 50:
+                self._pt_move_t = now
+            if zc != 50:
+                self._zoom_move_t = now
             # отправка под замком: disable() не сможет вклиниться между проверкой enabled и submit
             self._submit_tracking(pan, tilt, zc)
             comp, effort = self.controller.composition, self.controller.effort  # только ссылки: работа записи — вне замка

@@ -111,13 +111,22 @@ def test_stream_roundtrip_and_invalid(tmp_path):
     store = ConfigStore(tmp_path / "c.json")
     cfg = default_config()
     assert cfg.cameras[0].stream == "auto"
-    cfg.cameras[0].stream = "h264_2"
+    cfg.cameras[0].stream = "mjpeg_2"
     store.save(cfg)
-    assert store.load().cameras[0].stream == "h264_2"
+    assert store.load().cameras[0].stream == "mjpeg_2"
     (tmp_path / "c.json").write_text(
         '{"cameras": [{"id": "a", "name": "А", "ip": "10.0.0.12", "stream": "zzz"}]}', encoding="utf-8"
     )
     assert store.load().cameras[0].stream == "auto"
+
+
+def test_old_stream_names_migrate(tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    for old, new in (("mjpeg", "mjpeg_1"), ("h264_2", "h264_1")):
+        (tmp_path / "c.json").write_text(
+            '{"cameras": [{"id": "a", "name": "А", "ip": "10.0.0.12", "stream": "%s"}]}' % old, encoding="utf-8"
+        )
+        assert store.load().cameras[0].stream == new
 
 
 def test_record_settings_defaults_roundtrip_and_fallback(tmp_path):
@@ -196,3 +205,21 @@ def test_speed_scale_roundtrip_and_invalid(tmp_path):
         '{"cameras": [{"id": "a", "name": "А", "ip": "10.0.0.12", "speed_scale": [1, 2]}]}', encoding="utf-8"
     )
     assert store.load().cameras[0].speed_scale is None
+
+
+def test_stream_kind_by_url():
+    from ptztracker.camera.session import CameraSession
+
+    class Src:
+        def __init__(self, url):
+            self.url = url
+
+    s = CameraSession.__new__(CameraSession)
+    s.cfg = CameraConfig(id="a", name="А", ip="10.0.0.12")
+    for url, kind in (
+        ("http://h/cgi-bin/mjpeg?resolution=640x360&framerate=25", "mjpeg"),
+        ("http://h/cgi-bin/mjpeg?resolution=1280x720", "mjpeg_2"),
+        ("rtsp://h/MediaInput/h264/stream_1", "h264"),
+    ):
+        s.frames = Src(url)
+        assert s.stream_kind() == kind

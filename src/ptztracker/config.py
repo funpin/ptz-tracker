@@ -23,7 +23,8 @@ import platformdirs
 log = logging.getLogger(__name__)
 
 APP_NAME = "PTZTracker"
-STREAMS = ("auto", "h264_1", "h264_2", "mjpeg")
+STREAMS = ("auto", "mjpeg_1", "mjpeg_2", "h264_1")
+_OLD_STREAMS = {"mjpeg": "mjpeg_1", "h264_2": "h264_1"}  # прежние названия потоков в config.json
 COMPOSITION_KEYS = ("waist_center", "waist_left", "waist_right", "full", "wide")
 KEYRING_SERVICE = "PTZTracker"
 
@@ -37,7 +38,7 @@ class CameraConfig:
     username: str | None = None
     rtsp_url: str | None = None
     min_interval: float = 0.130
-    stream: str = "auto"  # "auto" | "h264_1" | "h264_2" | "mjpeg"
+    stream: str = "auto"  # "auto" | "mjpeg_1" | "mjpeg_2" | "h264_1"
     calibration: dict | None = None  # результат мастера калибровки (control.camera_model.Calibration.to_json)
     # поправка скорости по ходу слежения (control.speed_adapt): {"pan", "tilt", "zoom"} — камера быстрее
     # таблицы калибровки во столько раз; новая калибровка её сбрасывает
@@ -137,6 +138,9 @@ def _camera_from(d) -> CameraConfig | None:
     if not isinstance(c.effort, (int, float)):
         c.effort = 0.5
     c.effort = min(1.0, max(0.0, float(c.effort)))
+    if c.stream in _OLD_STREAMS:
+        log.info("Поток %r у камеры %s переименован в %r", c.stream, c.name, _OLD_STREAMS[c.stream])
+        c.stream = _OLD_STREAMS[c.stream]
     if c.stream not in STREAMS:
         log.warning("Неизвестный поток %r у камеры %s — ставлю «Авто»", c.stream, c.name)
         c.stream = "auto"

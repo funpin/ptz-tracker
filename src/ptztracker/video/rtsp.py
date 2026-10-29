@@ -36,18 +36,20 @@ def strip_credentials(url: str) -> str:
 
 STREAM_CHOICES = {
     "auto": "Авто",
+    "mjpeg_1": "MJPEG (1) · 640×360, 25 к/с",
+    "mjpeg_2": "MJPEG (2) · 1280×720, 12,5 к/с",
     "h264_1": "H.264 (1)",
-    "h264_2": "H.264 (2)",
-    "mjpeg": "JPEG (MJPEG)",
 }
 
 
 def stream_url(host: str, stream: str) -> str:
-    """Адрес конкретного потока камеры (без логина)."""
+    """Адрес конкретного потока камеры (без логина). «h264_2» оператору не предлагается — нужен диагностике."""
     return {
         "h264_1": f"rtsp://{host}/MediaInput/h264/stream_1",
         "h264_2": f"rtsp://{host}/MediaInput/h264/stream_2",
-        "mjpeg": f"http://{host}/cgi-bin/mjpeg?resolution=640x360&framerate=25",
+        "mjpeg_1": f"http://{host}/cgi-bin/mjpeg?resolution=640x360&framerate=25",
+        # частоту камера выбирает сама (по паспорту 12,5 к/с); живьём не проверено
+        "mjpeg_2": f"http://{host}/cgi-bin/mjpeg?resolution=1280x720",
     }[stream]
 
 
@@ -71,7 +73,7 @@ def rtsp_candidates(host: str, username: str | None, password: str | None) -> li
     и /MediaInput/stream_1 отвечают 5XX.
     """
     base = [
-        stream_url(host, "mjpeg"),
+        stream_url(host, "mjpeg_1"),
         f"rtsp://{host}/MediaInput/h264/stream_1",
         f"rtsp://{host}:554/MediaInput/h264/stream_1",
         f"rtsp://{host}/MediaInput/h264",
