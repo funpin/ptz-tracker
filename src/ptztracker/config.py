@@ -20,6 +20,8 @@ from typing import Literal
 
 import platformdirs
 
+from ptztracker.video.rtsp import with_mjpeg_framerate
+
 log = logging.getLogger(__name__)
 
 APP_NAME = "PTZTracker"
@@ -138,6 +140,8 @@ def _camera_from(d) -> CameraConfig | None:
     if not isinstance(c.effort, (int, float)):
         c.effort = 0.5
     c.effort = min(1.0, max(0.0, float(c.effort)))
+    if isinstance(c.rtsp_url, str):
+        c.rtsp_url = with_mjpeg_framerate(c.rtsp_url)
     if c.stream in _OLD_STREAMS:
         log.info("Поток %r у камеры %s переименован в %r", c.stream, c.name, _OLD_STREAMS[c.stream])
         c.stream = _OLD_STREAMS[c.stream]

@@ -223,3 +223,31 @@ def test_stream_kind_by_url():
     ):
         s.frames = Src(url)
         assert s.stream_kind() == kind
+
+
+@pytest.mark.parametrize(
+    "saved, fixed",
+    [
+        (
+            "http://h/cgi-bin/mjpeg?resolution=1280x720",
+            "http://h/cgi-bin/mjpeg?resolution=1280x720&framerate=25",
+        ),
+        (
+            "http://h/cgi-bin/mjpeg?resolution=640x360",
+            "http://h/cgi-bin/mjpeg?resolution=640x360&framerate=25",
+        ),
+        ("http://h/cgi-bin/mjpeg", "http://h/cgi-bin/mjpeg?framerate=25"),
+        (
+            "http://h/cgi-bin/mjpeg?resolution=1280x720&framerate=10",
+            "http://h/cgi-bin/mjpeg?resolution=1280x720&framerate=10",
+        ),
+        ("rtsp://h/MediaInput/h264/stream_1", "rtsp://h/MediaInput/h264/stream_1"),
+    ],
+)
+def test_saved_mjpeg_url_gets_framerate(tmp_path, saved, fixed):
+    p = tmp_path / "c.json"
+    p.write_text(
+        json.dumps({"cameras": [{"id": "a", "name": "А", "ip": "10.0.0.12", "rtsp_url": saved}]}),
+        encoding="utf-8",
+    )
+    assert ConfigStore(p).load().cameras[0].rtsp_url == fixed

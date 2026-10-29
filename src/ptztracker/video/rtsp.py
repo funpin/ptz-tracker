@@ -37,7 +37,7 @@ def strip_credentials(url: str) -> str:
 STREAM_CHOICES = {
     "auto": "Авто",
     "mjpeg_1": "MJPEG (1) · 640×360, 25 к/с",
-    "mjpeg_2": "MJPEG (2) · 1280×720, 12,5 к/с",
+    "mjpeg_2": "MJPEG (2) · 1280×720, 12 к/с",
     "h264_1": "H.264 (1)",
 }
 
@@ -48,9 +48,16 @@ def stream_url(host: str, stream: str) -> str:
         "h264_1": f"rtsp://{host}/MediaInput/h264/stream_1",
         "h264_2": f"rtsp://{host}/MediaInput/h264/stream_2",
         "mjpeg_1": f"http://{host}/cgi-bin/mjpeg?resolution=640x360&framerate=25",
-        # частоту камера выбирает сама (по паспорту 12,5 к/с); живьём не проверено
-        "mjpeg_2": f"http://{host}/cgi-bin/mjpeg?resolution=1280x720",
+        # замер 2026-10-29: без framerate камера отдаёт 5 к/с, с framerate=25 — 12 к/с (максимум для 1280×720)
+        "mjpeg_2": f"http://{host}/cgi-bin/mjpeg?resolution=1280x720&framerate=25",
     }[stream]
+
+
+def with_mjpeg_framerate(url: str) -> str:
+    """Адрес MJPEG камеры без framerate дополнить: без него камера даёт 5 к/с (замер 2026-10-29)."""
+    if "/cgi-bin/mjpeg" not in url or "framerate=" in url:
+        return url
+    return url + ("&" if "?" in url else "?") + "framerate=25"
 
 
 def stream_urls(

@@ -118,7 +118,7 @@ def test_stream_urls_specific_and_auto():
     assert stream_urls("h", "h264_2", "admin", "pw", None) == ["rtsp://admin:pw@h/MediaInput/h264/stream_2"]
     assert stream_urls("h", "h264_1", None, None, "rtsp://h/saved") == ["rtsp://h/MediaInput/h264/stream_1"]
     assert stream_urls("h", "mjpeg_1", None, None, None) == ["http://h/cgi-bin/mjpeg?resolution=640x360&framerate=25"]
-    assert stream_urls("h", "mjpeg_2", None, None, None) == ["http://h/cgi-bin/mjpeg?resolution=1280x720"]
+    assert stream_urls("h", "mjpeg_2", None, None, None) == ["http://h/cgi-bin/mjpeg?resolution=1280x720&framerate=25"]
     a = stream_urls("h", "auto", None, None, "rtsp://h/saved")
     assert a[0] == "rtsp://h/saved" and len(a) > 1 and len(a) == len(set(a))
 
@@ -139,3 +139,12 @@ def test_redact_url_hides_password_with_at_sign():
     # внутри JSON адрес кончается на кавычке: соседние поля не задеваются
     line = '{"u": "http://h:80/x", "mail": "a@b", "v": "rtsp://u:p@q@h/"}'
     assert redact_url(line) == '{"u": "http://h:80/x", "mail": "a@b", "v": "rtsp://u:***@h/"}'
+
+
+def test_mjpeg_2_url_has_framerate_and_label():
+    from ptztracker.video.rtsp import STREAM_CHOICES, stream_url, stream_urls
+
+    assert "framerate=" in stream_url("h", "mjpeg_2")
+    assert "resolution=1280x720" in stream_url("h", "mjpeg_2")
+    assert all("framerate=" in u for u in stream_urls("h", "mjpeg_2", None, None, None))
+    assert STREAM_CHOICES["mjpeg_2"] == "MJPEG (2) · 1280×720, 12 к/с"
