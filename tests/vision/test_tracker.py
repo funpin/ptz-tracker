@@ -151,3 +151,104 @@ def test_noisy_appearance_does_not_drop_lone_target():
         tr.update(ppl, t, img)
         assert tr.target_state == "tracking" and tr.target_id == target.id
     assert len(tr.tracks) == 2  # двойник не появился
+
+
+# --- резкое движение камеры (живая запись «Резко», 2026-10-29) ---------------------------------
+
+W, H = 1280, 720
+
+
+def shift_motion(dx_px: float, dy_px: float, t_move: float):
+    """Картинка один раз сдвинулась на (dx, dy) px в момент t_move: motion(t0, t1) отвечает, как её двигала камера."""
+    def motion(t0, t1):
+        moved = t0 < t_move <= t1
+        return 1.0, (dx_px / W if moved else 0.0), (dy_px / H if moved else 0.0)
+    return motion
+
+
+def person(cx, top, w=120, h=300, score=0.9):
+    return Person(box=(cx - w / 2, top, cx + w / 2, top + h), score=score, keypoints=np.zeros((17, 3), np.float32))
+
+
+def feed(tr, t, people, motion=None):
+    return tr.update(people, t, None, frame_size=(W, H), motion=motion)
+
+
+def test_camera_shift_does_not_lose_or_renumber_target():
+    """Картинка прыгнула на 100 px: с поправкой на движение камеры цель — тот же трек, не потерян."""
+    tr = PersonTracker()
+    for i in range(5):
+        feed(tr, i * DT, [person(500, 200)])
+    tr.select(1)
+    t_move = 5 * DT - 0.01
+    motion = shift_motion(-100, -60, t_move)
+    feed(tr, 5 * DT, [person(400, 140)], motion)
+    assert tr.target_id == 1 and tr.target_state == "tracking"
+    assert tr.target.hits == 6 and len(tr.tracks) == 1
+
+
+def test_camera_shift_is_not_taken_for_walking_speed():
+    """Скорость человека считается без сдвига от камеры: после рывка картинки он не «побежал»."""
+    tr = PersonTracker()
+    for i in range(5):
+        feed(tr, i * DT, [person(500, 200)])
+    tr.select(1)
+    feed(tr, 5 * DT, [person(400, 140)], shift_motion(-100, -60, 5 * DT - 0.01))
+    assert abs(tr.target.velocity[0]) < 100 and abs(tr.target.velocity[1]) < 100
+
+
+def lose_target(tr, motion, n_missing=3):
+    """Цель выбрана и стоит; затем детектор её не видит n_missing кадров (виден только сосед слева)."""
+    for i in range(5):
+        feed(tr, i * DT, [person(150, 200), person(600, 200)])
+    tr.select(2)
+    t = 5 * DT
+    for _ in range(n_missing):
+        feed(tr, t, [person(150, 200)], motion)
+        t += DT
+    return t
+
+
+def test_target_adopts_new_track_at_predicted_place():
+    tr = PersonTracker()
+    motion = shift_motion(-100, -60, 5 * DT + 0.01)
+    t = lose_target(tr, motion)
+    assert tr.target_state == "lost"
+    # через 0,2 с рядом с предсказанным местом (500, 140) — в стороне на 90 px, модель камеры неточна —
+    # появляется новый трек почти того же размера: обычное сопоставление (IoU < 0,3) его не берёт, а переход по месту берёт
+    feed(tr, t, [person(150, 200), person(410, 140, 124, 305)], motion)
+    assert tr.target_id == 2 and tr.target_state == "tracking"
+    assert tr.target.box[0] > 300  # это новый человек справа, а не сосед
+    ad = tr.pop_adoptions()
+    assert len(ad) == 1 and ad[0]["how"] == "place" and ad[0]["id"] == 2 and ad[0]["from_id"] != 2
+    assert tr.pop_adoptions() == []
+
+
+def test_target_does_not_jump_to_other_person_in_view():
+    """Сосед (старый трек) стоит на самом месте цели — цель к нему не переходит и остаётся потерянной."""
+    tr2 = PersonTracker()
+    for i in range(5):
+        feed(tr2, i * DT, [person(300, 200), person(600, 200)])
+    tr2.select(2)
+    t = 5 * DT
+    for _ in range(10):
+        feed(tr2, t, [person(300, 200)])
+        t += DT
+    assert tr2.target_state == "lost" and tr2.target_id == 2 and tr2.pop_adoptions() == []
+
+
+def test_no_adoption_when_new_track_too_late_wrong_size_or_wrong_place():
+    for kind in ("late", "size", "place"):
+        tr = PersonTracker()
+        motion = shift_motion(-100, -60, 5 * DT + 0.01)
+        t = lose_target(tr, motion)
+        if kind == "late":
+            t += 0.6
+            newcomer = person(410, 140)
+        elif kind == "size":
+            newcomer = person(410, 140, 50, 120)
+        else:
+            newcomer = person(900, 400)
+        feed(tr, t, [person(150, 200), newcomer], motion)
+        assert tr.target_state == "lost", kind
+        assert tr.pop_adoptions() == [], kind

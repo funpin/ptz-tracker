@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import itertools
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -23,6 +25,17 @@ VELOCITY_ALPHA = 0.5
 MIN_VELOCITY_DT = 1 / 30  # кадры из RTSP приходят пачками — не делить сдвиг на миллисекунды
 MAX_SPEED_PX_S = 1500.0
 MAX_EXTRAPOLATION_S = 0.3  # дальше прогноз не тянем: человек за кафедрой обычно стоит на месте
+# Цель пропала (детектор не видит человека на смазанных кадрах резкого движения камеры), а на её предсказанном
+# месте скоро появился новый трек — это она. Окно, перекрытие и допуск по размеру — см. DECISIONS.
+ADOPT_WINDOW_S = 0.5
+ADOPT_IOU = 0.1
+ADOPT_AREA_RATIO = 1.6
+
+log = logging.getLogger(__name__)
+
+# Сдвиг картинки от движения камеры между двумя моментами: (во сколько раз увеличилась, сдвиг по x, сдвиг по y)
+# в долях кадра. Камера знает свои команды (control.framing.FramingController.image_motion).
+Motion = Callable[[float, float], tuple[float, float, float]]
 
 
 def _iou(a, b) -> float:
@@ -114,11 +127,45 @@ class Track:
     appearance: np.ndarray | None = None
     created: float = 0.0
 
-    def predicted_box(self, t: float) -> tuple[float, float, float, float]:
+    def predicted_boxes(self, t: float, view: _View | None = None) -> list[tuple[float, float, float, float]]:
+        """Где ждать рамку: с поправкой на сдвиг картинки от камеры и без неё. Модель камеры идёт с запаздыванием
+        (на записи «Резко» ~0,25 с), поэтому в оба места — иначе после остановки камеры человек «не там»."""
+        plain = self.predicted_box(t)
+        warped = self.predicted_box(t, view) if view is not None else plain
+        return [plain] if warped == plain else [plain, warped]
+
+    def predicted_box(self, t: float, view: _View | None = None) -> tuple[float, float, float, float]:
         dt = min(max(0.0, t - self.last_seen), MAX_EXTRAPOLATION_S)
         dx, dy = self.velocity[0] * dt, self.velocity[1] * dt
         x1, y1, x2, y2 = self.box
-        return (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
+        box = (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
+        return view.warp(box, self.last_seen, t) if view is not None else box
+
+
+@dataclass(frozen=True)
+class _View:
+    """Как двигалась картинка между кадрами из-за самой камеры (поворот, наклон, зум) — в пикселях этого кадра."""
+
+    motion: Motion
+    width: float
+    height: float
+
+    def warp(self, box, t0: float, t1: float) -> tuple[float, float, float, float]:
+        """Где окажется рамка, стоящая в мире на месте, если картинка двигалась с t0 до t1."""
+        if t1 <= t0:
+            return box
+        try:
+            r, sx, sy = (float(v) for v in self.motion(t0, t1))
+        except Exception as e:  # модель камеры не должна ронять анализ
+            log.debug("Сдвиг картинки не получен: %s", e)
+            return box
+        if not (r > 0 and abs(sx) < 5 and abs(sy) < 5 and 0.2 < r < 5):
+            return box
+        w, h = self.width, self.height
+        cx = w / 2 + r * ((box[0] + box[2]) / 2 - w / 2) + sx * w
+        cy = h / 2 + r * ((box[1] + box[3]) / 2 - h / 2) + sy * h
+        hw, hh = r * (box[2] - box[0]) / 2, r * (box[3] - box[1]) / 2
+        return (cx - hw, cy - hh, cx + hw, cy + hh)
 
 
 class PersonTracker:
@@ -145,6 +192,8 @@ class PersonTracker:
         self.target_id: int | None = None
         self._target_app: np.ndarray | None = None
         self._target_lost_since: float | None = None
+        self._view: _View | None = None
+        self._adoptions: list[dict] = []
 
     # --- состояние ------------------------------------------------------
 
@@ -197,6 +246,11 @@ class PersonTracker:
             return None
         return appearance_distance(self._target_app, hist)
 
+    def pop_adoptions(self) -> list[dict]:
+        """Случаи, когда цель перешла на другой трек (для записи в чёрный ящик): забирает и очищает список."""
+        out, self._adoptions = self._adoptions, []
+        return out
+
     def _match_target(self, t: float, people: list[Person], hists) -> int | None:
         """Подобрать детекцию для цели первой, чтобы её не перехватил сосед или «двойник».
 
@@ -205,10 +259,10 @@ class PersonTracker:
         tr = self.target
         if tr is None:
             return None
-        pb = tr.predicted_box(t)
+        pbs = tr.predicted_boxes(t, self._view)
         cands = []
         for di, p in enumerate(people):
-            iou = _iou(pb, p.box)
+            iou = max(_iou(pb, p.box) for pb in pbs)
             if iou >= self.match_iou:
                 d = self._target_distance(hists[di])
                 if d is None or d <= self.reid_hard_distance:
@@ -225,8 +279,14 @@ class PersonTracker:
         t: float,
         image: np.ndarray | None,
         hists: list[np.ndarray | None] | None = None,
+        motion: Motion | None = None,
+        frame_size: tuple[int, int] | None = None,
     ) -> list[Track]:
+        """motion — как картинку сдвинула сама камера между двумя моментами; нужен размер кадра (из image или frame_size)."""
         self._t = t
+        if image is not None:
+            frame_size = (image.shape[1], image.shape[0])
+        self._view = _View(motion, float(frame_size[0]), float(frame_size[1])) if motion and frame_size else None
         if hists is None:
             hists = compute_histograms(image, people)
         tracks = list(self._tracks.values())
@@ -243,9 +303,9 @@ class PersonTracker:
         for ti, tr in enumerate(tracks):
             if tr.id == self.target_id:
                 continue
-            pb = tr.predicted_box(t)
+            pbs = tr.predicted_boxes(t, self._view)
             for di, p in enumerate(people):
-                iou = _iou(pb, p.box)
+                iou = max(_iou(pb, p.box) for pb in pbs)
                 if iou >= self.match_iou:
                     pairs.append((iou, ti, di))
         pairs.sort(reverse=True)
@@ -286,7 +346,8 @@ class PersonTracker:
         dt = t - tr.last_seen
         if dt > 0:
             dt = max(dt, MIN_VELOCITY_DT)
-            ocx, ocy = (tr.box[0] + tr.box[2]) / 2, (tr.box[1] + tr.box[3]) / 2
+            old = self._view.warp(tr.box, tr.last_seen, t) if self._view is not None else tr.box
+            ocx, ocy = (old[0] + old[2]) / 2, (old[1] + old[3]) / 2  # скорость человека, без сдвига от камеры
             ncx, ncy = (p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2
             vx = max(-MAX_SPEED_PX_S, min(MAX_SPEED_PX_S, (ncx - ocx) / dt))
             vy = max(-MAX_SPEED_PX_S, min(MAX_SPEED_PX_S, (ncy - ocy) / dt))
@@ -311,6 +372,9 @@ class PersonTracker:
             return
         if self._target_lost_since is None:
             self._target_lost_since = t
+        # новый трек на предсказанном месте цели: детектор потерял человека на смазанных кадрах движения камеры
+        if self._adopt_by_place(t):
+            return
         if self._target_app is None:
             return
         # узнать цель среди появившихся после её потери
@@ -323,9 +387,39 @@ class PersonTracker:
         scored = [s for s in scored if s[0] <= self.reid_max_distance]
         if scored:
             _, best = min(scored, key=lambda s: s[0])
-            # узнанный трек получает номер цели — для оператора это тот же человек
-            self._tracks.pop(self.target_id, None)
-            self._tracks.pop(best.id)
-            best.id = self.target_id
-            self._tracks[best.id] = best
-            self._target_lost_since = None
+            self._take_over(best, t, "appearance")
+
+    def _take_over(self, best: Track, t: float, how: str) -> None:
+        """Узнанный трек получает номер цели — для оператора это тот же человек."""
+        old = self._tracks.pop(self.target_id, None)
+        self._tracks.pop(best.id)
+        self._adoptions.append({"t": t, "how": how, "id": self.target_id, "from_id": best.id,
+                                "box": [round(float(v), 1) for v in best.box],
+                                "lost_s": None if old is None else round(t - old.last_seen, 3)})
+        best.id = self.target_id
+        self._tracks[best.id] = best
+        self._target_lost_since = None
+
+    def _adopt_by_place(self, t: float) -> bool:
+        tgt = self.target
+        if tgt is None or t - tgt.last_seen > ADOPT_WINDOW_S or self._target_lost_since is None:
+            return False
+        pbs = tgt.predicted_boxes(t, self._view)
+        best, best_iou = None, ADOPT_IOU
+        for tr in self._tracks.values():
+            if tr.id == self.target_id or tr.last_seen != t or tr.created < self._target_lost_since:
+                continue  # только трек, появившийся уже после потери цели: старый — это другой человек
+            ratio = _area(tr.box) / max(1e-9, _area(tgt.box))
+            if not (1 / ADOPT_AREA_RATIO <= ratio <= ADOPT_AREA_RATIO):
+                continue
+            if self._target_app is not None and tr.appearance is not None and (
+                appearance_distance(self._target_app, tr.appearance) > self.reid_hard_distance
+            ):
+                continue
+            iou = max(_iou(pb, tr.box) for pb in pbs)
+            if iou >= best_iou:
+                best, best_iou = tr, iou
+        if best is None:
+            return False
+        self._take_over(best, t, "place")
+        return True

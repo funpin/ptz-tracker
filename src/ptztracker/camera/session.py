@@ -263,6 +263,7 @@ class CameraSession:
             recorder=self.recorder,
             query_pan_tilt=query_pan_tilt,
         )
+        self.analyzer.motion = self.follower.picture_motion
 
     def _manual(self) -> None:
         """Ручное действие оператора: слежение и агент уступают немедленно, до отправки команды."""

@@ -54,6 +54,8 @@ class Analyzer:
         self.tracker = tracker or PersonTracker()
         self.recorder: Recorder = recorder or NullRecorder()
         self.error: str | None = None
+        # как камера сама сдвинула картинку между двумя кадрами (Follower.picture_motion); None — камера стоит
+        self.motion: Callable[[float, float], tuple[float, float, float]] | None = None
         self._lock = threading.Lock()  # трекер и последний результат
         self._latest: AnalysisResult | None = None
         self._fps = FpsMeter()
@@ -159,7 +161,8 @@ class Analyzer:
             infer_ms = (time.monotonic() - t_start) * 1000
             hists = compute_histograms(fr.image, people)  # дорого — вне блокировки, чтобы окно не ждало
             with self._lock:
-                seen = self.tracker.update(people, fr.t_capture, fr.image, hists)
+                seen = self.tracker.update(people, fr.t_capture, fr.image, hists, motion=self.motion)
+                adopted = self.tracker.pop_adoptions()
                 tracks = list(seen)
                 tgt = self.tracker.target
                 if tgt is not None and all(t.id != tgt.id for t in seen):
@@ -180,6 +183,9 @@ class Analyzer:
                 )
                 self.error = None
                 result = self._latest
+            for a in adopted:  # цель перешла на другой трек — в чёрный ящик
+                safe_event(self.recorder, "target", how="adopt_" + a["how"], id=a["id"], from_id=a["from_id"],
+                           box=a["box"], lost_s=a["lost_s"], t_capture=a["t"])
             self._record(fr, result)
             wait = t_start + period - time.monotonic()
             if wait > 0:

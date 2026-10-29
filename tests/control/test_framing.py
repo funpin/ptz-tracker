@@ -599,3 +599,17 @@ def test_edge_zoom_out_only_when_saturated():
     f, walks, T = _walks(0.77, 4.0)
     tr = _follow(f, T, cmd_delay=0.13)
     assert min(tr.cam_zoom) < -0.1  # а на пределе — отъезжает
+
+
+def test_image_motion_follows_sent_commands():
+    """Модель сдвига картинки для трекера людей: поворот вправо уводит картинку влево, наклон вверх — вниз, зум растягивает."""
+    from ptztracker.control.framing import FramingController
+
+    ctl = FramingController(COMPOSITIONS["waist_center"], E, default_calibration(), 0.0)
+    assert ctl.image_motion(0.0, 1.0) == (1.0, 0.0, 0.0)
+    ctl.x.dyn.command(0.0, 0.1)  # камера вправо, fw/s
+    ctl.y.dyn.command(0.0, 0.2)  # камера вверх, fh/s
+    ctl.zoom_sent(0.0, 0.3)  # приближение, ln/с
+    r, sx, sy = ctl.image_motion(0.0, 3.0)
+    assert r > 1.0 and sx < -0.1 and sy > 0.1
+    assert ctl.image_motion(0.5, 0.5) == (1.0, 0.0, 0.0)

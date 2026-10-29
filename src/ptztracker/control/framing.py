@@ -591,6 +591,17 @@ class FramingController:
         zoom, size_err = self._zoom(now, dt, active, walking, e, inp.zoom_pos, shortfall)
         return FramingOutput(pan, tilt, zoom, state, (self.x.err, self.y.err), size_err)
 
+    def image_motion(self, t0: float, t1: float) -> tuple[float, float, float]:
+        """Как сама камера сдвинула картинку между кадрами, снятыми в t0 и t1 (моменты прихода кадров).
+
+        (во сколько раз зум увеличил, сдвиг по x, сдвиг по y) в долях кадра: точка p кадра t0 стоит в кадре t1 на
+        0,5 + r·(p − 0,5) + сдвиг. По отправленным камере командам (модель), не по картинке — для трекера людей.
+        """
+        a, b = t0 - self.video_latency, t1 - self.video_latency
+        r = math.exp(self.zdyn.displacement(a, b))
+        k = self._k(b)
+        return r, -self.x.sign * k * self.x.dyn.displacement(a, b), -self.y.sign * k * self.y.dyn.displacement(a, b)
+
     def _k(self, t: float) -> float:
         """Во сколько раз картинка увеличена зумом с момента старта регулятора."""
         return math.exp(self.zdyn.position(t))

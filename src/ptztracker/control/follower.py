@@ -215,6 +215,16 @@ class Follower:
         self.disable("остановка камеры")
         self._stop.set()
 
+    def picture_motion(self, t0: float, t1: float) -> tuple[float, float, float]:
+        """Сдвиг картинки от команд слежения между двумя кадрами (для трекера людей; зовёт поток анализа).
+
+        Слежение выключено — камера под ручным управлением, модель её не знает: сдвига нет.
+        """
+        with self._lock:
+            if not self.enabled:
+                return 1.0, 0.0, 0.0
+            return self.controller.image_motion(t0, t1)
+
     def _set_zoom_pos(self, z: int) -> None:
         with self._lock:  # пара (положение, момент) читается тактом слежения целиком
             self._zoom_pos, self._zoom_pos_t = z, time.monotonic()

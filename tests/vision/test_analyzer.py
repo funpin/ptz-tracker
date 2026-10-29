@@ -231,3 +231,62 @@ def test_pose_detector_on_1280x720_frame_through_analyzer():
         assert all(0 <= t.box[0] < t.box[2] <= 1280 + 1 and 0 <= t.box[1] < t.box[3] <= 720 + 1 for t in r.tracks)
     finally:
         a.stop()
+
+
+class ListRecorder:
+    active = True
+
+    def __init__(self):
+        self.events = []
+
+    def frame(self, fr): ...
+
+    def event(self, kind, **data):
+        self.events.append((kind, data))
+
+    def save_snapshot(self, reason): ...
+
+    def close(self): ...
+
+
+def test_analyzer_records_target_adoption_and_passes_camera_motion():
+    """Цель перешла на новый трек на своём месте — событие target/adopt_place в чёрном ящике; сдвиг камеры доходит до трекера."""
+    from ptztracker.vision.types import Person
+
+    def box(cx, top):
+        return Person(box=(cx - 20, top, cx + 20, top + 80), score=0.9, keypoints=np.zeros((17, 3), np.float32))
+
+    calls = []
+    phase = {"n": 0}  # 0 — двое стоят; потом цель пропала на 2 кадра; потом на её месте (сдвинутом) новый человек
+
+    class ScriptDetector:
+        name, device = "script", "cpu"
+
+        def detect(self, frame):
+            if phase["n"] == 0:
+                return [box(100, 50), box(300, 50)]
+            phase["n"] += 1
+            if phase["n"] <= 3:
+                return [box(100, 50)]
+            return [box(100, 50), box(225, 50)]
+
+    rec = ListRecorder()
+    img = np.zeros((360, 640, 3), np.uint8)
+    an = Analyzer(FakeSource(img), ScriptDetector, max_fps=100, recorder=rec)
+
+    def motion(t0, t1):  # картинка уехала на 100 px влево, как только цель пропала
+        calls.append((t0, t1))
+        return 1.0, -100 / 640 if t1 - t0 > 0.05 else 0.0, 0.0
+
+    an.motion = motion
+    an.start()
+    try:
+        assert wait_until(lambda: an.latest() is not None and len(an.latest().tracks) >= 2, 3)
+        tid = an.select_at(300, 90)
+        assert tid is not None
+        phase["n"] = 1
+        assert wait_until(lambda: any(k == "target" and d.get("how", "").startswith("adopt") for k, d in rec.events), 3)
+    finally:
+        an.stop()
+    ev = next(d for k, d in rec.events if k == "target" and d.get("how", "").startswith("adopt"))
+    assert ev["how"] == "adopt_place" and ev["id"] == tid and ev["from_id"] != tid and calls

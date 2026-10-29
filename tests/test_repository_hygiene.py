@@ -8,6 +8,7 @@ ALLOWED_ZIPS = {  # эпизоды без паролей (в meta username = nul
     "tests/data/episodes/sim_walk_30s.zip",
     "tests/data/episodes/2026-10-29-r1-waist.zip",
     "tests/data/episodes/2026-10-29-r4d-sharp.zip",
+    "tests/data/episodes/2026-10-29-r4-sharp.zip",
 }
 
 
