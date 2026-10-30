@@ -147,14 +147,14 @@ def test_he42_speed_table_shape():
 
 
 def test_ramp_like_he42():
-    # до 90% скорости — за 0.75–1.0 с после команды (замер: ~0.85 с)
+    # до 90% скорости — за 0.25–0.4 с после команды (замер 2026-10-29: 0.27–0.33 с по кадрам MJPEG)
     s = SimPtz()
     s.handle("#PTS8050")
     t = 0.0
     while s.pan_vel < 0.9 * 32.99 and t < 3:
         s.update(0.01)
         t += 0.01
-    assert 0.75 <= t <= 1.0
+    assert 0.25 <= t <= 0.4
 
 
 def test_dead_time():

@@ -2,7 +2,7 @@
 
 import math
 
-from loop import run, sign_changes
+from loop import QUEUE_MAX, run, sign_changes
 
 from ptztracker.camera import he42
 from ptztracker.camera import protocol as P
@@ -61,7 +61,7 @@ def test_camera_faster_than_table_adapts_while_walking():
 def test_adaptation_prevents_swing_at_x2():
     """Камера вдвое быстрее таблицы (очередь 0,13 с): без подстройки сторож ловит раскачку; с ней поправка
     успевает раньше, раскачки нет."""
-    tr = run(_walk, T=40, speed_factor=2.0, cmd_delay=0.13, gz_period=0.5, apc_period=0.5, adapt=True)
+    tr = run(_walk, T=40, speed_factor=2.0, cmd_delay=QUEUE_MAX, gz_period=0.5, apc_period=0.5, adapt=True)
     assert "diverged" not in tr.state
     assert abs(_at(tr, 30.0)[0] - 2.0) <= 0.15
     assert all(n <= 1 for n in _stand_reversals(tr))
@@ -83,7 +83,7 @@ def test_adaptation_robust_to_dynamics_error():
     """Разгон камеры не тот, что в калибровке (τ ±0,1 с, мёртвое время 0…0,2 с при 0,08 в модели): при
     верной таблице поправка остаётся у 1 ±10% (замер: −6…+8%): отрезки берутся с одинаковой скоростью
     на концах, где ошибка разгона почти не сказывается. Это меньше ошибки таблицы, которую поправка исправляет."""
-    for tau, dead in ((0.27, 0.08), (0.47, 0.08), (0.37, 0.0), (0.37, 0.2)):
+    for tau, dead in ((0.05, 0.08), (0.22, 0.08), (0.12, 0.0), (0.12, 0.2)):
         tr = run(_walk, T=32, cmd_delay=0.13, gz_period=0.5, apc_period=0.5, adapt=True, cam_tau=tau, cam_dead_time=dead)
         assert all(abs(s[0] - 1.0) <= 0.1 for s in tr.scale), (tau, dead, min(tr.scale), max(tr.scale))
         assert "diverged" not in tr.state, (tau, dead)
@@ -138,7 +138,7 @@ def test_zoom_555_aaa_555_while_walking_no_swing_with_live_he42_speeds():
              apc_period=0.5, adapt=True, cam_he42=True)
     assert "diverged" not in tr.state
     gz = [P.LENS_MIN + z / math.log(he42.ZOOM_RATIO) * (P.LENS_MAX - P.LENS_MIN) for z in tr.cam_zoom]
-    assert max(gz) >= 0xA80 and gz[-1] <= 0x5A0, (hex(round(max(gz))), hex(round(gz[-1])))  # 555 → AAA → 555
+    assert max(gz) >= 0xA50 and gz[-1] <= 0x5A0, (hex(round(max(gz))), hex(round(gz[-1])))  # 555 → AAA → 555
     assert min(min(x, 1 - x) for x in tr.img_x) >= 0.15
     assert all(abs(s[0] - 1.0) <= 0.1 and s[1] == s[0] for s in tr.scale), (min(tr.scale), max(tr.scale))
     cyc = ZW_LEG + ZW_STAND

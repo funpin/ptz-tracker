@@ -40,6 +40,9 @@ PROBE_MAX_S, PROBE_MAX_FRACTION, STOP_LAG_S = 2.5, 0.4, 0.45
 # Прогноз стопа — только при угле обзора ≥ PREDICT_MIN_HFOV (на теле быстрый код пролетает полкадра за опрос:
 # ранний стоп оставляет 2–3 замера и скорость выходит втрое заниженной) и после MIN_FIT_SAMPLES опросов.
 MIN_FIT_SAMPLES, PREDICT_MIN_HFOV = 3, 20.0
+# До MIN_FIT_SAMPLES опросов скорость неизвестна, а при разгоне 0,3 с (2026-10-29) камера на коде 90 (61°/с) за три
+# опроса уже у предела пробега: прогноз берёт долю PRIOR_SPEED_FRACTION от паспортной скорости кода (he42.PAN_DEG_S).
+PRIOR_SPEED_FRACTION = 0.7
 # Ожидание зума: #GZ не дальше ZOOM_ARRIVE_UNITS от заданного и не меняется ZOOM_STABLE_POLLS опросов
 # подряд (~0,45 с). Было: всегда 2 с — возврат с теле длится дольше, и разгон мерился при едущем зуме
 # (часть 0: задержка видео 0). Без цели «стоит» и до начала движения, если камера тронулась не сразу.
@@ -156,6 +159,16 @@ class _Sender:
         self.send = send
 
 
+def _nominal_deg_s(code: int) -> float:
+    """Паспортная скорость кода, °/с (линейно между точками he42.PAN_DEG_S; для кода < 50 — по модулю)."""
+    n = 50 + abs(code - 50)
+    pts = sorted(he42.PAN_DEG_S.items())
+    for (c0, v0), (c1, v1) in zip(pts, pts[1:], strict=False):
+        if c0 <= n <= c1:
+            return v0 + (v1 - v0) * (n - c0) / (c1 - c0)
+    return 0.0
+
+
 class CalibrationRunner:
     def __init__(
         self,
@@ -246,9 +259,13 @@ class CalibrationRunner:
                     frames.append(self._frame())
                 if abs(x) >= max_deg:
                     break
-                if hfov >= PREDICT_MIN_HFOV and len(samples) >= MIN_FIT_SAMPLES:
-                    (ta, xa), (tb, xb) = samples[-2], samples[-1]
-                    if tb > ta and abs(xb + (xb - xa) / (tb - ta) * STOP_LAG_S) >= max_deg:
+                if hfov >= PREDICT_MIN_HFOV:
+                    v = PRIOR_SPEED_FRACTION * _nominal_deg_s(code)
+                    if len(samples) >= MIN_FIT_SAMPLES:
+                        (ta, xa), (tb, xb) = samples[-2], samples[-1]
+                        if tb > ta:
+                            v = max(v, abs((xb - xa) / (tb - ta)))
+                    if abs(x) + v * STOP_LAG_S >= max_deg:
                         break
         finally:
             self.pacer.send(P.STOP_PT)
