@@ -87,6 +87,9 @@ def make_pad_backend():
     return SdlBackend()
 
 
+_PAD_SIZES = ("waist", "full", "wide")  # L1/R1: только крупность, от ближнего к общему
+
+
 def _clamp1(v: float) -> float:
     return max(-1.0, min(1.0, v))
 
@@ -135,6 +138,7 @@ class MainWindow(QMainWindow):
         self.pad.intents.connect(self._on_pad_intents)
         self.pad.connectionChanged.connect(lambda _info: self._sync_pad_player())
         self._pad_applied = (0.0, 0.0, 0.0)  # скорость геймпада в последней отправке
+        self._last_waist = "waist_center"  # куда вернуться в пояс по R1 из «Роста»
 
         self.preview = PreviewWidget()
         self.video_frame = VideoFrame(self.preview)
@@ -370,10 +374,8 @@ class MainWindow(QMainWindow):
     def _activate(self, cam: CameraConfig | None) -> None:
         self.agent_panel.revoke()  # смена камеры: агент теряет управление
         # геймпад: старой камере — нули; новая поедет, только когда стики вернутся в центр
-        self.pad.reset_motion()
+        self._pad_stop_motion()
         self.pad.cancel_holds()
-        if self.session and self.session.limit_watch:
-            self.session.limit_watch.set_demand(0.0, 0.0, 0.0)
         self.release_all_held()
         self._speed_scale_saved_t = float("-inf")  # «раз в минуту» — для каждой камеры заново
         if self.session:
@@ -399,13 +401,15 @@ class MainWindow(QMainWindow):
         if self.session.follower:
             self.session.follower.on_change = self._on_follow_change  # поток слежения
         if self.session.limit_watch:
-            self.session.limit_watch._on_limit = self.pad.notify_limit  # поток LimitWatch → сигнал моста
+            self.session.limit_watch.set_on_limit(self.pad.notify_limit)  # поток LimitWatch → сигнал моста
         self._sync_pad_player()
         self.preview.set_source(self.session.frames)
         self.preview.set_analyzer(self.session.analyzer)
         self.preview.set_follow(self.session.follower)
         self.preview.camera_name = cam.name
         self.follow_panel.set_composition(cam.composition)
+        if cam.composition.startswith("waist"):
+            self._last_waist = cam.composition
         self.follow_panel.set_effort(cam.effort)
         self.follow_panel.set_calibrated(cam.calibration is not None)
         self.follow_panel.set_state(False, None)
@@ -589,6 +593,8 @@ class MainWindow(QMainWindow):
         return lab
 
     def _on_composition(self, key: str) -> None:
+        if key.startswith("waist"):
+            self._last_waist = key
         cam = self._current_cfg()
         self.follow_panel.set_composition(key)
         if cam is None:
@@ -944,11 +950,7 @@ class MainWindow(QMainWindow):
         """Общий аварийный стоп (Esc и кнопка «Стоп»): снять разрешение агенту, отпустить клавиши,
         выключить слежение, остановить камеру."""
         self.agent_panel.revoke()
-        self.pad.reset_motion()  # стоп обнуляет и геймпад: снова поедет после возврата стика в центр
-        pad_s = self._pad_session()
-        if pad_s is not None and pad_s.limit_watch:
-            pad_s.limit_watch.set_demand(0.0, 0.0, 0.0)
-        self._pad_applied = (0.0, 0.0, 0.0)
+        self._pad_stop_motion()  # стоп обнуляет и геймпад: снова поедет после возврата стика в центр
         self.release_all_held()
         if self.session:
             self.session.emergency_stop()
@@ -1034,18 +1036,27 @@ class MainWindow(QMainWindow):
             s.push_focus()
         # MenuOpen/MenuNav/MenuAccept/MenuClose — Задача 8
 
+    def _pad_stop_motion(self) -> None:
+        """Геймпад больше ничего не держит: нули, автомат заперт до центра, опрос упора стоит."""
+        self.pad.reset_motion()
+        self._pad_applied = (0.0, 0.0, 0.0)
+        s = self._pad_session()
+        if s is not None and s.limit_watch:
+            s.limit_watch.set_demand(0.0, 0.0, 0.0)
+
     def _pad_composition(self, d: int) -> None:
-        """L1 (−1) — шире, R1 (+1) — ближе: по списку COMPOSITIONS к «Общему» и обратно; за краем — «некуда»."""
+        """Только крупность: пояс ↔ рост ↔ общий. L1 (−1) — шире, R1 (+1) — ближе; за краем — «некуда».
+        В пояс из роста — на последнюю сторону пояса (слева/центр/справа)."""
         cam = self._current_cfg()
         if cam is None:
             return
-        keys = list(COMPOSITIONS)
-        i = keys.index(cam.composition) if cam.composition in keys else 0
-        j = i - d  # список идёт от крупного к общему
-        if not 0 <= j < len(keys):
+        cur = cam.composition if cam.composition in COMPOSITIONS else "waist_center"
+        i = _PAD_SIZES.index("waist" if cur.startswith("waist") else cur)
+        j = i - d
+        if not 0 <= j < len(_PAD_SIZES):
             self.pad.rumble(RUMBLE_NOWHERE)
             return
-        self._on_composition(keys[j])
+        self._on_composition(self._last_waist if _PAD_SIZES[j] == "waist" else _PAD_SIZES[j])
 
     def _sync_pad_player(self) -> None:
         """Огоньки игрока = номер камеры геймпада; без камеры — погасить."""
@@ -1092,8 +1103,8 @@ class MainWindow(QMainWindow):
         if self.atem:
             self.atem.stop()
             self.atem = None
-        self.pad.stop()  # до остановки сессии: поток опроса больше не выдаёт движений
-        self.pad.reset_motion()
+        self.pad.stop(timeout=0.1)  # до остановки сессии; Qt не ждёт SDL: зависший поток доделает выход сам
+        self._pad_stop_motion()
         self.release_all_held()
         if self.session:
             self.session.stop()

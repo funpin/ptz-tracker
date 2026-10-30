@@ -112,19 +112,20 @@ def test_stick_pans_and_disables_follow_before_move(qtbot, tmp_path):
     allow_agent(w)
     sim = w.session.sim
     seen = []
-    sub = w.session.set_pan_tilt_velocity
+    sched = w.session.scheduler
+    sub = sched.submit
 
-    def spy(vx, vy):
-        seen.append((f.enabled, w.agent_panel.control_allowed))
-        sub(vx, vy)
-        seen.append((f.enabled, w.agent_panel.control_allowed))
+    def spy(key, cmd, *a, **kw):
+        if key == "pt" and moving_right(cmd):
+            seen.append((f.enabled, w.agent_panel.control_allowed))
+        return sub(key, cmd, *a, **kw)
 
-    w.session.set_pan_tilt_velocity = spy
+    sched.submit = spy
     n = len(list(sim.received))
     b.pad = stick(1.0)
     wait_right(qtbot, sim, n)
     assert not f.enabled and not w.agent_panel.control_allowed
-    assert seen[1] == (False, False)  # внутри вызова: слежение и агент сняты до постановки команды
+    assert seen[0] == (False, False)  # первая команда движения: слежение и агент уже сняты
     after = pts(sim, n)
     first_right = next(i for i, c in enumerate(after) if moving_right(c))
     assert all(moving_right(c) for c in after[first_right:])  # после ручного движения слежение не вмешивается
@@ -234,6 +235,21 @@ def test_camera_switch_requires_recenter(qtbot, tmp_path):
     assert not any(moving_right(c) for c in pts(sim))
     b.pad = stick(0.0)
     qtbot.wait(100)
+    # стик в центре, слежение на новой камере, геймпад выдернули — новой камере ничего не шлём
+    select(qtbot, w)
+    f = w.session.follower
+    assert f.enable()
+    sent = []
+    sub = w.session.set_pan_tilt_velocity
+    w.session.set_pan_tilt_velocity = lambda vx, vy: (sent.append((vx, vy)), sub(vx, vy))
+    b.pad = None
+    qtbot.waitUntil(lambda: not w.pad.connected, timeout=2000)
+    qtbot.wait(200)
+    assert sent == [] and f.enabled
+    f.disable("выключено оператором")
+    b.pad = RawPad()
+    qtbot.waitUntil(lambda: w.pad.connected, timeout=2000)
+    qtbot.wait(100)
     b.pad = stick(0.8)
     wait_right(qtbot, sim)
     w.close()
@@ -264,13 +280,25 @@ def test_l1_r1_composition_steps(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)
     cam = w._current_cfg()
     w._on_composition("waist_center")  # SIM_CAMERA общая для всех тестов: крупность мог поменять предыдущий
-    press(qtbot, b, "l1")  # шире
-    qtbot.waitUntil(lambda: cam.composition == "waist_left", timeout=1000)
-    press(qtbot, b, "r1")  # ближе
-    qtbot.waitUntil(lambda: cam.composition == "waist_center", timeout=1000)
-    press(qtbot, b, "r1")  # ближе некуда — короткий импульс
-    qtbot.waitUntil(lambda: (1.0, 1.0, 120) in b.of("rumble"), timeout=1000)
-    assert cam.composition == "waist_center"
+
+    def step(button, want):
+        press(qtbot, b, button)
+        qtbot.waitUntil(lambda: cam.composition == want, timeout=1000)
+
+    step("l1", "full")  # шире: пояс → рост → общий
+    step("l1", "wide")
+    press(qtbot, b, "l1")  # шире некуда — короткий импульс
+    qtbot.waitUntil(lambda: b.of("rumble") == [RUMBLE_NOWHERE[0]], timeout=1000)
+    assert cam.composition == "wide"
+    step("r1", "full")
+    step("r1", "waist_center")
+    w._on_composition("waist_left")  # оператор выбрал сторону клавишей
+    step("l1", "full")
+    step("r1", "waist_left")  # в пояс — на последнюю сторону
+    press(qtbot, b, "r1")  # ближе пояса некуда
+    qtbot.waitUntil(lambda: len(b.of("rumble")) == 2, timeout=1000)
+    assert cam.composition == "waist_left"
+    w._on_composition("waist_center")
     w.close()
 
 

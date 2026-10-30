@@ -96,7 +96,7 @@ def test_sim_pan_limit():
     s.start()
     hits = []
     try:
-        s.limit_watch._on_limit = lambda: hits.append(time.monotonic())
+        s.limit_watch.set_on_limit(lambda: hits.append(time.monotonic()))
         s.set_pan_tilt_velocity(1, 0)
         deadline = time.monotonic() + 40
         while s.sim.pan_deg < 174 and time.monotonic() < deadline:
@@ -169,5 +169,17 @@ def test_diagonal_slow_axis_regrace():
         w.set_demand(1, 0.05, 0)  # вернулся на полную скорость: льготный период заново
         time.sleep(0.2)
         assert c["limit"] == n
+    finally:
+        w.stop()
+
+
+def test_set_on_limit_replaces_callback():
+    w, c = make()
+    hits = []
+    try:
+        w.set_on_limit(lambda: hits.append(1))
+        w.set_demand(1, 0, 0)
+        time.sleep(0.4)
+        assert hits and c["limit"] == 0
     finally:
         w.stop()

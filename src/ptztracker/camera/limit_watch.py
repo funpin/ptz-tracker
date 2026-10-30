@@ -59,6 +59,10 @@ class LimitWatch:
             self._demand = d
         self._wake.set()
 
+    def set_on_limit(self, fn: Callable[[], None]) -> None:
+        """Кого звать при упоре (вызывается из потока LimitWatch)."""
+        self._on_limit = fn
+
     def stop(self) -> None:
         self._stop.set()
         self._wake.set()

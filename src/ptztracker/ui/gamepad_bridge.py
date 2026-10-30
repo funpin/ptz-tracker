@@ -192,7 +192,7 @@ class GamepadBridge(QObject):
         if self._thread is not None:
             self._thread.rumble(pattern)
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 1.0) -> None:
         self._vel = (0.0, 0.0, 0.0)
         if self._thread is not None:
-            self._thread.stop()
+            self._thread.stop(timeout)
