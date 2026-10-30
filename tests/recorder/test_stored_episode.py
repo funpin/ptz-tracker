@@ -29,7 +29,7 @@ def test_stored_sim_episode_replays_same_codes():
         assert all(abs(a - b) <= 1 for a, b in zip(rec, new)), (rec, new)
     assert s.max_code_diff <= 1
     assert s.pan_reversals_new <= s.pan_reversals_rec + 1
-    # ускорение камеры (модель разгона); догон уходящего за край — как может сама камера: v_max/τ = 1,2/0,37
-    assert s.max_accel_new <= 3.3  # в записи 3,16 fw/s²
+    # ускорение камеры (модель разгона); догон уходящего за край — как может сама камера: v_max/τ = 1,2/0,12 (τ 0,12 с с 2026-10-29)
+    assert s.max_accel_new <= 5.7  # в записи 5,22 fw/s² (при τ 0,37 было 3,16)
     assert 0 <= s.out_of_soft_pct <= 50
     assert s.target_switches == 0
