@@ -1,6 +1,5 @@
 import time
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
 
 from ptztracker.config import ConfigStore
@@ -52,8 +51,8 @@ def cfg_with(**kw):
 
 def test_chip_hidden_by_default(qtbot, tmp_path):
     w = make(qtbot, tmp_path, checker_factory=factory())
-    assert w.update_chip.isHidden()
-    assert w.update_chip.kind() == "accent"
+    assert not w.update_action.isVisible()
+    assert w.main_menu_btn.kind() == "neutral"
 
 
 def test_new_version_shows_chip_and_click_opens_url(qtbot, tmp_path, monkeypatch):
@@ -63,10 +62,10 @@ def test_new_version_shows_chip_and_click_opens_url(qtbot, tmp_path, monkeypatch
     monkeypatch.setattr(QDesktopServices, "openUrl", lambda u: opened.append(u.toString()) or True)
     w._start_update_check()
     w._update_status()
-    assert w.update_chip.isVisible()
-    assert w.update_chip.text() == "Доступна 0.3.0"
-    assert w.update_chip.toolTip() == "Открыть страницу релиза на GitHub"
-    qtbot.mouseClick(w.update_chip, Qt.LeftButton)
+    assert w.update_action.isVisible()
+    assert "0.3.0" in w.update_action.text()
+    assert w.main_menu_btn.kind() == "accent" and "0.3.0" in w.main_menu_btn.toolTip()
+    w.update_action.trigger()
     assert opened == [info.html_url]
 
 
@@ -83,7 +82,7 @@ def test_failed_check_does_not_save_time(qtbot, tmp_path):
     w._start_update_check()
     w._update_status()
     assert w.cfg.last_update_check == 0.0
-    assert w.update_chip.isHidden()
+    assert not w.update_action.isVisible()
 
 
 def test_disabled_setting_does_not_start_checker(qtbot, tmp_path):
@@ -115,7 +114,7 @@ def test_known_newer_version_shown_after_restart_within_24h(qtbot, tmp_path):
              checker_factory=factory())
     w._start_update_check()
     assert FakeChecker.instances == []
-    assert w.update_chip.isVisible() and "99.0.0" in w.update_chip.text()
+    assert w.update_action.isVisible() and "99.0.0" in w.update_action.text()
 
 
 def test_latest_version_remembered_and_cleared(qtbot, tmp_path):

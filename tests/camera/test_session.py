@@ -1,5 +1,6 @@
 import time
 
+from ptztracker.camera.scheduler import Priority
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import CameraConfig
 
@@ -110,3 +111,99 @@ def test_observe_only_session_sends_no_movement_or_stops():
         s.stop()
     time.sleep(0.3)
     assert [c for c in list(s.sim.received) if c.startswith(("#PTS", "#Z", "#D1", "#AXF", "#F"))] == []
+
+
+# --- питание и изображение ---
+
+
+def _wait(pred, timeout=3.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.05)
+    return pred()
+
+
+def test_power_from_heartbeat():
+    s = CameraSession(sim_cfg(), analysis=False)
+    assert s.power == "unknown"
+    s.start()
+    try:
+        assert _wait(lambda: s.power == "on")
+    finally:
+        s.stop()
+
+
+def test_standby_roundtrip_blocks_motion():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        s.sim.power_on_s = 0.5
+        assert _wait(lambda: s.power == "on")
+        s.set_power(False)
+        assert _wait(lambda: s.power == "standby", 1.0)
+        n = len([c for c in s.sim.received if c.startswith("#PTS")])
+        s.set_pan_tilt_velocity(0.5, 0)
+        s.recall_preset(3)
+        time.sleep(0.5)
+        assert len([c for c in s.sim.received if c.startswith("#PTS")]) == n
+        assert "#R03" not in s.sim.received
+        s.set_power(True)
+        assert _wait(lambda: s.power in ("switching", "on"), 1.0)
+        assert _wait(lambda: s.power == "on", 4.0)
+    finally:
+        s.stop()
+
+
+def test_power_off_runs_manual_first():
+    s = CameraSession(sim_cfg(), analysis=False)
+    calls = []
+    s.on_manual = lambda: calls.append("manual")
+    s.start()
+    try:
+        s.set_power(False)
+        assert calls == ["manual"]
+        assert _wait(lambda: "#O0" in s.sim.received, 1.0)
+    finally:
+        s.stop()
+
+
+def test_image_state_read_and_set():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.gain == 0x08 and s.image.wb == 0 and s.image.color_temp == 0x1A)
+        s.set_gain(0x0B)
+        s.set_wb(9)
+        s.set_color_temp(0x20)
+        assert _wait(lambda: s.image.gain == 0x0B and s.image.wb == 9 and s.image.color_temp == 0x20, 1.5)
+    finally:
+        s.stop()
+
+
+def test_rejected_gain_falls_back_to_camera_value():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.gain == 0x08)
+        s.scheduler.submit("gain", "OGU:09", Priority.MANUAL)
+        s.refresh_image()
+        time.sleep(0.8)
+        assert s.image.gain == 0x08
+    finally:
+        s.stop()
+
+
+def test_unknown_power_reply_keeps_commands_flowing():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        orig = s.sim._dispatch
+        s.sim._dispatch = lambda cmd: "ER1:O" if cmd == "#O" else orig(cmd)
+        time.sleep(2.5)
+        assert s.power == "unknown"
+        s.recall_preset(4)
+        assert _wait(lambda: "#R04" in s.sim.received, 1.0)
+    finally:
+        s.stop()

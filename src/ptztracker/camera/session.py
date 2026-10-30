@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 
 HEARTBEAT_S = 2.0
 QUIET_PAUSE_S = 0.6
+IMAGE_REFRESH_EVERY = 5  # опрос gain/WB — каждый 5-й heartbeat (~10 с): видеть изменения с пульта
 ONE_SHOT_TTL_S = 2.0  # пресет/разовый AF, нажатые при обрыве связи, не выполняются позже
 STOP_FLUSH_S = 1.5  # сколько ждать отправки «стопов» при остановке (если камера на связи)
 SIM_START_TILT = -8.0
@@ -36,6 +37,15 @@ SIM_VIDEO_LATENCY_S = 0.15  # как MJPEG у живой камеры
 # Без калибровки считаем камеру в 1,3 раза быстрее замеров (he42.PAN_DEG_S): запас устойчивости (раскачка —
 # с ρ≈1,7, то есть камера может быть до ×2 быстрее таблицы). Было 1,5, потом 1,2 (см. DECISIONS)
 UNCALIBRATED_SAFETY = 1.3
+
+
+@dataclasses.dataclass(frozen=True)
+class ImageState:
+    """Изображение по последним ответам камеры; None — ещё не известно."""
+
+    gain: int | None = None
+    wb: int | None = None
+    color_temp: int | None = None
 
 
 class CameraSession:
@@ -71,6 +81,9 @@ class CameraSession:
         self._quiet = False  # фоновые опросы остановлены на время калибровки
         self._hb_thread: threading.Thread | None = None
         self.on_manual: Callable[[], None] | None = None  # окно: ручное действие снимает разрешение агенту
+        # питание и изображение — из ответов, которые планировщик и так получает; окно только читает
+        self._power = "unknown"
+        self._image = ImageState()
 
     # --- жизненный цикл ------------------------------------------------
 
@@ -101,6 +114,7 @@ class CameraSession:
             self.client.send, min_interval=self.cfg.min_interval, on_sent=self._on_cmd_sent,
             queries_only=self.observe_only,
         )
+        self.scheduler.add_sent_listener(self._on_reply)
         self.scheduler.start()
         self.frames.start()
         if self.analysis:
@@ -112,6 +126,7 @@ class CameraSession:
         self._hb_stop.clear()
         self._hb_thread = threading.Thread(target=self._heartbeat, name="cam-heartbeat", daemon=True)
         self._hb_thread.start()
+        self.refresh_image()
 
     def stop(self) -> None:
         """Остановить камеру и освободить ресурсы, не подвешивая окно.
@@ -294,9 +309,13 @@ class CameraSession:
 
     def _heartbeat(self) -> None:
         # Лёгкий запрос «камера включена?» раз в 2 с — чтобы статус связи был актуален без движения.
+        n = 0
         while True:
             if not self._quiet:
                 self.scheduler.submit("heartbeat", P.Q_POWER, Priority.QUERY, only_if_changed=False)
+                n += 1
+                if n % IMAGE_REFRESH_EVERY == 0:
+                    self.refresh_image()
             if self._hb_stop.wait(HEARTBEAT_S):
                 return
 
@@ -304,9 +323,61 @@ class CameraSession:
     def online(self) -> bool:
         return bool(self.scheduler and self.scheduler.online)
 
+    # --- питание и изображение ------------------------------------------
+
+    @property
+    def power(self) -> str:
+        """on | standby | switching | unknown (нет ответа или ответ непонятен)."""
+        return self._power
+
+    @property
+    def image(self) -> ImageState:
+        return self._image
+
+    def refresh_image(self) -> None:
+        for key, cmd in (("q_gain", P.Q_GAIN), ("q_wb", P.Q_WB), ("q_ctemp", P.Q_COLOR_TEMP)):
+            self.scheduler.submit(key, cmd, Priority.QUERY, only_if_changed=False)
+
+    def _on_reply(self, info: dict) -> None:
+        """Слушатель планировщика (его поток): разбор питания и изображения. Не бросает исключений."""
+        cmd, reply, ok = info.get("cmd"), str(info.get("reply") or ""), info.get("ok")
+        try:
+            if cmd in (P.Q_POWER, P.POWER_ON, P.POWER_STANDBY):
+                was = self._power
+                now = P.parse_power(reply) if ok else ("unknown" if cmd == P.Q_POWER else was)
+                if cmd == P.POWER_ON and now == "on" and was != "on":
+                    now = "switching"  # #O1 отвечает p1 сразу, а камера ещё включается (p3 ~3,5 с)
+                self._power = now
+                if now == "on" and was in ("standby", "switching"):
+                    self.refresh_image()
+            elif ok and (cmd == P.Q_GAIN or str(cmd).startswith("OGU:")):
+                self._image = dataclasses.replace(self._image, gain=P.parse_gain(reply))
+            elif ok and (cmd == P.Q_WB or str(cmd).startswith("OAW:")):
+                self._image = dataclasses.replace(self._image, wb=P.parse_wb(reply))
+            elif ok and (cmd == P.Q_COLOR_TEMP or str(cmd).startswith("OSD:B1:")):
+                self._image = dataclasses.replace(self._image, color_temp=P.parse_color_temp(reply))
+        except ValueError:
+            log.debug("Непонятный ответ на %s: %r", cmd, reply)
+
+    def set_power(self, on: bool) -> None:
+        if not on:
+            self._manual()  # слежение и агент выключаются до #O0
+        self._submit("power", P.POWER_ON if on else P.POWER_STANDBY, only_if_changed=False, ttl=ONE_SHOT_TTL_S)
+
+    def set_gain(self, code: int) -> None:
+        self._submit("gain", P.gain(code))
+
+    def set_wb(self, mode: int) -> None:
+        self._submit("wb", P.wb_mode(mode))
+
+    def set_color_temp(self, index: int) -> None:
+        self._submit("ctemp", P.color_temp(index))
+
     # --- ручное управление --------------------------------------------
 
     def _submit(self, key: str, cmd: str, only_if_changed: bool = True, ttl: float | None = None) -> None:
+        if key != "power" and self._power in ("standby", "switching"):
+            return  # камера в ожидании отвечает ER2, а er2 планировщик повторял бы без конца
         if self.follower:
             self.follower.note_manual()
         self.scheduler.submit(key, cmd, Priority.MANUAL, only_if_changed=only_if_changed, ttl=ttl)

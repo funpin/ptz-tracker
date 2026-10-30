@@ -3,6 +3,9 @@
 Формат: http://<host>/cgi-bin/aw_ptz?cmd=%23<CMD>&res=1 — команды с «#»;
 остальные (OSD/изображение) идут в aw_cam. Пункты, помеченные ⚠ в дизайне,
 проверяются диагностикой на живой камере.
+
+Питание, gain, баланс белого и цветовая температура — по пробе на живой AW-HE40
+(Ver.1.54, 2026-10-30, §7 спеки): неверное значение → ER3, в standby → ER2.
 """
 
 from __future__ import annotations
@@ -19,6 +22,19 @@ Q_ZOOM = "#GZ"
 Q_FOCUS = "#GF"
 Q_IRIS = "#GI"
 Q_MODEL = "QID"
+POWER_ON = "#O1"
+POWER_STANDBY = "#O0"
+Q_GAIN = "QGU"
+Q_WB = "QAW"
+Q_COLOR_TEMP = "QSD:B1"
+
+# Gain: 08 = 0 dB, шаг 3 dB до 38 (≈48 dB ⚠ не сверено с меню камеры), 80 — авто (AGC)
+GAIN_AUTO = 0x80
+GAIN_CODES: tuple[int, ...] = tuple(range(0x08, 0x39, 3))
+# Баланс белого (OAW): 6–8 камера отвергает (ER3); подписи — по документации Panasonic ⚠
+WB_MODES: dict[int, str] = {0: "ATW", 1: "AWB A", 2: "AWB B", 3: "ATW 2", 4: "3200K", 5: "5600K", 9: "VAR"}
+WB_VAR = 9
+COLOR_TEMP_MAX = 0x4B
 
 LENS_MIN = 0x555
 LENS_MAX = 0xFFF
@@ -131,3 +147,54 @@ def parse_model(body: str) -> str:
     if not m:
         raise ValueError(f"Не похоже на ответ модели: {body!r}")
     return m.group(1).strip()
+
+
+def parse_power(body: str) -> Literal["on", "standby", "switching", "unknown"]:
+    """Ответ на #O. Непонятный ответ — «unknown», чтобы догадка не спрятала настоящую ошибку связи."""
+    return {"p1": "on", "p0": "standby", "p3": "switching"}.get(body.strip(), "unknown")
+
+
+def gain(code: int) -> str:
+    if code != GAIN_AUTO and code not in GAIN_CODES:
+        raise ValueError(f"gain={code!r}: допустимы {GAIN_CODES[0]:02X}..{GAIN_CODES[-1]:02X} шагом 3 и 80")
+    return f"OGU:{code:02X}"
+
+
+def gain_db(code: int) -> int | None:
+    """dB по коду; None — авто."""
+    return None if code == GAIN_AUTO else code - GAIN_CODES[0]
+
+
+def wb_mode(mode: int) -> str:
+    if mode not in WB_MODES:
+        raise ValueError(f"wb={mode!r}: допустимы {sorted(WB_MODES)}")
+    return f"OAW:{mode}"
+
+
+def color_temp(index: int) -> str:
+    _check_range("color_temp", index, 0, COLOR_TEMP_MAX)
+    return f"OSD:B1:{index:03X}"
+
+
+def color_temp_kelvin(index: int) -> int:
+    """⚠ Догадка: 2400 K + 100 K на шаг (01A ≈ 5000 K); не сверено с меню камеры."""
+    return 2400 + 100 * index
+
+
+def _parse_hex(pattern: str, body: str, what: str) -> int:
+    m = re.fullmatch(pattern, body.strip())
+    if not m:
+        raise ValueError(f"Не похоже на ответ {what}: {body!r}")
+    return int(m.group(1), 16)
+
+
+def parse_gain(body: str) -> int:
+    return _parse_hex(r"OGU:([0-9A-Fa-f]{2})", body, "gain")
+
+
+def parse_wb(body: str) -> int:
+    return _parse_hex(r"OAW:([0-9A-Fa-f])", body, "баланса белого")
+
+
+def parse_color_temp(body: str) -> int:
+    return _parse_hex(r"OSD:B1:([0-9A-Fa-f]{3})", body, "цветовой температуры")

@@ -79,7 +79,7 @@ def test_stream_combo_saves_and_restarts(qtbot, tmp_path):
     w = MainWindow(store)
     qtbot.addWidget(w)
     old = w.session
-    w.stream_combo.setCurrentIndex(w.stream_combo.findData("h264_1"))
+    next(a for a in w.stream_actions.actions() if a.data() == "h264_1").trigger()
     assert w.session is not old
     assert w.session.frames.urls == ["rtsp://10.0.0.12/MediaInput/h264/stream_1"]
     w.close()
@@ -89,7 +89,7 @@ def test_stream_combo_saves_and_restarts(qtbot, tmp_path):
 def test_stream_combo_disabled_for_sim(qtbot, tmp_path):
     w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
     qtbot.addWidget(w)
-    assert not w.stream_combo.isEnabled()
+    assert not any(a.isEnabled() for a in w.stream_actions.actions())
     w.close()
 
 
@@ -136,7 +136,8 @@ def test_f9_with_recording_off_shows_message(qtbot, tmp_path):
     w._activate(w._current_cfg())
     w.save_moment_action.trigger()
     qtbot.waitUntil(lambda: "Запись выключена" in w.statusBar().currentMessage(), timeout=3000)
-    assert not w.record_label.text()
+    w._update_status()
+    assert "выключен" in w.blackbox_btn.toolTip()
     w.close()
 
 
@@ -159,7 +160,7 @@ def test_save_runs_in_background(qtbot, tmp_path):
 def test_record_indicator_shows_buffer(qtbot, tmp_path):
     w = make_rec(qtbot, tmp_path)
     w._update_status()
-    assert "запись 5 мин" in w.record_label.text()
+    assert "последних 5 мин" in w.blackbox_btn.toolTip() and w.blackbox_btn.text() == ""
     w.close()
 
 

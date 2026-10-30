@@ -164,3 +164,48 @@ def test_dead_time():
     assert s.pan_vel == 0.0
     run(s, 0.15)
     assert s.pan_vel > 0
+
+
+# --- питание и изображение (как AW-HE40, 2026-10-30) ---
+
+
+def test_standby_rejects_motion():
+    s = SimPtz(dead_time=0)
+    assert s.handle("#O0") == "p0"
+    assert s.handle("#O") == "p0"
+    assert s.handle("#PTS7050").upper().startswith("ER2")
+    run(s, 0.5)
+    assert s.pan_deg == 0.0
+
+
+def test_power_on_switching_then_on():
+    c = FakeClock()
+    s = SimPtz(clock=c)
+    s.handle("#O0")
+    c.t = 10.0
+    assert s.handle("#O1") == "p1"
+    c.t = 11.0
+    assert s.handle("#O") == "p3"
+    assert s.handle("QGU").upper().startswith("ER2")
+    c.t = 10.0 + s.power_on_s + 0.1
+    assert s.handle("#O") == "p1"
+
+
+def test_gain_range():
+    s = SimPtz()
+    assert s.handle("QGU") == "OGU:08"
+    assert s.handle("OGU:0B") == "OGU:0B"
+    assert s.handle("QGU") == "OGU:0B"
+    assert s.handle("OGU:80") == "OGU:80"
+    assert s.handle("OGU:09").upper().startswith("ER3")
+    assert s.handle("QGU") == "OGU:80"
+
+
+def test_wb_and_temp():
+    s = SimPtz()
+    assert s.handle("QAW") == "OAW:0"
+    assert s.handle("OAW:9") == "OAW:9"
+    assert s.handle("OAW:6").upper().startswith("ER3")
+    assert s.handle("OSD:B1:04B") == "OSD:B1:04B"
+    assert s.handle("OSD:B1:04C").upper().startswith("ER3")
+    assert s.handle("QSD:B1") == "OSD:B1:04B"

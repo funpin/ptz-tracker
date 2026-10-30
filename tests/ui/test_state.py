@@ -56,3 +56,54 @@ def test_tally_chip_input_out_of_range():
     assert tally_chip(True, True, 9, None, known=False) == ("ATEM · вход 9 вне диапазона", "warn")
     assert tally_chip(True, True, 2, None, known=True) == ("ATEM · вход 2", "neutral")
     assert tally_chip(True, False, 9, None, known=False) == ("ATEM · нет связи", "neutral")
+
+
+# --- значки верхней панели ---
+
+from ptztracker.ui.state import analysis_pill, atem_pill, power_view, video_pill  # noqa: E402
+from ptztracker.video.frames import SourceStats  # noqa: E402
+
+
+def test_video_pill_ok():
+    text, kind, tip = video_pill(SourceStats(True, 25.2, 1280, 720, None, "http://10.0.0.1/mjpeg"), "Авто")
+    assert (text, kind) == ("1280×720 · 25", "ok")
+    assert "Авто" in tip
+
+
+def test_video_pill_error_text_only_in_tooltip():
+    err = ("[Errno 1094995529] Invalid data found when processing input: "
+           "'rtsp://admin:***@10.0.0.12:554/MediaInput/h264/stream_1'")
+    text, kind, tip = video_pill(SourceStats(False, 0, 0, 0, err, "rtsp://admin:***@10.0.0.12:554/x"), "Авто")
+    assert kind == "fault" and len(text) <= 14 and "Errno" not in text
+    assert "Errno" in tip and "secret" not in tip
+
+
+def test_video_pill_no_session():
+    assert video_pill(None, "Авто")[1] == "off"
+
+
+def test_analysis_pill_states():
+    assert analysis_pill(None, 14.4, 31.0, "DirectML")[:2] == ("14 к/с", "ok")
+    assert "31 мс" in analysis_pill(None, 14.4, 31.0, "DirectML")[2]
+    text, kind, tip = analysis_pill(None, None, None, None)
+    assert kind == "warn" and "загрузка" in tip.lower()
+    assert analysis_pill("нет модели", None, None, None)[1] == "fault"
+
+
+def test_atem_pill():
+    assert atem_pill(False, False, 0, None) is None
+    assert atem_pill(True, False, 3, None)[:2] == ("ATEM", "off")
+    assert atem_pill(True, True, 0, None)[:2] == ("ATEM", "off")
+    assert atem_pill(True, True, 3, "pgm")[:2] == ("ATEM 3 · PGM", "pgm")
+    assert atem_pill(True, True, 3, "pvw")[:2] == ("ATEM 3 · PVW", "pvw")
+    assert atem_pill(True, True, 3, None)[:2] == ("ATEM 3", "ok")
+    assert atem_pill(True, True, 9, None, known=False)[1] == "warn"
+    assert atem_pill(True, True, 3, "pgm")[2] == tally_chip(True, True, 3, "pgm")[0]
+
+
+def test_power_view():
+    assert power_view("standby", True) == "standby"
+    assert power_view("switching", True) == "switching"
+    assert power_view("on", False) == "offline"
+    assert power_view("unknown", True) == "on"
+    assert power_view("standby", False) == "offline"

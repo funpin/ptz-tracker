@@ -14,6 +14,7 @@ from collections import deque
 from typing import Callable
 
 from ptztracker.camera import he42
+from ptztracker.camera.protocol import COLOR_TEMP_MAX, GAIN_AUTO, GAIN_CODES, WB_MODES
 
 TAU_S = he42.RAMP_TAU_S
 DEAD_TIME_S = he42.DEAD_TIME_S
@@ -84,6 +85,13 @@ class SimPtz:
         self.iris_auto = True
         self.iris_pos = 0x800
         self.presets: dict[int, tuple[float, float, float]] = {}
+        # питание и изображение — как у живой AW-HE40 (2026-10-30): p3 ~3,5 с после #O1, в ожидании ER2
+        self.power_on_s = 4.0
+        self._standby = False
+        self._power_on_at: float | None = None  # момент #O1 (часы self._clock)
+        self.gain_code = 0x08
+        self.wb = 0
+        self.color_temp = 0x1A
         self.received: deque[str] = deque(maxlen=5000)
         self._target: tuple[float, float] | None = None
         self._zoom_target: float | None = None
@@ -176,9 +184,49 @@ class SimPtz:
             raise ValueError(s)
         return v
 
+    @property
+    def power(self) -> str:
+        if self._standby:
+            return "standby"
+        if self._power_on_at is not None and self._clock() - self._power_on_at < self.power_on_s:
+            return "switching"
+        return "on"
+
     def _dispatch(self, cmd: str) -> str:
         if cmd == "#O":
+            return {"on": "p1", "standby": "p0", "switching": "p3"}[self.power]
+        if cmd == "#O0":
+            self._standby, self._power_on_at = True, None
+            self.pan_code = self.tilt_code = self.zoom_code = 50
+            return "p0"
+        if cmd == "#O1":
+            if self._standby:
+                self._standby, self._power_on_at = False, self._clock()
             return "p1"
+        if self.power != "on":
+            return "ER2:" + cmd.lstrip("#").split(":")[0]
+        if cmd == "QGU":
+            return f"OGU:{self.gain_code:02X}"
+        if m := re.fullmatch(r"OGU:([0-9A-F]{2})", cmd):
+            v = int(m[1], 16)
+            if v != GAIN_AUTO and v not in GAIN_CODES:
+                raise ValueError(cmd)
+            self.gain_code = v
+            return cmd
+        if cmd == "QAW":
+            return f"OAW:{self.wb}"
+        if m := re.fullmatch(r"OAW:([0-9A-F])", cmd):
+            if int(m[1], 16) not in WB_MODES:
+                raise ValueError(cmd)
+            self.wb = int(m[1], 16)
+            return cmd
+        if cmd == "QSD:B1":
+            return f"OSD:B1:{self.color_temp:03X}"
+        if m := re.fullmatch(r"OSD:B1:([0-9A-F]{3})", cmd):
+            if int(m[1], 16) > COLOR_TEMP_MAX:
+                raise ValueError(cmd)
+            self.color_temp = int(m[1], 16)
+            return cmd
         if cmd == "QID":
             return "OID:AW-HE42"
         if cmd.startswith("OSE:"):

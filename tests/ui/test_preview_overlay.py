@@ -95,5 +95,5 @@ def test_overlay_paints_without_errors(qtbot, tmp_path):
 
 def test_status_shows_analysis(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
-    qtbot.waitUntil(lambda: "анализ" in w.analysis_label.text() and "—" in w.analysis_label.text(), timeout=3000)
+    qtbot.waitUntil(lambda: "Анализ" in w.analysis_pill.toolTip() and "к/с" in w.analysis_pill.text(), timeout=3000)
     w.close()

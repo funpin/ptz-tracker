@@ -1,8 +1,8 @@
 import pytest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
-from ptztracker.ui.theme import H_STATE, SP, apply_dark_theme
-from ptztracker.ui.widgets import Chip, KeyButton, SectionHeader, StateTile, VideoFrame
+from ptztracker.ui.theme import apply_dark_theme
+from ptztracker.ui.widgets import Chip, KeyButton, SectionHeader, TrackButton, VideoFrame
 
 KINDS = ("off", "on", "lost", "remote", "swing")
 
@@ -31,69 +31,53 @@ def test_section_header(qtbot):
     assert {lb.text() for lb in h.findChildren(QLabel)} == {"Кадр", "подсказка"}
 
 
-def test_state_tile_height_constant(qtbot):
-    t = StateTile()
+def test_track_button_texts_and_tooltip(qtbot):
+    t = TrackButton()
     qtbot.addWidget(t)
-    t.resize(360, 118)
-    t.show()
+    expected = {"off": "TRACK OFF", "on": "TRACK ON", "lost": "TRACK LOST", "remote": "TRACK OFF",
+                "swing": "TRACK OFF"}
     for k in KINDS:
-        t.set_view(k, "СЛОВО", "коротко", k == "swing")
-        assert t.height() == H_STATE == 118
         t.set_view(k, "СЛОВО", "очень длинная причина " * 10, k == "swing")
-        assert t.height() == 118
-    long = "x " * 100
-    t.set_view("off", "ВЫКЛ", long, False)
-    assert long in t.why_label.toolTip()
-    assert t.why_label.text().count("\n") <= 1
-    assert t.why_label.text().endswith("…")
-    assert t.toolTip() == long
-    assert t.layout().minimumSize().height() <= H_STATE
+        assert t.text() == expected[k] and t.kind() == k
+        assert "очень длинная причина" in t.toolTip() and "Пробел" in t.toolTip()
+    t.set_why("Сначала кликните по человеку на видео.")
+    assert "кликните" in t.toolTip()
 
 
-def test_state_tile_swing_reason_fits(qtbot):
-    t = StateTile()
-    qtbot.addWidget(t)
-    t.resize(348, H_STATE)
-    t.show()
-    t.set_view("swing", "РАСКАЧКА", "Слежение остановлено: камера быстрее, чем ожидалось.", True)
-    qtbot.wait(50)
-    assert not t.why_label.text().endswith("…")
-    # пояснение на всю ширину плитки: на Windows шрифт шире, и кнопка рядом съедала текст
-    assert t.action_btn.isVisible()
-    assert t.why_label.width() >= t.width() - 2 * SP[2] - 2
-
-
-def test_state_tile_action_only_for_swing(qtbot):
-    t = StateTile()
+def test_track_button_action_only_for_swing(qtbot):
+    t = TrackButton()
     qtbot.addWidget(t)
     for k in KINDS:
         t.set_view(k, "w", "p", k == "swing")
         assert t.action_btn.isHidden() == (k != "swing")
 
 
-def test_state_tile_action_signal(qtbot):
-    t = StateTile()
+def test_track_button_action_signal(qtbot):
+    t = TrackButton()
     qtbot.addWidget(t)
-    t.show()
+    qtbot.addWidget(t.action_btn)
     t.set_view("swing", "w", "p", True)
     with qtbot.waitSignal(t.actionClicked, timeout=500):
         t.action_btn.click()
 
 
-def test_state_tile_click_toggles(qtbot):
-    t = StateTile()
+def test_track_button_click_toggles(qtbot):
+    t = TrackButton()
     qtbot.addWidget(t)
     t.click()
     assert t.isChecked()
 
 
-def test_state_tile_blinks_only_when_lost(qtbot):
-    t = StateTile()
-    qtbot.addWidget(t)
-    t.set_view("lost", "w", "p", False)
-    assert t._blink.isActive()
-    t.set_view("on", "w", "p", False)
-    assert not t._blink.isActive()
+def test_video_frame_overlays_placed(qtbot):
+    f = VideoFrame(QLabel("v"))
+    qtbot.addWidget(f)
+    top, bottom = QLabel("top"), QLabel("bottom")
+    f.add_overlay(top, "top-left")
+    f.add_overlay(bottom, "bottom-left")
+    f.resize(800, 450)
+    f.show()
+    qtbot.wait(20)
+    assert top.parent() is f and top.y() < 100 and bottom.y() > 300
 
 
 def test_video_frame_tally_tag(qtbot):
@@ -121,3 +105,40 @@ def test_video_frame_tracking_tag(qtbot):
     assert f.tracking_tag.x() < f.width() // 2
     f.set_tally("pgm")
     assert f.onair_tag.x() > f.width() // 2
+
+
+def test_icon_recolors():
+    from ptztracker.ui.icons import icon
+
+    for name in ("video", "adjustments", "screen", "chip", "atem", "history", "robot", "menu", "track",
+                 "power", "user-x", "skeleton"):
+        assert not icon(name, "#ff0000").pixmap(18, 18).isNull(), name
+
+
+def test_status_pill_compact_hides_text(qtbot):
+    from ptztracker.ui.widgets import StatusPill
+
+    p = StatusPill("video")
+    qtbot.addWidget(p)
+    p.set("1280×720 · 25", "ok", "Видео: MJPEG")
+    assert p.text() == "1280×720 · 25" and p.toolTip() == "Видео: MJPEG" and p.kind() == "ok"
+    wide = p.sizeHint().width()
+    p.set_compact(True)
+    assert p.text() == "" and p.full_text == "1280×720 · 25" and p.sizeHint().width() < wide
+    p.set_compact(False)
+    assert p.text() == "1280×720 · 25"
+
+
+def test_power_overlay_round_and_opaque(qtbot):
+    from PySide6.QtCore import Qt
+
+    from ptztracker.ui.widgets import PowerOverlay
+
+    o = PowerOverlay()
+    qtbot.addWidget(o)
+    o.resize(800, 450)
+    o.set_view("standby", "KZ")
+    o.show()
+    qtbot.wait(20)
+    assert o.power_btn.width() == o.power_btn.height() == PowerOverlay.BTN
+    assert o.testAttribute(Qt.WA_StyledBackground)
