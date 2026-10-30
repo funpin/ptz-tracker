@@ -25,6 +25,7 @@ from .intents import (
 )
 
 DEADZONE = 0.12
+STALL_S = 0.3            # пауза между опросами дольше этого — сбой опроса, отпускание не доверяем
 PRESET_HOLD_S = 1.0       # удержание кнопки пресета дольше — запомнить
 REPEAT_DELAY_S = 0.4      # автоповтор диафрагмы/усиления: пауза, затем...
 REPEAT_RATE = 6.0         # ...столько шагов в секунду
@@ -66,6 +67,7 @@ class Mapper:
         self._holds: dict[str, list] = {}   # кнопка -> [время нажатия, уже запомнили]
         self._repeat: dict[str, float] = {}  # кнопка -> время следующего шага
         self._neighbor_armed = True
+        self._last_t = 0.0
 
     def latch_stop(self) -> None:
         """После стопа скорости остаются нулём, пока стики и курки не вернутся в мёртвую зону."""
@@ -84,6 +86,7 @@ class Mapper:
             return []
         if not self._connected:
             self._prev = pad.buttons  # кнопки, зажатые при подключении, не считаются нажатиями
+            self._latched = True      # отклонённый при подключении стик/курок не двигает камеру, пока не вернётся в центр
         self._connected = True
         out: list[Intent] = []
         menu = self._menu_open()
@@ -130,8 +133,10 @@ class Mapper:
         for b in sorted(released):
             hold = self._holds.pop(b, None)
             if hold is not None and not hold[1]:
-                # пропуск опроса: держали дольше порога, но запомнить не успели — запоминаем, а не вызываем
-                out.append(Preset(_PRESET_BUTTONS[b], t - hold[0] >= PRESET_HOLD_S))
+                # перезапись пресета разрушительна: запоминаем только при виденном удержании; после сбоя опроса
+                # или при долгом удержании без записи не делаем ничего (оператор повторит)
+                if t - self._last_t <= STALL_S and t - hold[0] < PRESET_HOLD_S:
+                    out.append(Preset(_PRESET_BUTTONS[b], False))
             self._repeat.pop(b, None)
         if menu:
             self._holds.clear()
@@ -147,4 +152,5 @@ class Mapper:
                     nxt = self._repeat[b] + 1.0 / REPEAT_RATE
                     self._repeat[b] = nxt if nxt > t else t + 1.0 / REPEAT_RATE
         self._prev = pad.buttons
+        self._last_t = t
         return out

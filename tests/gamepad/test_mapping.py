@@ -141,11 +141,22 @@ def test_menu_r3_and_neighbor():
     assert m.update(pad(rightx=0.7), 0.1) == [Neighbor(+1)]
 
 
-def test_preset_release_after_poll_gap_stores():
+def test_preset_release_after_poll_gap_does_nothing():
     m = mk()
     m.update(pad({"cross"}), 0.0)
     m.update(pad({"cross"}), 0.5)
-    assert m.update(pad(), 1.2) == [Preset(0, True)]
+    assert m.update(pad(), 1.2) == []
+    m.update(pad({"cross"}), 2.0)
+    m.update(pad({"cross"}), 2.1)
+    assert m.update(pad(), 3.5) == []
+
+
+def test_deflected_stick_at_connect_latched():
+    m = Mapper(lambda: False)
+    assert m.update(pad(leftx=1.0, r2=1.0), 0.0) == []
+    assert m.update(pad(leftx=0.5), 0.1) == []
+    assert m.update(pad(), 0.2) == []
+    assert m.update(pad(leftx=1.0), 0.3) == [PanTilt(1.0, 0.0)]
 
 
 def test_autorepeat_after_stall_single_step():
