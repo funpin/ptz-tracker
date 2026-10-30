@@ -253,9 +253,10 @@ def test_wizard_near_pan_end_runs_toward_centre():
 
 @pytest.mark.slow
 def test_wizard_never_goes_beyond_half_frame_from_start():
-    """Живая камера: мастер уводил pan на ~32° (больше полкадра широкого угла). Теперь: на широком угле и
-    середине зума — не дальше полкадра этого зума; на теле быстрый код проскакивает за опрос, но не дальше
-    полкадра широкого угла."""
+    """Живая камера: мастер уводил pan на ~32° (больше полкадра широкого угла). Теперь на широком угле — не
+    дальше полкадра. На среднем (0x800, ~30°) и на теле (0xAAA, ~14°) быстрый код 90 (3–4 кадра/с) проскакивает
+    полкадра за один опрос (~0,13 с): замерено 0,79–0,84 кадра на 0x800; там граница мягче — не больше кадра, а
+    во всех случаях — не дальше полкадра ШИРОКОГО угла (31°)."""
     from ptztracker.camera.he42 import HFOV_WIDE_DEG, hfov_deg
 
     sim, srv, src, client = make()
@@ -270,11 +271,14 @@ def test_wizard_never_goes_beyond_half_frame_from_start():
                 time.sleep(0.01)
 
         threading.Thread(target=watch, daemon=True).start()
-        CalibrationRunner(client.send, src, lambda m: None, zooms=[0x555, 0xAAA], codes=(53, 70, 90)).run()
+        CalibrationRunner(client.send, src, lambda m: None, zooms=[0x555, 0x800, 0xAAA], codes=(53, 70, 90)).run()
         stop.set()
         assert max(d for d, _ in dev) <= 0.5 * HFOV_WIDE_DEG, max(d for d, _ in dev)
-        worst = max(d / hfov_deg(z) for d, z in dev if z < 0.05)
-        assert worst <= 0.5, worst
+        # зум едет между пробегами — берём только доехавший (оба соседних замера близки к 0x555 или 0x800)
+        wide = max(d / hfov_deg(z) for d, z in dev if z < 0.02)
+        mid_z = (0x800 - 0x555) / (0xFFF - 0x555)
+        mid = max(d / hfov_deg(z) for d, z in dev if abs(z - mid_z) < 0.01)
+        assert wide <= 0.5 and mid <= 1.0, (wide, mid)
     finally:
         src.stop()
         srv.stop()

@@ -356,7 +356,7 @@ class CalibrationRunner:
             self.progress(f"Зум {zoom:03X}: скорость {code}…")
             run = self._run(c, hfov, PROBE_MAX_S)
             v, _, _ = fit_ramp(run["samples"], run["t_cmd"], tau=tau)
-            curve.append((code, round(abs(v) / hfov, 5)))  # град/с → доли кадра (у центра кадра)  # град/с → доли кадра (у центра кадра)
+            curve.append((code, round(abs(v) / hfov, 5)))  # град/с → доли кадра (у центра кадра)
         kept, dropped = monotone_curve(curve)
         if dropped:
             log.warning("Зум %03X: выбросы на кодах %s отброшены", zoom, dropped)
