@@ -204,6 +204,20 @@ def test_lab_gamepad_no_pygame(monkeypatch, capsys):
     assert rc == 1 and res["error"] == "no_sdl"
 
 
+@pytest.mark.parametrize("failure", ["raise", "false"])
+def test_lab_gamepad_sdl_failure(monkeypatch, capsys, failure):
+    class Broken(FakePad):
+        def open(self):
+            if failure == "raise":
+                raise RuntimeError("SDL_Init failed")
+            return False
+
+    monkeypatch.setattr(lab, "SdlBackend", Broken)
+    rc = main(["--lab", "gamepad", "--seconds", "0.2"])
+    res = result_of(capsys.readouterr().out)
+    assert rc == 1 and res["error"] == "no_sdl"
+
+
 def test_lab_gamepad_connected_reports_buttons(monkeypatch, capsys):
     from ptztracker.gamepad.device import RawPad
 

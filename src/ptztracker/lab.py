@@ -222,9 +222,12 @@ def _gamepad(args) -> int:
     pad = SdlBackend()
     data: dict = {"command": "gamepad", "connected": False}
     try:
-        pad.open()
-    except ImportError as e:
-        _say(f"Нет pygame (SDL): {e}")
+        ok = pad.open()
+    except Exception as e:
+        _say(f"SDL не запустился: {type(e).__name__}: {e}")
+        return _bad("gamepad", 1, "no_sdl")
+    if not ok:
+        _say("SDL не запустился (подробности в логе).")
         return _bad("gamepad", 1, "no_sdl")
     seen: set[str] = set()
     last_axes: dict[str, float] = {}
@@ -245,7 +248,8 @@ def _gamepad(args) -> int:
             if not data["connected"]:
                 data.update(connected=True, **pad.info())
                 _say(f"Геймпад: {data['name']} ({data['type']}), светодиод: {data['has_led']}, "
-                     f"вибрация: {data['has_rumble']}, заряд: {data['power']}")
+                     f"вибрация: {data['has_rumble']}, заряд: {data['power']} "
+                     "(светодиод и вибрация определены по названию устройства, не проверены)")
                 start = time.monotonic()  # секунды считаем от подключения
             t = time.monotonic() - start
             if colored < len(PAD_COLORS) and t >= colored:
