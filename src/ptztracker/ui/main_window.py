@@ -203,7 +203,7 @@ class MainWindow(QMainWindow):
         self.video_frame.add_overlay(self.follow_panel.status_label, "bottom-left")
 
         # боковая панель прокручивается — окно помещается и на небольших экранах
-        side_scroll = QScrollArea()
+        side_scroll = self.side_scroll = QScrollArea()
         side_scroll.setWidget(side)
         side_scroll.setWidgetResizable(True)
         side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -744,6 +744,7 @@ class MainWindow(QMainWindow):
             if s.recorder.active else "Чёрный ящик выключен",
         )
         self._update_analysis_status(s)
+        self.controls.sync_image(s.image)
         self._fit_top_bar()
 
     def _update_analysis_status(self, s: CameraSession) -> None:

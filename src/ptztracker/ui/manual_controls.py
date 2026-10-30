@@ -1,26 +1,31 @@
 from __future__ import annotations
 
+import time
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QGridLayout,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
 )
 
-from ptztracker.camera.session import CameraSession
+from ptztracker.camera import protocol as P
+from ptztracker.camera.session import CameraSession, ImageState
 from ptztracker.ui.joystick import JoystickWidget
 from ptztracker.ui.theme import FS_CAPTION, H_STOP, SP, C, qcolor
 from ptztracker.ui.widgets import KeyButton, SectionHeader, keycap_width, paint_keycap
 
 PRESET_SIZE = 32
+TOUCH_HOLD_S = 1.5  # столько опрос камеры не перебивает ползунок, который оператор только что тронул
 
 
 class _ArrowKeys(QWidget):
@@ -71,7 +76,8 @@ class SpringSlider(QSlider):
 
 
 class ManualControls(QWidget):
-    """Ручное управление: джойстик, зум, фокус, ирис, пресеты камеры, стоп."""
+    """Ручное управление: джойстик, зум, ирис, gain, пресеты, фокус, баланс белого, стоп.
+    Gain и баланс белого — настройка картинки: слежение не выключают (как ирис)."""
 
     stopRequested = Signal()
 
@@ -126,11 +132,15 @@ class ManualControls(QWidget):
         self.far_btn.pressed.connect(lambda: self._focus(0.5))
         for b in (self.near_btn, self.far_btn):
             b.released.connect(lambda: self._focus(0.0))
-        fl = QGridLayout()
-        fl.addWidget(self.af_check, 0, 0)
-        fl.addWidget(self.push_af, 0, 1)
-        fl.addWidget(self.near_btn, 1, 0)
-        fl.addWidget(self.far_btn, 1, 1)
+        fl = QHBoxLayout()
+        fl.setSpacing(SP[0])
+        self.af_check.setText("AF")
+        self.af_check.setToolTip("Автофокус")
+        self.push_af.setText("Разовый")
+        self.push_af.setToolTip("Разовый автофокус")
+        for wd in (self.af_check, self.push_af, self.near_btn, self.far_btn):
+            wd.setSizePolicy(QSizePolicy.Ignored, wd.sizePolicy().verticalPolicy())  # ряд — по ширине панели
+            fl.addWidget(wd)
 
         self.iris_auto = QCheckBox("Авто")
         self.iris_auto.setChecked(True)
@@ -140,10 +150,34 @@ class ManualControls(QWidget):
         self.iris_slider.setEnabled(False)
         self.iris_auto.toggled.connect(self._on_iris_auto)
         self.iris_slider.valueChanged.connect(lambda v: self._s and self._s.set_iris(v / 100))
-        il = QHBoxLayout()
-        il.addWidget(QLabel("Ирис"))
-        il.addWidget(self.iris_auto)
-        il.addWidget(self.iris_slider, 1)
+        il = self._row("Ирис", self.iris_auto, self.iris_slider)
+
+        # gain: шаги по 3 dB (коды GAIN_CODES) и «Авто»
+        self._touched: dict[str, float] = {}  # что оператор трогал недавно — опрос камеры это не перебивает
+        self.gain_auto = QCheckBox("Авто")
+        self.gain_slider = QSlider(Qt.Horizontal)
+        self.gain_slider.setRange(0, len(P.GAIN_CODES) - 1)
+        self.gain_slider.setPageStep(1)
+        self.gain_value = QLabel("")
+        self.gain_value.setMinimumWidth(48)
+        self.gain_auto.toggled.connect(self._on_gain_auto)
+        self.gain_slider.valueChanged.connect(self._on_gain)
+        gl = self._row("Gain", self.gain_auto, self.gain_slider, self.gain_value)
+
+        # баланс белого: режим; температура — только в режиме VAR
+        self.wb_combo = QComboBox()
+        for mode, label in P.WB_MODES.items():
+            self.wb_combo.addItem(label, mode)
+        self.wb_combo.setToolTip("Баланс белого: ATW — авто, AWB A/B — запомненные, 3200K/5600K, VAR — вручную")
+        self.ctemp_slider = QSlider(Qt.Horizontal)
+        self.ctemp_slider.setRange(0, P.COLOR_TEMP_MAX)
+        self.ctemp_slider.setEnabled(False)
+        self.ctemp_value = QLabel("")
+        self.ctemp_value.setMinimumWidth(56)
+        self.ctemp_value.setToolTip("Кельвины приблизительно: шкала камеры не сверена с её меню")
+        self.wb_combo.currentIndexChanged.connect(self._on_wb)
+        self.ctemp_slider.valueChanged.connect(self._on_ctemp)
+        wl = self._row("WB", self.wb_combo, self.ctemp_slider, self.ctemp_value)
 
         pl = QHBoxLayout()
         pl.setSpacing(SP[0])
@@ -162,18 +196,30 @@ class ManualControls(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(SP[1])
-        lay.addWidget(SectionHeader("Ручное управление", "выключает слежение"))
+        lay.addWidget(SectionHeader("Камера", "движение выключает слежение"))
         lay.addLayout(stick_row)
         lay.addLayout(zoom_row)
         lay.addWidget(self.stop_btn)
-        lay.addSpacing(SP[1])
-        lay.addWidget(SectionHeader("Пресеты камеры", "Shift+клик — записать"))
-        lay.addLayout(pl)
-        lay.addSpacing(SP[1])
-        lay.addWidget(SectionHeader("Фокус и ирис"))
-        lay.addLayout(fl)
         lay.addLayout(il)
+        lay.addLayout(gl)
+        lay.addWidget(SectionHeader("Пресеты", "Shift+клик — записать"))
+        lay.addLayout(pl)
+        lay.addWidget(SectionHeader("Фокус и баланс белого"))
+        lay.addLayout(fl)
+        lay.addLayout(wl)
         self.bind(None)
+        self._show_values()
+
+    @staticmethod
+    def _row(title: str, *widgets: QWidget) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(SP[1])
+        lab = QLabel(title)
+        lab.setMinimumWidth(36)
+        row.addWidget(lab)
+        for wd in widgets:
+            row.addWidget(wd, 1 if isinstance(wd, QSlider) else 0)
+        return row
 
     @staticmethod
     def _keycap_label(text: str) -> QWidget:
@@ -225,6 +271,69 @@ class ManualControls(QWidget):
         self.iris_slider.setEnabled(not on)
         if self._s:
             self._s.set_iris_auto(on)
+
+    # --- изображение: gain и баланс белого --------------------------------
+
+    def _touch(self, name: str) -> None:
+        self._touched[name] = time.monotonic()
+
+    def _show_values(self) -> None:
+        code = P.GAIN_CODES[self.gain_slider.value()]
+        self.gain_value.setText("авто" if self.gain_auto.isChecked() else f"{P.gain_db(code)} dB")
+        self.gain_slider.setEnabled(not self.gain_auto.isChecked())
+        var = self.wb_combo.currentData() == P.WB_VAR
+        self.ctemp_slider.setEnabled(var)
+        self.ctemp_value.setText(f"≈{P.color_temp_kelvin(self.ctemp_slider.value())} K" if var else "")
+
+    def _on_gain_auto(self, on: bool) -> None:
+        self._touch("gain")
+        self._show_values()
+        if self._s:
+            self._s.set_gain(P.GAIN_AUTO if on else P.GAIN_CODES[self.gain_slider.value()])
+
+    def _on_gain(self, i: int) -> None:
+        self._touch("gain")
+        self._show_values()
+        if self._s and not self.gain_auto.isChecked():
+            self._s.set_gain(P.GAIN_CODES[i])
+
+    def _on_wb(self, _i: int) -> None:
+        self._touch("wb")
+        self._show_values()
+        if self._s:
+            self._s.set_wb(self.wb_combo.currentData())
+
+    def _on_ctemp(self, v: int) -> None:
+        self._touch("ctemp")
+        self._show_values()
+        if self._s and self.wb_combo.currentData() == P.WB_VAR:
+            self._s.set_color_temp(v)
+
+    def sync_image(self, img: ImageState) -> None:
+        """Показать значения камеры, не отправляя команд; не перебивать то, что оператор трогал в последние 1,5 с."""
+        now = time.monotonic()
+
+        def fresh(name: str) -> bool:
+            return now - self._touched.get(name, float("-inf")) > TOUCH_HOLD_S
+
+        widgets = (self.gain_auto, self.gain_slider, self.wb_combo, self.ctemp_slider)
+        for wd in widgets:
+            wd.blockSignals(True)
+        try:
+            if img.gain is not None and fresh("gain"):
+                self.gain_auto.setChecked(img.gain == P.GAIN_AUTO)
+                if img.gain in P.GAIN_CODES:
+                    self.gain_slider.setValue(P.GAIN_CODES.index(img.gain))
+            if img.wb is not None and fresh("wb"):
+                i = self.wb_combo.findData(img.wb)
+                if i >= 0:
+                    self.wb_combo.setCurrentIndex(i)
+            if img.color_temp is not None and fresh("ctemp"):
+                self.ctemp_slider.setValue(img.color_temp)
+        finally:
+            for wd in widgets:
+                wd.blockSignals(False)
+        self._show_values()
 
     def _preset_clicked(self, n: int) -> None:
         if not self._s:
