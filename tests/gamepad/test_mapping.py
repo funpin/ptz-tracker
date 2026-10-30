@@ -212,3 +212,12 @@ def test_create_ignored_in_menu():
     m.update(pad({"create"}), 0.0)
     assert m.update(pad({"create"}), 1.5) == []
     assert m.update(pad(), 1.6) == []
+
+
+def test_menu_nav_release():
+    m = mk(menu=True)
+    assert m.update(pad({"dpad_right"}), 0.0) == [MenuNav(1, 0)]
+    assert m.update(pad(), 0.1) == [MenuNav(0, 0)]
+    assert m.update(pad({"dpad_down"}), 0.2) == [MenuNav(0, 1)]
+    assert m.update(pad(), 0.3) == []
+    assert mk().update(pad({"dpad_left"}), 0.0) != [] and mk().update(pad(), 0.1) == []

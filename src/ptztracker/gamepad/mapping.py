@@ -143,6 +143,8 @@ class Mapper:
                 if t - self._last_t <= STALL_S and t - hold[0] < PRESET_HOLD_S:
                     out.append(NextCamera() if b == "create" else Preset(_PRESET_BUTTONS[b], False))
             self._repeat.pop(b, None)
+            if menu and b in ("dpad_left", "dpad_right"):
+                out.append(MenuNav(0, 0))  # отпустили ←/→: ручной фокус останавливается
         if menu:
             self._holds.clear()
             self._repeat.clear()

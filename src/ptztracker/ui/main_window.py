@@ -41,6 +41,10 @@ from ptztracker.gamepad.intents import (
     Disconnected,
     GainStep,
     IrisStep,
+    MenuAccept,
+    MenuClose,
+    MenuNav,
+    MenuOpen,
     Neighbor,
     NextCamera,
     PanTilt,
@@ -56,6 +60,7 @@ from ptztracker.tally.atem import AtemTally
 from ptztracker.ui.agent_panel import AgentPanel
 from ptztracker.ui.atem_dialog import AtemDialog
 from ptztracker.ui.camera_dialog import CameraDialog
+from ptztracker.ui.camera_menu import CameraMenu
 from ptztracker.ui.follow_panel import FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge, pad_number_for
 from ptztracker.ui.manual_controls import ManualControls
@@ -77,9 +82,10 @@ KEY_ZOOM_SPEED = 0.5
 SIDE_WIDTH = 372
 _HOTKEYS = [
     ("Пробел", "слежение"), ("1–5", "кадр"), ("← → ↑ ↓", "поворот"), ("+ −", "зум"), ("Esc", "стоп"),
-    ("F9", "сохранить момент"),
+    ("F9", "сохранить момент"), ("M", "меню камеры"),
 ]
 _PAN_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
+_MENU_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter}
 _ZOOM_IN_KEYS = {Qt.Key_Plus, Qt.Key_Equal}
 _ZOOM_OUT_KEYS = {Qt.Key_Minus, Qt.Key_Underscore}
 
@@ -135,8 +141,9 @@ class MainWindow(QMainWindow):
         self._atem_port = atem_port
         self.atem: AtemTally | None = None
         self._tally_shown: tuple | None = None
-        # геймпад: свой поток опроса; без SDL/устройства мост ничего не делает. Меню — Задача 8.
-        self.pad = GamepadBridge(gamepad_backend if gamepad_backend is not None else make_pad_backend(), parent=self)
+        # геймпад: свой поток опроса; без SDL/устройства мост ничего не делает. Mapper читает camera_menu.is_open.
+        self.pad = GamepadBridge(gamepad_backend if gamepad_backend is not None else make_pad_backend(),
+                                 menu_open=self._menu_is_open, parent=self)
         self.pad.intents.connect(self._on_pad_intents)
         self.pad.connectionChanged.connect(lambda _info: self._sync_pad_player())
         self._pad_applied = (0.0, 0.0, 0.0)  # скорость геймпада в последней отправке
@@ -219,6 +226,9 @@ class MainWindow(QMainWindow):
         self.power_overlay = PowerOverlay()
         self.power_overlay.powerOnRequested.connect(self._power_on)
         self.video_frame.add_overlay(self.power_overlay, "fill")
+        self.camera_menu = CameraMenu(lambda: self.session, self.controls)
+        self.video_frame.add_overlay(self.camera_menu, "center")
+        self.camera_menu.openChanged.connect(self._on_menu_changed)
 
         side = QWidget()
         sl = QVBoxLayout(side)
@@ -375,6 +385,7 @@ class MainWindow(QMainWindow):
 
     def _activate(self, cam: CameraConfig | None) -> None:
         self.agent_panel.revoke()  # смена камеры: агент теряет управление
+        self.camera_menu.close_menu()  # до остановки сессии: ручной фокус получает ноль
         # геймпад: старой камере — нули; новая поедет, только когда стики вернутся в центр
         self._pad_stop_motion()
         self.pad.cancel_holds()
@@ -938,6 +949,16 @@ class MainWindow(QMainWindow):
             if key == Qt.Key_Escape and et == QEvent.KeyPress:
                 self.emergency_stop()
                 return True
+            if key == Qt.Key_M:
+                if et == QEvent.KeyPress and not event.isAutoRepeat():
+                    if not self.camera_menu.is_open:
+                        self.release_all_held()
+                    self.camera_menu.toggle()
+                return True
+            if self.camera_menu.is_open and key in _MENU_KEYS:
+                if not event.isAutoRepeat():
+                    self._menu_key(key, et == QEvent.KeyPress)
+                return True
             if key in _PAN_KEYS | _ZOOM_IN_KEYS | _ZOOM_OUT_KEYS:
                 if not event.isAutoRepeat():
                     if et == QEvent.KeyPress:
@@ -956,6 +977,25 @@ class MainWindow(QMainWindow):
         self.release_all_held()
         if self.session:
             self.session.emergency_stop()
+        self.camera_menu.close_menu()  # сначала стоп, потом закрытие
+
+    def _menu_key(self, key: int, press: bool) -> None:
+        m = self.camera_menu
+        if key in (Qt.Key_Left, Qt.Key_Right):
+            m.nav((key == Qt.Key_Right) - (key == Qt.Key_Left), 0) if press else m.nav(0, 0)
+        elif press and key in (Qt.Key_Up, Qt.Key_Down):
+            m.nav(0, (key == Qt.Key_Down) - (key == Qt.Key_Up))
+        elif press:
+            m.accept()
+
+    def _menu_is_open(self) -> bool:
+        """Читает поток опроса геймпада (мост создаётся раньше меню)."""
+        m = getattr(self, "camera_menu", None)
+        return bool(m and m.is_open)
+
+    def _on_menu_changed(self, _open: bool) -> None:
+        self.pad.cancel_holds()
+        self._sync_pad()
 
     def _apply_held(self) -> None:
         """Скорость в сессию: сумма клавиатуры и геймпада с ограничением ±1 по каждой оси."""
@@ -1008,6 +1048,14 @@ class MainWindow(QMainWindow):
             elif isinstance(it, SaveMoment):
                 self.save_moment("геймпад")
                 self.pad.rumble(RUMBLE_PRESET_STORED)
+            elif isinstance(it, MenuOpen):
+                self.camera_menu.open()
+            elif isinstance(it, MenuNav):
+                self.camera_menu.nav(it.dx, it.dy)
+            elif isinstance(it, MenuAccept):
+                self.camera_menu.accept()
+            elif isinstance(it, MenuClose):
+                self.camera_menu.close_menu()
             else:
                 self._pad_camera_intent(it)
         if moved:
@@ -1041,7 +1089,6 @@ class MainWindow(QMainWindow):
                 self._update_status()
         elif isinstance(it, PushFocus):
             s.push_focus()
-        # MenuOpen/MenuNav/MenuAccept/MenuClose — Задача 8
 
     def _pad_next_camera(self) -> None:
         """Create (коротко): следующая камера списка по кругу, как выбор в списке; одна камера — «некуда»."""
@@ -1092,7 +1139,7 @@ class MainWindow(QMainWindow):
             on_preview=state == "pvw",
             link_ok=bool(s and s.online),
             standby=getattr(s, "power", None) in ("standby", "switching"),
-            menu_open=False,
+            menu_open=self.camera_menu.is_open,
             following=bool(f and f.enabled),
         ))
 
