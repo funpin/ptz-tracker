@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import uuid
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
@@ -129,17 +130,18 @@ class CameraDialog(QDialog):
         self.test_result.setText(msg)
 
     def result_config(self) -> CameraConfig:
-        return CameraConfig(
-            id=self._cfg.id if self._cfg else self._new_id,
+        fields = dict(
             name=self.name_edit.text().strip(),
             ip=self.ip_edit.text(),
-            kind=self._cfg.kind if self._cfg else "panasonic",
             username=self.user_edit.text().strip() or None,
             rtsp_url=self.rtsp_edit.text().strip() or None,
             min_interval=self.interval_spin.value() / 1000,
             atem_input=self.atem_spin.value(),
             pad_number=self.pad_spin.value() or None,
         )
+        if self._cfg is not None:  # калибровка, поправка скорости, композиция, усилие, поток сохраняются
+            return dataclasses.replace(self._cfg, **fields)
+        return CameraConfig(id=self._new_id, kind="panasonic", **fields)
 
     def password(self) -> str | None:
         return self.pass_edit.text() or None

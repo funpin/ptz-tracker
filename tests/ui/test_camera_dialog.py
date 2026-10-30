@@ -53,3 +53,15 @@ def test_dialog_pad_number(qtbot):
     assert d2.pad_spin.value() == 4
     d2.pad_spin.setValue(d2.pad_spin.minimum())
     assert d2.result_config().pad_number is None
+
+
+def test_edit_preserves_other_fields(qtbot):
+    cfg = CameraConfig(id="c", name="А", ip="10.0.0.7", calibration={"k": 1}, speed_scale={"pan": 1.2},
+                       composition="full", effort=0.9, stream="mjpeg_2")
+    d = CameraDialog(cfg)
+    qtbot.addWidget(d)
+    d.name_edit.setText("Б")
+    r = d.result_config()
+    assert r.name == "Б" and r.id == "c"
+    assert (r.calibration, r.speed_scale, r.composition, r.effort, r.stream) == (
+        {"k": 1}, {"pan": 1.2}, "full", 0.9, "mjpeg_2")
