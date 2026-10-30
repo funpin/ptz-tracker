@@ -76,3 +76,23 @@ def test_source_forwards_other_methods():
     assert t.calls[-1] == ("z", 0.4)
     s.set_pan_tilt_velocity(0.2, -0.1)
     assert t.calls[-1] == ("pt", 0.2, -0.1)
+
+
+def test_clear_all_does_not_latch_idle_source():
+    t = Target()
+    m = VelocityMixer(t)
+    m.set("idle")  # нули
+    m.set("held", pan=0.5)
+    m.clear_all()
+    m.set("idle", pan=1)
+    assert t.calls[-1] == ("pt", 1.0, 0.0)
+
+
+def test_release_clears_latch():
+    t = Target()
+    m = VelocityMixer(t)
+    m.set("pad1", pan=0.5)
+    m.clear_all()
+    m.release("pad1")
+    m.set("pad1", pan=1)
+    assert t.calls[-1] == ("pt", 1.0, 0.0)

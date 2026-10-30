@@ -43,11 +43,12 @@ class VelocityMixer:
 
     def release(self, source: str) -> None:
         self._values.pop(source, None)
+        self._latched.discard(source)
         self._flush()
 
     def clear_all(self) -> None:
-        """Всё в ноль без отправки (стоп уже ушёл); источники защёлкнуты до нулей."""
-        self._latched.update(self._values)
+        """Всё в ноль без отправки (стоп уже ушёл); удерживавшие источники защёлкнуты до нулей."""
+        self._latched.update(n for n, v in self._values.items() if any(v))
         self._values.clear()
         self._sent = (0.0, 0.0, 0.0, 0.0)
 
