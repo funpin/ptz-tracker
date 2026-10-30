@@ -37,6 +37,7 @@ class SdlBackend:
         self._controller = None
         self._ctl = None
         self._pump_error_logged = False
+        self._warned: set[str] = set()
         self._mapping: dict[str, int] = {}
 
     def open(self) -> bool:
@@ -117,19 +118,25 @@ class SdlBackend:
         ps = kind in ("ps5", "ps4")
         return {"name": name, "type": kind, "has_led": ps, "has_rumble": True, "power": power}
 
+    def _call(self, what: str, fn, *args) -> bool:
+        """Вызов светодиода/вибрации: сбой или False не молчат (один раз в debug на каждый вид вызова)."""
+        try:
+            ok = fn(*args)
+            err = None if ok is not False else "вернул False"
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+        if err and what not in self._warned:
+            self._warned.add(what)
+            log.debug("Геймпад: %s не удалось: %s", what, err)
+        return err is None
+
     def set_led(self, rgb: tuple[int, int, int]) -> None:
         if self._ctl is not None:
-            try:
-                self._ctl.set_led(*rgb)
-            except Exception:
-                pass  # у этого устройства светодиода нет
+            self._call("set_led", self._ctl.set_led, tuple(rgb))  # pygame-ce: один аргумент (кортеж или Color)
 
     def rumble(self, low: float, high: float, ms: int) -> None:
         if self._ctl is not None:
-            try:
-                self._ctl.rumble(low, high, ms)
-            except Exception:
-                pass
+            self._call("rumble", self._ctl.rumble, low, high, ms)
 
     def close(self) -> None:
         try:

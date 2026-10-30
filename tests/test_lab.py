@@ -262,3 +262,38 @@ def test_sdl_backend_poll_pump_error_is_logged(caplog):
         assert b.poll() is None
     msgs = [r for r in caplog.records if "video system" in r.getMessage()]
     assert len(msgs) == 1  # один раз, не на каждый опрос
+
+
+def test_sdl_backend_led_takes_one_tuple_and_failures_are_logged(caplog):
+    import logging
+
+    from ptztracker.gamepad.device import SdlBackend
+
+    got = []
+
+    class Ctl:
+        def set_led(self, color):  # как в pygame-ce: ровно один позиционный аргумент
+            got.append(color)
+            return True
+
+    b = SdlBackend()
+    b._ctl = Ctl()
+    b.set_led((1, 2, 3))
+    assert got == [(1, 2, 3)]
+
+    class Bad:
+        def set_led(self, color):
+            raise TypeError("boom")
+
+        def rumble(self, low, high, ms):
+            return False
+
+    b = SdlBackend()
+    b._ctl = Bad()
+    with caplog.at_level(logging.DEBUG, logger="ptztracker.gamepad.device"):
+        b.set_led((1, 2, 3))
+        b.set_led((4, 5, 6))
+        b.rumble(0.5, 0.5, 100)
+        b.rumble(0.5, 0.5, 100)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert sum("set_led" in m for m in msgs) == 1 and sum("rumble" in m for m in msgs) == 1
