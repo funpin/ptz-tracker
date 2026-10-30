@@ -155,3 +155,19 @@ def test_sign_change_resets_grace():
         assert c["limit"] == n
     finally:
         w.stop()
+
+
+def test_diagonal_slow_axis_regrace():
+    w, c = make(stuck_s=0.3, period_s=0.02)
+    try:
+        w.set_demand(1, 1, 0)
+        time.sleep(0.6)
+        assert c["limit"] >= 1
+        w.set_demand(0.05, 1, 0)  # pan замедлился ниже порога
+        time.sleep(0.1)
+        n = c["limit"]
+        w.set_demand(1, 0.05, 0)  # вернулся на полную скорость: льготный период заново
+        time.sleep(0.2)
+        assert c["limit"] == n
+    finally:
+        w.stop()

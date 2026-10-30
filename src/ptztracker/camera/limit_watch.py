@@ -32,7 +32,8 @@ class LimitWatch:
     ) -> None:
         self._qpt, self._qz, self._on_limit = query_pan_tilt, query_zoom, on_limit
         self.period_s, self.stuck_s, self.min_units, self.pulse_s = period_s, stuck_s, min_units, pulse_s
-        self._demand = (0.0, 0.0, 0.0)
+        self._demand: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._lock = threading.Lock()  # только для _demand/_since/_anchors; запросы и on_limit — без него
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._since: dict[str, tuple[int, float]] = {}  # ось -> (знак спроса, когда начался)
@@ -42,15 +43,20 @@ class LimitWatch:
         self._thread.start()
 
     def set_demand(self, vx: float, vy: float, vz: float) -> None:
-        d = tuple(0.0 if abs(float(v)) < DEADZONE else float(v) for v in (vx, vy, vz))
+        def clip(v: float, lo: float) -> float:
+            v = float(v)
+            return 0.0 if abs(v) < lo else v
+
+        d = (clip(vx, MIN_PT_JUDGE), clip(vy, MIN_PT_JUDGE), clip(vz, DEADZONE))
         now = time.monotonic()
-        for axis, v in zip(("pan", "tilt", "zoom"), d):
-            sign = (v > 0) - (v < 0)
-            cur = self._since.get(axis)
-            if cur is None or cur[0] != sign:
-                self._since[axis] = (sign, now)
-                self._anchors.pop(axis, None)
-        self._demand = d  # type: ignore[assignment]
+        with self._lock:
+            for axis, v in zip(("pan", "tilt", "zoom"), d):
+                sign = (v > 0) - (v < 0)
+                cur = self._since.get(axis)
+                if cur is None or cur[0] != sign:
+                    self._since[axis] = (sign, now)
+                    self._anchors.pop(axis, None)
+            self._demand = d
         self._wake.set()
 
     def stop(self) -> None:
@@ -61,8 +67,11 @@ class LimitWatch:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            if not any(self._demand):
-                self._anchors.clear()
+            with self._lock:
+                idle = not any(self._demand)
+                if idle:
+                    self._anchors.clear()
+            if idle:
                 self._wake.wait()
                 self._wake.clear()
                 continue
@@ -75,6 +84,10 @@ class LimitWatch:
     def _check(self, axis: str, value: int | None, now: float) -> bool:
         if value is None:
             return False
+        with self._lock:
+            return self._check_locked(axis, value, now)
+
+    def _check_locked(self, axis: str, value: int, now: float) -> bool:
         since = self._since.get(axis)
         if since is None or now - since[1] < self.stuck_s + self.period_s:
             anchor = self._anchors.get(axis)
@@ -88,11 +101,8 @@ class LimitWatch:
         return now - anchor[0] >= self.stuck_s
 
     def _tick(self) -> None:
-        vx, vy, vz = self._demand
-        if abs(vx) < MIN_PT_JUDGE:
-            vx = 0.0
-        if abs(vy) < MIN_PT_JUDGE:
-            vy = 0.0
+        with self._lock:
+            vx, vy, vz = self._demand
         now = time.monotonic()
         stuck = False
         if vx or vy:
@@ -101,8 +111,9 @@ class LimitWatch:
                 stuck |= bool(vx) and self._check("pan", int(pt[0]), now)
                 stuck |= bool(vy) and self._check("tilt", int(pt[1]), now)
         else:
-            self._anchors.pop("pan", None)
-            self._anchors.pop("tilt", None)
+            with self._lock:
+                self._anchors.pop("pan", None)
+                self._anchors.pop("tilt", None)
         if vz:
             z = self._qz()
             if z is not None:
@@ -111,7 +122,8 @@ class LimitWatch:
                 else:
                     stuck |= self._check("zoom", int(z), now)
         else:
-            self._anchors.pop("zoom", None)
+            with self._lock:
+                self._anchors.pop("zoom", None)
         if stuck and now - self._last_pulse >= self.pulse_s and not self._stop.is_set():
             self._last_pulse = now
             try:
