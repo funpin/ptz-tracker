@@ -253,7 +253,7 @@ class PowerOverlay(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setAutoFillBackground(True)
+        self.setAttribute(Qt.WA_StyledBackground, True)  # иначе фон из QSS у QWidget не рисуется
         self.setStyleSheet(f"PowerOverlay {{ background: {C.BG}; }}")
         self.power_btn = QPushButton()
         self.power_btn.setFixedSize(self.BTN, self.BTN)
@@ -262,8 +262,11 @@ class PowerOverlay(QWidget):
         self.power_btn.setFocusPolicy(Qt.NoFocus)
         self.power_btn.setCursor(Qt.PointingHandCursor)
         self.power_btn.setToolTip("Включить камеру")
+        inner = self.BTN - 6  # в QSS min/max — без рамки 3 px
         self.power_btn.setStyleSheet(
-            f"QPushButton {{ border: 3px solid {C.OK}; border-radius: {self.BTN // 2}px; background: {C.RAISED}; }}"
+            f"QPushButton {{ border: 3px solid {C.OK}; border-radius: {self.BTN // 2}px; background: {C.RAISED};"
+            f" min-width: {inner}px; max-width: {inner}px; min-height: {inner}px; max-height: {inner}px;"
+            " padding: 0; }"
             f"QPushButton:hover {{ background: {C.RAISED_HI}; }}"
             f"QPushButton:disabled {{ border-color: {C.TEXT_FAINT}; }}"
         )

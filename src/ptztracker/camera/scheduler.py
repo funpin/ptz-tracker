@@ -94,6 +94,11 @@ class CommandScheduler:
         self._running = False
         self._inflight: _Item | None = None
         self._pt_yielded = False  # поворот уже уступил окно зуму и ещё не ушёл
+        # Ключ «пульса» (сессия ставит «heartbeat»): после ответа er2 он уходит следующим, даже если ждут
+        # команды важнее. Иначе камера в ожидании (на всё ER2) навсегда заняла бы очередь повторами — и пульс,
+        # по которому видно, что камера спит, не прошёл бы никогда.
+        self.probe_key: str | None = None
+        self._probe_next = False
 
     # --- публичный API -------------------------------------------------
 
@@ -142,6 +147,14 @@ class CommandScheduler:
             for key, cmd in (("pt", STOP_PT), ("zoom", STOP_ZOOM), ("focus", STOP_FOCUS)):
                 self._st.slots[key] = _Item(cmd, Priority.EMERGENCY, next(self._seq), key=key, submitted=self._clock())
             self._backoff_until = 0.0
+            self._cond.notify()
+
+    def drop_pending(self, keep: set[str]) -> None:
+        """Отбросить ожидающие команды, кроме ключей keep. Камера ушла в ожидание: на всё прочее она
+        ответит ER2, а er2 повторялся бы без конца и забивал очередь (в том числе аварийные стопы)."""
+        with self._cond:
+            for key in [k for k in self._st.slots if k not in keep]:
+                del self._st.slots[key]
             self._cond.notify()
 
     def pending(self) -> bool:
@@ -212,6 +225,9 @@ class CommandScheduler:
             return None
         candidates = list(self._st.slots.values()) + self._st.queries
         item = min(candidates, key=lambda i: (i.priority, i.seq))
+        if self._probe_next and self.probe_key in self._st.slots:
+            item = self._st.slots[self.probe_key]
+        self._probe_next = False
         if self._zoom_window_due(item, now):
             item = self._st.slots["zoom"]
             self._pt_yielded = True
@@ -319,8 +335,11 @@ class CommandScheduler:
                 # автофокус включён: камера отвергает #F50 всегда (2026-10-29: ~23 повтора за 3 с), стоп фокуса не нужен
                 log.info("Камера не принимает %s (автофокус) — не повторяю", item.cmd)
                 return
-            elif not (isinstance(err, CameraError) and err.code == "er2") and item.priority != Priority.EMERGENCY:
-                # er2 «занята» (например, работает пульт) — повторять, пока команду не заменит новая;
+            elif isinstance(err, CameraError) and err.code == "er2":
+                # er2 «занята» (работает пульт) или «в ожидании» — повторять, пока команду не заменит новая;
+                # но следующим пусть уйдёт пульс: по нему видно, что камера спит
+                self._probe_next = item.key != self.probe_key
+            elif item.priority != Priority.EMERGENCY:
                 # аварийный стоп не отбрасывается никогда
                 item.errors += 1
             if item.key is not None and item.key not in self._st.slots:
