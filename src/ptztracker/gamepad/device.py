@@ -233,6 +233,7 @@ class GamepadThread:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._shut = False
+        self._lock = threading.Lock()
 
     # --- вызовы из любого потока ---
     def set_led(self, rgb: tuple[int, int, int]) -> None:
@@ -257,7 +258,10 @@ class GamepadThread:
         if th is not None:
             th.join(timeout)
             if th.is_alive():
-                return  # поток сам завершит shutdown на выходе
+                # поток завис (например, в SDL): оператору всё равно сообщаем об отключении, без обращения к SDL;
+                # сам поток доделает shutdown, когда проснётся
+                self._send_disconnected()
+                return
         else:
             self.shutdown()
 
@@ -273,14 +277,20 @@ class GamepadThread:
 
     def shutdown(self) -> None:
         """Disconnected (если был подключён) и нейтральная полоса. Один раз."""
-        if self._shut:
-            return
-        self._shut = True
-        if self._connected:
-            self._connected = False
-            self._safe(lambda: self._on_intents([Disconnected()]))
+        with self._lock:
+            if self._shut:
+                return
+            self._shut = True
+        self._send_disconnected()
         self._safe(lambda: self._b.rumble(0.0, 0.0, 0))
         self._safe(lambda: self._b.set_led(_NEUTRAL_LED))
+
+    def _send_disconnected(self) -> None:
+        with self._lock:
+            if not self._connected:
+                return
+            self._connected = False
+        self._safe(lambda: self._on_intents([Disconnected()]))
 
     @staticmethod
     def _safe(fn) -> None:
@@ -290,6 +300,7 @@ class GamepadThread:
             log_thread.exception("Геймпад: сбой при выходе")
 
     def tick(self) -> None:
+        """Один шаг опроса. В режиме QTimer после сбоя (_dead) вызовы ничего не делают; stop() всё равно нужно вызвать."""
         if self._dead:
             return
         try:
@@ -297,9 +308,10 @@ class GamepadThread:
         except Exception:
             log_thread.exception("Геймпад: сбой в цикле опроса")
             self._dead = True
-            if self._connected:
-                self._connected = False
-                self._safe(lambda: self._on_intents([Disconnected()]))
+            was = self._connected
+            self._connected = False
+            self._safe(lambda: self._on_intents([Disconnected()]))  # дубль безвреден
+            if was:
                 self._safe(lambda: self._on_connection(None))
 
     def _drain(self) -> None:
@@ -314,6 +326,8 @@ class GamepadThread:
             elif kind == "player":
                 self._player = val
                 self._b.set_player_index(val)
+            elif not self._connected:
+                pass  # узор, заказанный без устройства, не должен прозвучать после переподключения
             else:
                 self._rumble = list(val)
                 self._rumble_next = 0.0
@@ -331,6 +345,8 @@ class GamepadThread:
         now = self._clock()
         self._drain()
         pad = self._b.poll()
+        if self._stop.is_set():
+            return  # остановка запрошена (поток мог зависнуть в poll): новых подключений не оформляем
         intents = self._mapper.update(pad, now)
         if pad is not None and not self._connected:
             self._connected = True
@@ -343,6 +359,9 @@ class GamepadThread:
         elif pad is None and self._connected:
             self._connected = False
             self._rumble = []
+            if intents:
+                self._on_intents(intents)  # сначала Disconnected: сбой обратного вызова связи его не теряет
+                intents = []
             self._on_connection(None)
         if intents:
             self._on_intents(intents)

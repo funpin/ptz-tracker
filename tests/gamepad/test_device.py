@@ -110,8 +110,49 @@ def test_reconnect_reports_connection_and_reapplies_led_player():
 def test_rumble_pattern_sequenced_without_blocking():
     c = Clock()
     b, th, got, conn = mk([RawPad()] * 20, c)
+    th.tick()  # подключение
     th.rumble(((1.0, 0.0, 100), (0.0, 0.0, 100), (0.0, 1.0, 50)))
     for _ in range(30):
         th.tick()
         c.t += 0.02
     assert [x for x in b.calls if x[0] == "rumble"] == [("rumble", 1.0, 0.0, 100), ("rumble", 0.0, 1.0, 50)]
+
+
+def test_disconnected_delivered_even_if_on_connection_raises():
+    b, th, got, conn = mk([RawPad(), None])
+    th.tick()
+
+    def boom(info):
+        raise RuntimeError("x")
+
+    th._on_connection = boom
+    th.tick()
+    assert [Disconnected()] in got
+
+
+def test_stop_on_stuck_thread_still_delivers_disconnected():
+    gate = threading.Event()
+    b, th, got, conn = mk([RawPad()])
+    orig = b.poll
+
+    def poll():
+        if not b.script:
+            gate.wait(5)
+        return orig()
+
+    b.poll = poll
+    th.start()
+    time.sleep(0.1)
+    th.stop(timeout=0.1)
+    assert got.count([Disconnected()]) == 1
+    gate.set()
+    time.sleep(0.2)
+    assert got.count([Disconnected()]) == 1  # поздний shutdown не дублирует
+
+
+def test_rumble_queued_while_disconnected_dropped():
+    b, th, got, conn = mk([None, RawPad(), RawPad()])
+    th.rumble(((1.0, 1.0, 50),))
+    for _ in range(3):
+        th.tick()
+    assert not [c for c in b.calls if c[0] == "rumble"]
