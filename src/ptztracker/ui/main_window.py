@@ -63,6 +63,7 @@ from ptztracker.ui.camera_dialog import CameraDialog
 from ptztracker.ui.camera_menu import CameraMenu
 from ptztracker.ui.follow_panel import FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge, pad_number_for
+from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.preview import PreviewWidget
 from ptztracker.ui.state import TrackingView, analysis_pill, atem_pill, power_view, tracking_view, video_pill
@@ -83,7 +84,7 @@ SIDE_WIDTH = 372
 _HOTKEYS = [
     ("Пробел", "слежение"), ("1–5", "кадр"), ("← → ↑ ↓", "поворот"), ("+ −", "зум"), ("Esc", "стоп"),
     ("F9", "сохранить момент"), ("M", "меню камеры"),
-]
+]  # F1 («справка») в строку состояния не добавляем: окно F1 показывает её сам
 _PAN_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
 _MENU_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter}
 _ZOOM_IN_KEYS = {Qt.Key_Plus, Qt.Key_Equal}
@@ -146,6 +147,8 @@ class MainWindow(QMainWindow):
                                  menu_open=self._menu_is_open, parent=self)
         self.pad.intents.connect(self._on_pad_intents)
         self.pad.connectionChanged.connect(lambda _info: self._sync_pad_player())
+        self.pad.connectionChanged.connect(lambda _info: self._update_pad_chip())
+        self.pad.batteryChanged.connect(self._update_pad_chip)
         self._pad_applied = (0.0, 0.0, 0.0)  # скорость геймпада в последней отправке
         self._last_waist = "waist_center"  # куда вернуться в пояс по R1 из «Роста»
 
@@ -183,6 +186,9 @@ class MainWindow(QMainWindow):
         self.blackbox_btn.setPopupMode(QToolButton.InstantPopup)
         self.agent_badge = StatusPill("robot", "AGENT", "accent")
         self.agent_badge.hide()
+        self.pad_chip = StatusPill("gamepad")
+        self.pad_chip.hide()
+        self.hotkeys_dialog: HotkeysDialog | None = None
         self.main_menu_btn = self._menu_button("menu", "Меню")
         self.track_btn = self.follow_panel.follow_btn
 
@@ -198,8 +204,8 @@ class MainWindow(QMainWindow):
         tl.addWidget(self.camera_combo)
         tl.addWidget(self.cameras_btn)
         tl.addStretch(1)
-        for w in (self.video_pill, self.analysis_pill, self.atem_pill, self.blackbox_btn, self.agent_badge,
-                  self.main_menu_btn):
+        for w in (self.video_pill, self.analysis_pill, self.atem_pill, self.blackbox_btn, self.pad_chip,
+                  self.agent_badge, self.main_menu_btn):
             tl.addWidget(w)
         tl.addSpacing(SP[1])
         tl.addWidget(self.track_btn.action_btn)
@@ -672,6 +678,7 @@ class MainWindow(QMainWindow):
             self.cfg.cameras = [cam if c.id == cam.id else c for c in self.cfg.cameras]
             self._save()
             self._fill_combo(cam.id)
+            self._sync_pad_player()  # мог измениться номер на геймпаде
 
     def _delete_camera(self) -> None:
         cur = self._current_cfg()
@@ -942,6 +949,10 @@ class MainWindow(QMainWindow):
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self._on_composition(comp_keys[key])
                 return True
+            if key == Qt.Key_F1:
+                if et == QEvent.KeyPress and not event.isAutoRepeat():
+                    self.show_hotkeys()
+                return True
             if key == Qt.Key_F9:  # сохранить момент: не ручное управление, слежение не трогаем
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self.save_moment()
@@ -1122,10 +1133,42 @@ class MainWindow(QMainWindow):
             return
         self._on_composition(self._last_waist if _PAD_SIZES[j] == "waist" else _PAD_SIZES[j])
 
+    def show_hotkeys(self) -> None:
+        if self.hotkeys_dialog is None:
+            self.hotkeys_dialog = HotkeysDialog(parent=self)
+        self.hotkeys_dialog.show()
+        self.hotkeys_dialog.raise_()
+
+    def _update_pad_chip(self) -> None:
+        """Чип «номер · заряд · сколько осталось»; без геймпада скрыт."""
+        if not self.pad.connected:
+            self.pad_chip.hide()
+            self._fit_top_bar()
+            return
+        s = self._pad_session()
+        num = pad_number_for(s.cfg, self._cameras()) if s is not None else None
+        parts = [str(num)] if num is not None else []
+        pct, kind = self.pad.battery_percent, "ok"
+        if pct is not None:
+            parts.append(f"{pct}%")
+            if self.pad.battery_charging:
+                parts.append("заряжается")
+            else:
+                rem = self.pad.battery_remaining_s()
+                parts.append("считаю…" if rem is None else fmt_remaining(rem))
+                if pct <= 20:
+                    kind = "warn"
+        name = (self.pad.info or {}).get("name") or "Геймпад"
+        tip = f"{name}: огоньки на геймпаде показывают номер камеры" + (f"\nЗаряд {pct}%" if pct is not None else "")
+        self.pad_chip.set(" · ".join(parts), kind, tip)
+        self.pad_chip.show()
+        self._fit_top_bar()
+
     def _sync_pad_player(self) -> None:
         """Огоньки игрока = номер камеры геймпада; без камеры — погасить."""
         s = self._pad_session()
         self.pad.set_player(pad_number_for(s.cfg, self._cameras()) if s is not None else None)
+        self._update_pad_chip()
 
     def _sync_pad(self) -> None:
         """Цвет полосы из снимков (сеть не ждём); мост шлёт его, только если цвет изменился."""

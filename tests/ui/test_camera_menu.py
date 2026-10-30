@@ -278,7 +278,7 @@ def test_disconnect_while_holding_stops_focus(qtbot, tmp_path):
     w.close()
 
 
-def test_deactivation_while_holding_stops_focus(qtbot, tmp_path):
+def test_deactivation_while_holding_stops_focus(qtbot, tmp_path, monkeypatch):
     w, b = make(qtbot, tmp_path)
     w.camera_menu.open()
     w.camera_menu.accept()
@@ -286,8 +286,7 @@ def test_deactivation_while_holding_stops_focus(qtbot, tmp_path):
     assert w.camera_menu._focus_moving
     sent = []
     w.session.set_focus_velocity = lambda v: sent.append(v)
+    monkeypatch.setattr(w, "isActiveWindow", lambda: False)
     w.changeEvent(QEvent(QEvent.ActivationChange))
-    if w.isActiveWindow():
-        w.camera_menu.stop_focus()  # офскрин-окно может считаться активным
     assert sent and sent[-1] == 0.0
     w.close()

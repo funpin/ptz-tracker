@@ -70,6 +70,13 @@ class CameraDialog(QDialog):
         self.atem_spin.setSpecialValueText("нет")
         self.atem_spin.setValue(atem_input_of(cfg) if cfg else 0)
 
+        self.pad_spin = QSpinBox()
+        self.pad_spin.setRange(0, 4)
+        self.pad_spin.setSpecialValueText("авто")
+        self.pad_spin.setToolTip("Какими белыми точками светится геймпад для этой камеры. Авто — цифры в конце названия, "
+                                 "иначе место в списке")
+        self.pad_spin.setValue((cfg.pad_number or 0) if cfg else 0)
+
         form = QFormLayout()
         form.addRow("Название", self.name_edit)
         form.addRow("IP-адрес", self.ip_edit)
@@ -78,6 +85,7 @@ class CameraDialog(QDialog):
         form.addRow("RTSP-адрес (необязательно)", self.rtsp_edit)
         form.addRow("Мин. интервал команд", self.interval_spin)
         form.addRow("Вход ATEM", self.atem_spin)
+        form.addRow("Номер на геймпаде", self.pad_spin)
 
         self.test_button = QPushButton("Проверить связь")
         self.test_result = QLabel("")
@@ -130,6 +138,7 @@ class CameraDialog(QDialog):
             rtsp_url=self.rtsp_edit.text().strip() or None,
             min_interval=self.interval_spin.value() / 1000,
             atem_input=self.atem_spin.value(),
+            pad_number=self.pad_spin.value() or None,
         )
 
     def password(self) -> str | None:
