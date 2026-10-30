@@ -2,7 +2,7 @@ import threading
 import time
 
 from ptztracker.gamepad.device import GamepadThread, RawPad
-from ptztracker.gamepad.intents import Disconnected, ToggleFollow
+from ptztracker.gamepad.intents import Disconnected
 from ptztracker.gamepad.mapping import Mapper
 
 
@@ -56,7 +56,7 @@ def test_intents_delivered():
     b, th, got, conn = mk([RawPad(), RawPad(buttons=frozenset({"touchpad"}))])
     th.tick()
     th.tick()
-    assert any(ToggleFollow() in x for x in got) or got  # любое намерение дошло
+    assert got
     assert conn == [{"name": "fake"}]
 
 
@@ -74,7 +74,7 @@ def test_exception_in_poll_sends_disconnected():
     th.tick()
     assert got[-1] == [Disconnected()]
     th.tick()  # мёртвый поток больше не опрашивает
-    assert len(got) == 1 or got[-1] == [Disconnected()]
+    assert got[-1] == [Disconnected()]
 
 
 def test_stop_sends_disconnected_and_neutral_led():
@@ -104,14 +104,14 @@ def test_reconnect_reports_connection_and_reapplies_led_player():
     for _ in range(3):
         th.tick()
     assert conn == [{"name": "fake"}, None, {"name": "fake"}]
-    assert b.calls.count(("led", (9, 9, 9))) == 2 and b.calls.count(("player", 2)) == 2
+    assert b.calls.count(("led", (9, 9, 9))) == 3 and b.calls.count(("player", 2)) == 3  # очередь + подключение + переподключение
 
 
 def test_rumble_pattern_sequenced_without_blocking():
     c = Clock()
     b, th, got, conn = mk([RawPad()] * 20, c)
     th.rumble(((1.0, 0.0, 100), (0.0, 0.0, 100), (0.0, 1.0, 50)))
-    for step in range(30):
+    for _ in range(30):
         th.tick()
         c.t += 0.02
     assert [x for x in b.calls if x[0] == "rumble"] == [("rumble", 1.0, 0.0, 100), ("rumble", 0.0, 1.0, 50)]
