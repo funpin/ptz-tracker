@@ -86,7 +86,9 @@ class Mapper:
             return []
         if not self._connected:
             self._prev = pad.buttons  # кнопки, зажатые при подключении, не считаются нажатиями
-            self._latched = True      # отклонённый при подключении стик/курок не двигает камеру, пока не вернётся в центр
+            self._latched = True      # отклонённые при подключении левый стик и курки не двигают камеру, пока не вернутся в центр
+            # правый стик, отклонённый при подключении, не даёт Neighbor, пока не вернётся в мёртвую зону
+            self._neighbor_armed = abs(float(pad.axes.get("rightx", 0.0))) < NEIGHBOR_THRESHOLD
         self._connected = True
         out: list[Intent] = []
         menu = self._menu_open()

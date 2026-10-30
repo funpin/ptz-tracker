@@ -173,3 +173,11 @@ def test_buttons_held_at_connect_ignored():
     m.update(None, 0.2)
     assert m.update(pad({"cross", "dpad_up"}), 0.3) == []
     assert m.update(pad(), 0.4) == []
+
+
+def test_neighbor_deflected_at_connect_disarmed():
+    m = Mapper(lambda: False)
+    assert m.update(pad(rightx=0.9), 0.0) == []
+    assert m.update(pad(rightx=0.9), 0.1) == []
+    assert m.update(pad(), 0.2) == []
+    assert m.update(pad(rightx=0.9), 0.3) == [Neighbor(+1)]
