@@ -109,3 +109,49 @@ def test_sim_pan_limit():
     finally:
         s.limit_watch.set_demand(0, 0, 0)
         s.stop()
+
+
+def test_deadzone_demand_is_zero():
+    w, c = make()
+    try:
+        w.set_demand(0.01, -0.01, 0.0)
+        time.sleep(0.3)
+        assert c["pt"] == 0 and c["limit"] == 0
+    finally:
+        w.stop()
+
+
+def test_slow_demand_not_judged():
+    w, c = make()
+    try:
+        w.set_demand(0.05, 0, 0)
+        time.sleep(0.4)
+        assert c["limit"] == 0
+    finally:
+        w.stop()
+
+
+def test_startup_grace():
+    w, c = make(stuck_s=0.3, period_s=0.02)
+    try:
+        w.set_demand(1, 0, 0)
+        time.sleep(0.25)
+        assert c["limit"] == 0
+        time.sleep(0.4)
+        assert c["limit"] >= 1
+    finally:
+        w.stop()
+
+
+def test_sign_change_resets_grace():
+    w, c = make(stuck_s=0.3, period_s=0.02)
+    try:
+        w.set_demand(1, 0, 0)
+        time.sleep(0.5)
+        assert c["limit"] >= 1
+        n = c["limit"]
+        w.set_demand(-1, 0, 0)
+        time.sleep(0.2)
+        assert c["limit"] == n
+    finally:
+        w.stop()

@@ -14,6 +14,10 @@ from ptztracker.camera import protocol as P
 
 log = logging.getLogger(__name__)
 
+DEADZONE = 0.02  # как в camera/speed.py velocity_to_code: меньше — камере команда «стоять»
+# На самых медленных кодах камера за stuck_s сдвигается меньше min_units — не отличить от упора.
+MIN_PT_JUDGE = 0.1
+
 
 class LimitWatch:
     def __init__(
@@ -31,13 +35,22 @@ class LimitWatch:
         self._demand = (0.0, 0.0, 0.0)
         self._wake = threading.Event()
         self._stop = threading.Event()
+        self._since: dict[str, tuple[int, float]] = {}  # ось -> (знак спроса, когда начался)
         self._anchors: dict[str, tuple[float, int]] = {}
         self._last_pulse = float("-inf")
         self._thread = threading.Thread(target=self._run, name="limit-watch", daemon=True)
         self._thread.start()
 
     def set_demand(self, vx: float, vy: float, vz: float) -> None:
-        self._demand = (float(vx), float(vy), float(vz))
+        d = tuple(0.0 if abs(float(v)) < DEADZONE else float(v) for v in (vx, vy, vz))
+        now = time.monotonic()
+        for axis, v in zip(("pan", "tilt", "zoom"), d):
+            sign = (v > 0) - (v < 0)
+            cur = self._since.get(axis)
+            if cur is None or cur[0] != sign:
+                self._since[axis] = (sign, now)
+                self._anchors.pop(axis, None)
+        self._demand = d  # type: ignore[assignment]
         self._wake.set()
 
     def stop(self) -> None:
@@ -62,6 +75,12 @@ class LimitWatch:
     def _check(self, axis: str, value: int | None, now: float) -> bool:
         if value is None:
             return False
+        since = self._since.get(axis)
+        if since is None or now - since[1] < self.stuck_s + self.period_s:
+            anchor = self._anchors.get(axis)
+            if anchor is None or abs(value - anchor[1]) > self.min_units:
+                self._anchors[axis] = (now, value)
+            return False
         anchor = self._anchors.get(axis)
         if anchor is None or abs(value - anchor[1]) > self.min_units:
             self._anchors[axis] = (now, value)
@@ -70,6 +89,10 @@ class LimitWatch:
 
     def _tick(self) -> None:
         vx, vy, vz = self._demand
+        if abs(vx) < MIN_PT_JUDGE:
+            vx = 0.0
+        if abs(vy) < MIN_PT_JUDGE:
+            vy = 0.0
         now = time.monotonic()
         stuck = False
         if vx or vy:
