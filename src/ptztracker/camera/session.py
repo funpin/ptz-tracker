@@ -37,6 +37,8 @@ SIM_VIDEO_LATENCY_S = 0.15  # как MJPEG у живой камеры
 # Без калибровки считаем камеру в 1,3 раза быстрее замеров (he42.PAN_DEG_S): запас устойчивости (раскачка —
 # с ρ≈1,7, то есть камера может быть до ×2 быстрее таблицы). Было 1,5, потом 1,2 (см. DECISIONS)
 UNCALIBRATED_SAFETY = 1.3
+STEP_CACHE_S = 1.0  # столько живёт значение ириса/gain для шага без повторного опроса
+PENDING_STEP_TTL_S = 2.0  # шаг, ждущий ответа камеры, устаревает
 
 
 @dataclasses.dataclass(frozen=True)
@@ -87,8 +89,10 @@ class CameraSession:
         self._power = "unknown"
         self._image = ImageState()
         self._last_manual_gain: int | None = None
-        self._pending_steps: dict[str, int] = {}
-        self._step_lock = threading.Lock()
+        self._pending_steps: dict[str, tuple[int, float]] = {}  # что -> (шаг, момент запроса)
+        self._step_lock = threading.RLock()
+        self._img_t: dict[str, float] = {}
+        self._gain_auto_logged = False
 
     # --- жизненный цикл ------------------------------------------------
 
@@ -349,83 +353,121 @@ class CameraSession:
         """Слушатель планировщика (его поток): разбор питания и изображения. Не бросает исключений."""
         cmd, reply, ok = info.get("cmd"), str(info.get("reply") or ""), info.get("ok")
         try:
+            if not ok and cmd in (P.Q_IRIS, P.Q_GAIN):
+                with self._step_lock:
+                    self._pending_steps.pop("iris" if cmd == P.Q_IRIS else "gain", None)
             if cmd in (P.Q_POWER, P.POWER_ON, P.POWER_STANDBY):
                 was = self._power
                 now = P.parse_power(reply) if ok else ("unknown" if cmd == P.Q_POWER else was)
                 if cmd == P.POWER_ON and now == "on" and was != "on":
                     now = "switching"  # #O1 отвечает p1 сразу, а камера ещё включается (p3 ~3,5 с)
                 self._power = now
+                if now in ("standby", "switching"):
+                    with self._step_lock:
+                        self._pending_steps.clear()
                 if now == "on" and was in ("standby", "switching"):
                     self.refresh_image()
             elif ok and (cmd == P.Q_GAIN or str(cmd).startswith("OGU:")):
                 g = P.parse_gain(reply)
                 if g != P.GAIN_AUTO:
                     self._last_manual_gain = g
-                self._image = dataclasses.replace(self._image, gain=g)
+                self._upd(gain=g)
                 self._apply_pending("gain")
             elif ok and (cmd == P.Q_WB or str(cmd).startswith("OAW:")):
-                self._image = dataclasses.replace(self._image, wb=P.parse_wb(reply))
+                self._upd(wb=P.parse_wb(reply))
             elif ok and cmd == P.Q_IRIS:
                 auto = P.parse_iris_auto(reply)
-                img = dataclasses.replace(self._image, iris=P.parse_iris(reply))
-                self._image = img if auto is None else dataclasses.replace(img, iris_auto=auto)
+                if auto is None:
+                    self._upd(iris=P.parse_iris(reply))
+                else:
+                    self._upd(iris=P.parse_iris(reply), iris_auto=auto)
                 self._apply_pending("iris")
             elif ok and str(cmd).startswith("#AXI"):
-                self._image = dataclasses.replace(self._image, iris=P.parse_iris(reply.replace("axi", "gi", 1)))
+                self._upd(iris=P.parse_iris(reply.replace("axi", "gi", 1)))
             elif ok and str(cmd).startswith("#D3"):
-                self._image = dataclasses.replace(self._image, iris_auto=str(cmd)[3:] == "1")
+                self._upd(iris_auto=str(cmd)[3:] == "1")
             elif ok and (cmd == P.Q_COLOR_TEMP or str(cmd).startswith("OSD:B1:")):
-                self._image = dataclasses.replace(self._image, color_temp=P.parse_color_temp(reply))
+                self._upd(color_temp=P.parse_color_temp(reply))
         except ValueError:
             log.debug("Непонятный ответ на %s: %r", cmd, reply)
 
+    def _upd(self, **kw) -> None:
+        now = time.monotonic()
+        with self._step_lock:
+            self._image = dataclasses.replace(self._image, **kw)
+            for k in kw:
+                self._img_t[k] = now
+
+    def _fresh(self, key: str) -> bool:
+        return time.monotonic() - self._img_t.get(key, -1e9) <= STEP_CACHE_S
+
     def _apply_pending(self, what: str) -> None:
         with self._step_lock:
-            d = self._pending_steps.pop(what, 0)
-        if d:
-            (self._iris_apply if what == "iris" else self._gain_apply)(d)
+            item = self._pending_steps.pop(what, None)
+        if item and time.monotonic() - item[1] <= PENDING_STEP_TTL_S:
+            (self._iris_apply if what == "iris" else self._gain_apply)(item[0])
 
-    def _step_or_query(self, what: str, known: bool, d: int, key: str, cmd: str) -> None:
-        """Применить шаг сразу, если значение известно; иначе запомнить его и спросить камеру (без ожидания)."""
-        if known:
-            (self._iris_apply if what == "iris" else self._gain_apply)(d)
-            return
+    def _queue_step(self, what: str, d: int, key: str, cmd: str) -> bool:
+        """Значение устарело или неизвестно: спросить камеру (без ожидания), шаг применится по ответу."""
+        if self._power in ("standby", "switching"):
+            return False
+        now = time.monotonic()
         with self._step_lock:
-            self._pending_steps[what] = max(-4, min(4, self._pending_steps.get(what, 0) + d))
+            old = self._pending_steps.get(what)
+            prev = old[0] if old and now - old[1] <= PENDING_STEP_TTL_S else 0
+            self._pending_steps[what] = (max(-4, min(4, prev + d)), now)
         self.scheduler.submit(key, cmd, Priority.QUERY, only_if_changed=False)
+        return True
 
-    def iris_step(self, d: int) -> None:
-        """Ирис на 1/16 хода шире (+1) или уже (−1). Слежение не трогает; не блокирует."""
-        self._step_or_query("iris", self._image.iris is not None, d, "q_iris", P.Q_IRIS)
+    def iris_step(self, d: int) -> bool:
+        """Ирис на 1/16 хода шире (+1) или уже (−1). Слежение не трогает; не блокирует.
+        True — команда отправлена или шаг ждёт ответа камеры."""
+        img = self._image
+        if img.iris_auto is False and img.iris is not None and self._fresh("iris"):
+            return self._iris_apply(d)
+        return self._queue_step("iris", d, "q_iris", P.Q_IRIS)
 
-    def gain_step(self, d: int) -> None:
-        """Gain на следующий/предыдущий код (+1 ярче). Из AUTO — переход в ручной на прежнем значении."""
-        self._step_or_query("gain", self._image.gain is not None, d, "q_gain", P.Q_GAIN)
+    def gain_step(self, d: int) -> bool:
+        """Gain на следующий/предыдущий код (+1 ярче). Из AUTO — ручной на прежнем значении, без шага;
+        если прежнего не видели — камере ничего не шлём, False."""
+        g = self._image.gain
+        if g is not None and g != P.GAIN_AUTO and self._fresh("gain"):
+            return self._gain_apply(d)
+        if g == P.GAIN_AUTO and self._last_manual_gain is None:
+            return self._gain_apply(d)  # сообщит False и запишет в журнал
+        return self._queue_step("gain", d, "q_gain", P.Q_GAIN)
 
-    def _iris_apply(self, d: int) -> None:
+    def _iris_apply(self, d: int) -> bool:
         pos = self._image.iris
-        if pos is None:
-            return
-        if self._image.iris_auto is not False:
-            self.set_iris_auto(False)
-            self._image = dataclasses.replace(self._image, iris_auto=False)
+        if pos is None or self._power in ("standby", "switching"):
+            return False
+        self.set_iris_auto(False)  # дубли гасит only_if_changed; флагу авто из #GI не верим
+        self._upd(iris_auto=False)
         step = (P.LENS_MAX - P.LENS_MIN) // 16
         new = max(P.LENS_MIN, min(P.LENS_MAX, pos + (step if d > 0 else -step)))
         self._submit("iris", P.iris_abs(new))
-        self._image = dataclasses.replace(self._image, iris=new)
+        self._upd(iris=new)
+        return True
 
-    def _gain_apply(self, d: int) -> None:
+    def _gain_apply(self, d: int) -> bool:
         g = self._image.gain
-        if g is None:
-            return
+        if g is None or self._power in ("standby", "switching"):
+            return False
         codes = P.GAIN_CODES
         if g == P.GAIN_AUTO:
-            new = self._last_manual_gain if self._last_manual_gain in codes else codes[0]
+            if self._last_manual_gain not in codes:
+                if not self._gain_auto_logged:
+                    self._gain_auto_logged = True
+                    log.info("Gain на авто, ручного значения не видели: шаг пропущен")
+                return False
+            new = self._last_manual_gain
         else:
             i = codes.index(g) if g in codes else min(range(len(codes)), key=lambda k: abs(codes[k] - g))
             new = codes[max(0, min(len(codes) - 1, i + (1 if d > 0 else -1)))]
         self.set_gain(new)
-        self._image = dataclasses.replace(self._image, gain=new)
+        self._last_manual_gain = new
+        self._upd(gain=new)
+        return True
 
     def set_power(self, on: bool) -> None:
         if not on:

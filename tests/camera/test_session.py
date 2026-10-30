@@ -273,3 +273,71 @@ def test_gain_step_clamps_and_goes_manual_from_auto():
         assert _wait(lambda: s.sim.gain_code == 0x08, 1.5)
     finally:
         s.stop()
+
+
+def test_iris_step_stale_cache_requeries():
+    from ptztracker.camera import protocol as P
+
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.iris == s.sim.iris_pos)
+        s.iris_step(+1)  # теперь кэш «ручной»
+        assert _wait(lambda: not s.sim.iris_auto, 1.5)
+        time.sleep(1.2)  # кэш устарел
+        s.sim.iris_pos = 0x900  # камера изменилась без нас
+        assert s.iris_step(+1) is True
+        assert _wait(lambda: abs(s.sim.iris_pos - (0x900 + (P.LENS_MAX - P.LENS_MIN) // 16)) <= 1, 2.0)
+    finally:
+        s.stop()
+
+
+def test_gain_step_auto_without_manual_does_nothing():
+    from ptztracker.camera import protocol as P
+
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        s._upd(gain=P.GAIN_AUTO)
+        s._last_manual_gain = None
+        n = len(s.sim.received)
+        assert s.gain_step(+1) is False
+        time.sleep(0.3)
+        assert not any(c.startswith("OGU") for c in list(s.sim.received)[n:])
+    finally:
+        s.stop()
+
+
+def test_gain_step_auto_with_manual_returns_to_it_without_step():
+    from ptztracker.camera import protocol as P
+
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.gain == 0x08)
+        s.set_gain(0x0B)
+        assert _wait(lambda: s.sim.gain_code == 0x0B)
+        s.set_gain(P.GAIN_AUTO)
+        assert _wait(lambda: s.image.gain == P.GAIN_AUTO, 1.5)
+        assert s.gain_step(+1) is True
+        assert _wait(lambda: s.sim.gain_code == 0x0B, 1.5)
+    finally:
+        s.stop()
+
+
+def test_pending_step_dropped_on_failed_query_standby_and_timeout():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    t = time.monotonic()
+    s._pending_steps["iris"] = (1, t)
+    s._on_reply({"cmd": "#GI", "reply": "ER1", "ok": False})
+    assert "iris" not in s._pending_steps
+    s._pending_steps["gain"] = (1, t)
+    s._on_reply({"cmd": "#O0", "reply": "p0", "ok": True})
+    assert s._pending_steps == {}
+    s._pending_steps["iris"] = (1, t - 3.0)
+    s._upd(iris=0x800)
+    n = len(s.sim.received)
+    s._on_reply({"cmd": "#GI", "reply": "gi800", "ok": True})
+    assert len(s.sim.received) == n and "iris" not in s._pending_steps
+    s.stop()
