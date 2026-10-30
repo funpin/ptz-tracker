@@ -82,6 +82,8 @@ class Mapper:
                 self._reset()
                 return [Disconnected()]
             return []
+        if not self._connected:
+            self._prev = pad.buttons  # кнопки, зажатые при подключении, не считаются нажатиями
         self._connected = True
         out: list[Intent] = []
         menu = self._menu_open()
@@ -102,13 +104,12 @@ class Mapper:
             self._sent_zoom = zoom
             out.append(Zoom(zoom))
 
-        if not menu:
-            rx = g("rightx")
-            if abs(rx) <= DEADZONE:
-                self._neighbor_armed = True
-            elif self._neighbor_armed and abs(rx) >= NEIGHBOR_THRESHOLD:
-                self._neighbor_armed = False
-                out.append(Neighbor(1 if rx > 0 else -1))
+        rx = g("rightx")
+        if abs(rx) <= DEADZONE:
+            self._neighbor_armed = True
+        elif self._neighbor_armed and abs(rx) >= NEIGHBOR_THRESHOLD:
+            self._neighbor_armed = False
+            out.append(Neighbor(1 if rx > 0 else -1))
 
         pressed = pad.buttons - self._prev
         released = self._prev - pad.buttons
@@ -116,8 +117,8 @@ class Mapper:
             if menu:
                 if b in _MENU_BUTTONS:
                     out.append(_MENU_BUTTONS[b])
-                elif b == "touchpad":
-                    out.append(Stop())
+                elif b in ("touchpad", "r3"):
+                    out.append(Stop() if b == "touchpad" else ToggleFollow())
                 continue
             if b in _PRESET_BUTTONS:
                 self._holds[b] = [t, False]
@@ -129,7 +130,8 @@ class Mapper:
         for b in sorted(released):
             hold = self._holds.pop(b, None)
             if hold is not None and not hold[1]:
-                out.append(Preset(_PRESET_BUTTONS[b], False))
+                # пропуск опроса: держали дольше порога, но запомнить не успели — запоминаем, а не вызываем
+                out.append(Preset(_PRESET_BUTTONS[b], t - hold[0] >= PRESET_HOLD_S))
             self._repeat.pop(b, None)
         if menu:
             self._holds.clear()
@@ -140,8 +142,9 @@ class Mapper:
                     hold[1] = True
                     out.append(Preset(_PRESET_BUTTONS[b], True))
             for b in sorted(self._repeat):
-                while t >= self._repeat[b] and b in pad.buttons:
-                    out.append(_REPEAT_BUTTONS[b])
-                    self._repeat[b] += 1.0 / REPEAT_RATE
+                if t >= self._repeat[b] and b in pad.buttons:
+                    out.append(_REPEAT_BUTTONS[b])  # не больше шага за опрос: после паузы без «очереди» шагов
+                    nxt = self._repeat[b] + 1.0 / REPEAT_RATE
+                    self._repeat[b] = nxt if nxt > t else t + 1.0 / REPEAT_RATE
         self._prev = pad.buttons
         return out

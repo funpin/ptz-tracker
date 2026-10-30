@@ -24,7 +24,9 @@ def pad(buttons=(), **axes):
 
 
 def mk(menu=False):
-    return Mapper(lambda: menu)
+    m = Mapper(lambda: menu)
+    m.update(pad(), -1.0)  # первое подключение без нажатых кнопок
+    return m
 
 
 def test_deadzone():
@@ -126,8 +128,37 @@ def test_stop_latches_until_recenter():
 
 
 def test_disconnect():
-    m = mk()
+    m = Mapper(lambda: False)
     assert m.update(None, 0.0) == []
     m.update(pad(leftx=1.0), 0.1)
     assert m.update(None, 0.2) == [Disconnected()]
     assert m.update(None, 0.3) == []
+
+
+def test_menu_r3_and_neighbor():
+    m = mk(menu=True)
+    assert m.update(pad({"r3"}), 0.0) == [ToggleFollow()]
+    assert m.update(pad(rightx=0.7), 0.1) == [Neighbor(+1)]
+
+
+def test_preset_release_after_poll_gap_stores():
+    m = mk()
+    m.update(pad({"cross"}), 0.0)
+    m.update(pad({"cross"}), 0.5)
+    assert m.update(pad(), 1.2) == [Preset(0, True)]
+
+
+def test_autorepeat_after_stall_single_step():
+    m = mk()
+    m.update(pad({"dpad_right"}), 0.0)
+    assert m.update(pad({"dpad_right"}), 3.0) == [IrisStep(+1)]
+    assert m.update(pad({"dpad_right"}), 3.05) == []
+
+
+def test_buttons_held_at_connect_ignored():
+    m = Mapper(lambda: False)
+    assert m.update(pad({"cross", "r3"}), 0.0) == []
+    assert m.update(pad(), 0.1) == []
+    m.update(None, 0.2)
+    assert m.update(pad({"cross", "dpad_up"}), 0.3) == []
+    assert m.update(pad(), 0.4) == []
