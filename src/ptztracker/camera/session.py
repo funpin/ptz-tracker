@@ -18,6 +18,7 @@ from typing import Callable
 from ptztracker import __version__
 from ptztracker.camera import protocol as P
 from ptztracker.camera.client import CameraClient
+from ptztracker.camera.limit_watch import LimitWatch
 from ptztracker.camera.scheduler import CommandScheduler, Priority
 from ptztracker.camera.speed import velocity_to_code
 from ptztracker.config import AppConfig, CameraConfig, get_password, record_dir
@@ -82,6 +83,7 @@ class CameraSession:
         self.frames: FrameSource | None = None
         self.found_rtsp_url: str | None = None  # заполняется, когда подобран рабочий адрес видео
         self._hb_stop = threading.Event()
+        self.limit_watch: LimitWatch | None = None
         self._quiet = False  # фоновые опросы остановлены на время калибровки
         self._hb_thread: threading.Thread | None = None
         self.on_manual: Callable[[], None] | None = None  # окно: ручное действие снимает разрешение агенту
@@ -125,6 +127,7 @@ class CameraSession:
         )
         self.scheduler.add_sent_listener(self._on_reply)
         self.scheduler.start()
+        self.limit_watch = LimitWatch(self._lw_query_pan_tilt, self._lw_query_zoom, lambda: None)
         self.frames.start()
         if self.analysis:
             from ptztracker.vision.analyzer import Analyzer
@@ -137,6 +140,16 @@ class CameraSession:
         self._hb_thread.start()
         self.refresh_image()
 
+    def _lw_query_pan_tilt(self):
+        if self._quiet or not self.scheduler:
+            return None
+        return P.parse_pan_tilt(self.scheduler.query(P.Q_PAN_TILT, timeout=1.0))
+
+    def _lw_query_zoom(self):
+        if self._quiet or not self.scheduler:
+            return None
+        return P.parse_zoom(self.scheduler.query(P.Q_ZOOM, timeout=1.0))
+
     def stop(self) -> None:
         """Остановить камеру и освободить ресурсы, не подвешивая окно.
 
@@ -144,6 +157,9 @@ class CameraSession:
         таймаутах, дорабатывают в фоне (они daemon и сами завершатся).
         """
         self._hb_stop.set()
+        if self.limit_watch:
+            self.limit_watch.stop()
+            self.limit_watch = None
         if self.follower:
             self.follower.stop()
         if self.analyzer:
