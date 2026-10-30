@@ -433,7 +433,7 @@ class CameraSession:
         g = self._image.gain
         if g is not None and g != P.GAIN_AUTO and self._fresh("gain"):
             return self._gain_apply(d)
-        if g == P.GAIN_AUTO and self._last_manual_gain is None:
+        if g == P.GAIN_AUTO and self._last_manual_gain is None and self._fresh("gain"):
             return self._gain_apply(d)  # сообщит False и запишет в журнал
         return self._queue_step("gain", d, "q_gain", P.Q_GAIN)
 
@@ -441,7 +441,8 @@ class CameraSession:
         pos = self._image.iris
         if pos is None or self._power in ("standby", "switching"):
             return False
-        self.set_iris_auto(False)  # дубли гасит only_if_changed; флагу авто из #GI не верим
+        # без дедупликации: оператор мог включить авто на пульте камеры; флагу авто из #GI не верим
+        self._submit("iris_mode", P.iris_auto(False), only_if_changed=False)
         self._upd(iris_auto=False)
         step = (P.LENS_MAX - P.LENS_MIN) // 16
         new = max(P.LENS_MIN, min(P.LENS_MAX, pos + (step if d > 0 else -step)))

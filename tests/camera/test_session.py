@@ -341,3 +341,38 @@ def test_pending_step_dropped_on_failed_query_standby_and_timeout():
     s._on_reply({"cmd": "#GI", "reply": "gi800", "ok": True})
     assert len(s.sim.received) == n and "iris" not in s._pending_steps
     s.stop()
+
+
+def test_iris_step_after_camera_side_auto_resends_manual():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.iris is not None)
+        s.iris_step(+1)
+        assert _wait(lambda: not s.sim.iris_auto, 1.5)
+        time.sleep(1.2)
+        s.sim.iris_auto = True  # оператор включил авто на пульте камеры
+        n = len(s.sim.received)
+        s.iris_step(+1)
+        assert _wait(lambda: any(c.startswith("#AXI") for c in list(s.sim.received)[n:]), 2.0)
+        new = list(s.sim.received)[n:]
+        assert "#D30" in new and new.index("#D30") < next(i for i, c in enumerate(new) if c.startswith("#AXI"))
+    finally:
+        s.stop()
+
+
+def test_gain_auto_without_manual_stale_cache_requeries():
+    from ptztracker.camera import protocol as P
+
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.gain == 0x08)
+        s._last_manual_gain = None
+        s._upd(gain=P.GAIN_AUTO)
+        s._img_t["gain"] -= 5.0  # кэш устарел
+        assert s.gain_step(+1) is True  # не отказ по старому AUTO: спрашиваем камеру
+        assert "gain" in s._pending_steps or s.image.gain == 0x0B
+        assert _wait(lambda: s.sim.gain_code == 0x0B, 2.0)  # камера реально на 0x08 — не авто
+    finally:
+        s.stop()
