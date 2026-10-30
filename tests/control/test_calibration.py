@@ -249,3 +249,32 @@ def test_wizard_near_pan_end_runs_toward_centre():
     finally:
         src.stop()
         srv.stop()
+
+
+@pytest.mark.slow
+def test_wizard_never_goes_beyond_half_frame_from_start():
+    """Живая камера: мастер уводил pan на ~32° (больше полкадра широкого угла). Теперь: на широком угле и
+    середине зума — не дальше полкадра этого зума; на теле быстрый код проскакивает за опрос, но не дальше
+    полкадра широкого угла."""
+    from ptztracker.camera.he42 import HFOV_WIDE_DEG, hfov_deg
+
+    sim, srv, src, client = make()
+    try:
+        sim.pan_deg = 3.0
+        stop = threading.Event()
+        dev = []  # (отклонение от старта, доля зума, едет ли зум)
+
+        def watch():
+            while not stop.is_set():
+                dev.append((abs(sim.pan_deg - 3.0), sim.zoom))
+                time.sleep(0.01)
+
+        threading.Thread(target=watch, daemon=True).start()
+        CalibrationRunner(client.send, src, lambda m: None, zooms=[0x555, 0xAAA], codes=(53, 70, 90)).run()
+        stop.set()
+        assert max(d for d, _ in dev) <= 0.5 * HFOV_WIDE_DEG, max(d for d, _ in dev)
+        worst = max(d / hfov_deg(z) for d, z in dev if z < 0.05)
+        assert worst <= 0.5, worst
+    finally:
+        src.stop()
+        srv.stop()

@@ -158,3 +158,15 @@ def test_lab_calibrate_sim_prints_json(tmp_path, sessions, capsys, monkeypatch):
     res = result_of(out)
     assert res["calibration"]
     assert "saved" not in res  # симулятора в настройках нет — конфиг не трогаем
+
+
+def test_lab_restores_sigint_default_handler(tmp_path, sessions, monkeypatch):
+    """Из фонового shell SIGINT = SIG_IGN: Ctrl+C молча не работал. --lab возвращает обработчик по умолчанию."""
+    import signal
+
+    prev = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        main(["--lab", "record", "--ip", "sim", "--seconds", "1", "--out", str(tmp_path)])
+        assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    finally:
+        signal.signal(signal.SIGINT, prev)

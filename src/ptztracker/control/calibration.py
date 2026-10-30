@@ -32,7 +32,14 @@ STEP_CODE = 70
 STEP_RUN_S = 2.2
 ZOOM_CODES = (60, 75, 90)
 ZOOM_RUN_S = 0.6
-PROBE_MAX_S, PROBE_MAX_FRACTION = 2.5, 0.9  # пробег: до 2,5 с или 0,9 кадра — разгон ~0,85 с
+# Пробег: до 2,5 с или PROBE_MAX_FRACTION кадра от исходной точки, затем стоп. Живая HE42 (2026-10-29): мастер увёл
+# pan на ~32° (больше полкадра 62°); пол-кадра — жёсткая граница, 0,4 оставляет запас на инерцию после стопа.
+# STOP_LAG_S: пока стоп дойдёт и камера затормозит (опрос #APC + 0,3 с торможения), она проедет ещё v·STOP_LAG_S:
+# стоп шлём заранее, когда x + v·STOP_LAG_S дошло до предела (на быстрых кодах и теле за один опрос — пол-кадра).
+PROBE_MAX_S, PROBE_MAX_FRACTION, STOP_LAG_S = 2.5, 0.4, 0.45
+# Прогноз стопа — только при угле обзора ≥ PREDICT_MIN_HFOV (на теле быстрый код пролетает полкадра за опрос:
+# ранний стоп оставляет 2–3 замера и скорость выходит втрое заниженной) и после MIN_FIT_SAMPLES опросов.
+MIN_FIT_SAMPLES, PREDICT_MIN_HFOV = 3, 20.0
 # Ожидание зума: #GZ не дальше ZOOM_ARRIVE_UNITS от заданного и не меняется ZOOM_STABLE_POLLS опросов
 # подряд (~0,45 с). Было: всегда 2 с — возврат с теле длится дольше, и разгон мерился при едущем зуме
 # (часть 0: задержка видео 0). Без цели «стоит» и до начала движения, если камера тронулась не сразу.
@@ -239,6 +246,10 @@ class CalibrationRunner:
                     frames.append(self._frame())
                 if abs(x) >= max_deg:
                     break
+                if hfov >= PREDICT_MIN_HFOV and len(samples) >= MIN_FIT_SAMPLES:
+                    (ta, xa), (tb, xb) = samples[-2], samples[-1]
+                    if tb > ta and abs(xb + (xb - xa) / (tb - ta) * STOP_LAG_S) >= max_deg:
+                        break
         finally:
             self.pacer.send(P.STOP_PT)
         return {"t_cmd": t_cmd, "samples": samples, "frames": frames}
@@ -335,6 +346,7 @@ class CalibrationRunner:
             )
 
     def _pan_curve(self, zoom: int, start: tuple[int, int], tau: float) -> list[tuple[int, float]]:
+        self._go_to(start)  # сначала домой на прежнем зуме: на теле полкадра — это уже другой угол
         self.pacer.send(P.zoom_abs(zoom))
         hfov = hfov_at(self._wait_zoom_settled(zoom))  # угол — по фактическому #GZ
         curve = []
@@ -344,7 +356,7 @@ class CalibrationRunner:
             self.progress(f"Зум {zoom:03X}: скорость {code}…")
             run = self._run(c, hfov, PROBE_MAX_S)
             v, _, _ = fit_ramp(run["samples"], run["t_cmd"], tau=tau)
-            curve.append((code, round(abs(v) / hfov, 5)))  # град/с → доли кадра (у центра кадра)
+            curve.append((code, round(abs(v) / hfov, 5)))  # град/с → доли кадра (у центра кадра)  # град/с → доли кадра (у центра кадра)
         kept, dropped = monotone_curve(curve)
         if dropped:
             log.warning("Зум %03X: выбросы на кодах %s отброшены", zoom, dropped)
@@ -395,9 +407,9 @@ class CalibrationRunner:
                 raise RuntimeError(
                     "Камера не поворачивается по командам скорости. Проверьте, что её не держит пульт, и повторите."
                 )
+            self._go_to(start)  # домой до смены зума: на широком угле полкадра — больше, чем было на теле
             self.pacer.send(P.zoom_abs(start_zoom))
             self._wait_zoom_settled(start_zoom)
-            self._go_to(start)
             zoom_pts = self._zoom_rates() or default_calibration().zoom.points
         finally:
             self._restore(start, start_zoom)

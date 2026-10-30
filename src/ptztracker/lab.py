@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import signal
 import time
 from pathlib import Path
 
@@ -134,6 +135,8 @@ def _bad(cmd: str, code: int, error: str) -> int:
 
 def run_lab(args) -> int:
     cmd = args.lab
+    # из фонового shell процесс стартует с SIGINT = SIG_IGN: Ctrl+C молча не работал (площадка 2026-10-29)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     if cmd in MOVING and not args.not_on_air:
         _say(NOT_ON_AIR_TEXT)
         return _bad(cmd, EXIT_NOT_ON_AIR, "not_on_air")

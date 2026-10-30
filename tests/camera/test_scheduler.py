@@ -362,3 +362,33 @@ def test_sent_info_carries_send_time(env):
     clock.t = 123.0
     s.pump()
     assert got[0]["t"] == 123.0
+
+
+def test_focus_stop_er3_not_retried_but_pan_zoom_stops_still_are(env):
+    """Живая HE42 с автофокусом отвечает eR3:F50: стоп фокуса не повторяем, остальные стопы не теряются."""
+    s, clock, send = env
+    orig = send.__call__
+
+    def fn(cmd):
+        if cmd == "#F50":
+            send.calls.append(cmd)
+            raise CameraError("er3", "eR3:F50")
+        return orig(cmd)
+
+    s._send = fn
+    s.emergency_stop()
+    for _ in range(12):
+        s.pump()
+        clock.t += 0.131
+    assert send.calls.count("#F50") == 1
+    assert {"#PTS5050", "#Z50"} <= set(send.ok)
+
+
+def test_pan_stop_er3_still_retried(env):
+    s, clock, send = env
+    send.fail_next = [CameraError("er3", "eR3:PTS")] * 2
+    s.emergency_stop()
+    for _ in range(12):
+        s.pump()
+        clock.t += 0.131
+    assert "#PTS5050" in send.ok

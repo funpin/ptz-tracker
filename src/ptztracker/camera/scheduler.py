@@ -315,6 +315,10 @@ class CommandScheduler:
                 self._unreachable_streak += 1
                 if self._unreachable_streak >= UNREACHABLE_BACKOFF_AFTER:
                     self._backoff_until = self._clock() + UNREACHABLE_BACKOFF_S
+            elif item.cmd == STOP_FOCUS and isinstance(err, CameraError) and err.code == "er3":
+                # автофокус включён: камера отвергает #F50 всегда (2026-10-29: ~23 повтора за 3 с), стоп фокуса не нужен
+                log.info("Камера не принимает %s (автофокус) — не повторяю", item.cmd)
+                return
             elif not (isinstance(err, CameraError) and err.code == "er2") and item.priority != Priority.EMERGENCY:
                 # er2 «занята» (например, работает пульт) — повторять, пока команду не заменит новая;
                 # аварийный стоп не отбрасывается никогда
