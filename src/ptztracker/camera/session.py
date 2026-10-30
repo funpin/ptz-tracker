@@ -223,8 +223,8 @@ class CameraSession:
         if calib is None:
             calib = default_calibration(safety=UNCALIBRATED_SAFETY)
             if isinstance(scale, dict) and scale.get("table") != DEFAULT_TABLE_ID:
-                log.info("Поправка скорости камеры %s найдена для прежней таблицы — не беру", self.cfg.name)
-                scale = None
+                log.info("Поправка pan/tilt камеры %s найдена для прежней таблицы — не беру (зум оставляю)", self.cfg.name)
+                scale = {"zoom": scale["zoom"]} if "zoom" in scale else None  # зум от таблицы поворота не зависит
         calib.set_speed_scale(scale)
         return calib
 

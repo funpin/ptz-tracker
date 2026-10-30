@@ -72,7 +72,8 @@ def test_deg_table_keeps_scale_away_from_limit():
     calib = default_calibration(safety=UNCALIBRATED_SAFETY)
     trace = replay_adapt(ep, calib)
     pans = [s["pan"] for _, s in trace]
-    assert max(pans) < 1.2, max(pans)  # было 2,0 (предел)
+    # около правды 1 / запас (0,77): от старта 1,0 вниз, к пределу 2,0 не идёт (замер: 0,72…1,0)
+    assert max(pans) < 1.05 and min(pans) > 0.6, (min(pans), max(pans))  # было 2,0 (предел)
     # без запаса таблица — сама камера: поправка ≈ 1 / запас (замер: камера / таблица 0,97, без запаса 0,89…1,01)
     assert abs(pans[-1] * UNCALIBRATED_SAFETY - 1) < 0.1, pans[-1]
     assert trace[-1][1]["tilt"] == trace[-1][1]["pan"]  # наклон своей поправки не набрал

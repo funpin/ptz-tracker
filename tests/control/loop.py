@@ -62,7 +62,7 @@ def run(
     controller_hook=None,
     cam_tau: float | None = None,  # разгон камеры на самом деле (None — как в калибровке)
     cam_dead_time: float | None = None,  # мёртвое время камеры на самом деле (None — как в калибровке)
-    meas_dt: float = MEAS_DT,  # период замеров анализа (MJPEG 2: 12,5 к/с → 0,08)
+    meas_dt: float = MEAS_DT,  # период замеров анализа (MJPEG 2: 12 к/с → 1/12)
     adapt: bool = False,  # как Follower: скорости → коды камеры (с поправкой), подстройка скорости по #APC/#GZ
     # камера — как живая HE42 (adapt=True): постоянные °/с по коду (sim.ptz_model.he42_deg_s) при любом зуме,
     # а не таблица калибровки регулятора: проверяет саму таблицу (площадка 2026-10-29, §3б)

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from loop import CTRL_DT, QUEUE_MAX, run, sign_changes
 
+from ptztracker.camera import he42
 from ptztracker.control.camera_model import CameraDynamics, default_calibration
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
@@ -138,9 +139,10 @@ def _adapt_lead_in(t):
     return AX + x
 
 
-def test_walk_at_12_5_fps_with_mjpeg2_latency():
-    """MJPEG (2): кадры 12,5 к/с (замер каждые 0,08 с) и задержка 0,16 с — человек в кадре, сторож молчит."""
-    tr = run(lambda t: AX + 0.25 * min(t, 4.0), T=12, latency=0.16, meas_dt=0.08)
+def test_walk_at_12_fps_with_mjpeg2_latency():
+    """MJPEG (2): кадры 12 к/с (замер каждые 1/12 с) и задержка 0,26 с (he42.VIDEO_LATENCY_S["mjpeg_2"]) —
+    человек в кадре, сторож молчит."""
+    tr = run(lambda t: AX + 0.25 * min(t, 4.0), T=12, latency=he42.VIDEO_LATENCY_S["mjpeg_2"], meas_dt=1 / 12)
     assert max(abs(x - AX) for x in tr.img_x[int(1.0 / CTRL_DT):]) < 0.35
     assert "diverged" not in tr.state
 

@@ -335,4 +335,5 @@ def test_session_applies_saved_speed_scale():
     want = {"pan": 1.3, "tilt": 1.0, "zoom": SCALE_MAX}
     assert scale_of({"pan": 1.3, "zoom": 9.0}, True) == want  # у калибровки мастера ярлык не нужен
     assert scale_of({"pan": 1.3, "zoom": 9.0, "table": DEFAULT_TABLE_ID}, False) == want
-    assert scale_of({"pan": 2.0, "zoom": 9.0}, False) == {"pan": 1.0, "tilt": 1.0, "zoom": 1.0}
+    # без ярлыка pan/tilt отбрасываются (таблица поворота другая), зум от неё не зависит — остаётся
+    assert scale_of({"pan": 2.0, "tilt": 1.5, "zoom": 0.8}, False) == {"pan": 1.0, "tilt": 1.0, "zoom": 0.8}
