@@ -5,7 +5,7 @@ import dataclasses
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication
-from test_gamepad_bridge import make, press
+from test_gamepad_bridge import make, press, stick
 
 from ptztracker.camera import protocol as P
 from ptztracker.camera.session import ImageState
@@ -234,4 +234,60 @@ def test_menu_fits_window(qtbot, tmp_path):
     m, vf = w.camera_menu, w.video_frame
     assert m.parent() is vf
     assert vf.rect().contains(m.geometry())
+    w.close()
+
+
+def focus_vs(s):
+    return [x[1] for x in s.calls if x[0] == "focus_v"]
+
+
+def manual_focus(m):
+    m.open()
+    m.accept()
+    m.nav(1, 0)
+
+
+def test_timeout_while_holding_stops_focus_and_closes(qtbot, monkeypatch):
+    monkeypatch.setattr(cm, "AUTOCLOSE_S", 0.2)
+    s = FakeSession()
+    m, _ = build(qtbot, s)
+    manual_focus(m)
+    qtbot.waitUntil(lambda: not m.is_open, timeout=1500)
+    assert focus_vs(s)[-1] == 0.0
+
+
+def test_long_hold_stops_after_limit(qtbot, monkeypatch):
+    monkeypatch.setattr(cm, "FOCUS_MAX_S", 0.2)
+    s = FakeSession()
+    m, _ = build(qtbot, s)
+    manual_focus(m)
+    qtbot.waitUntil(lambda: focus_vs(s)[-1] == 0.0, timeout=1500)
+    assert m.is_open
+
+
+def test_disconnect_while_holding_stops_focus(qtbot, tmp_path):
+    w, b = make(qtbot, tmp_path)
+    w.camera_menu.open()
+    w.camera_menu.accept()
+    b.pad = stick(buttons={"dpad_right"})
+    qtbot.waitUntil(lambda: w.camera_menu._focus_moving, timeout=1000)
+    sent = []
+    w.session.set_focus_velocity = lambda v: sent.append(v)
+    b.pad = None
+    qtbot.waitUntil(lambda: bool(sent) and sent[-1] == 0.0, timeout=1000)
+    w.close()
+
+
+def test_deactivation_while_holding_stops_focus(qtbot, tmp_path):
+    w, b = make(qtbot, tmp_path)
+    w.camera_menu.open()
+    w.camera_menu.accept()
+    w.camera_menu.nav(1, 0)
+    assert w.camera_menu._focus_moving
+    sent = []
+    w.session.set_focus_velocity = lambda v: sent.append(v)
+    w.changeEvent(QEvent(QEvent.ActivationChange))
+    if w.isActiveWindow():
+        w.camera_menu.stop_focus()  # офскрин-окно может считаться активным
+    assert sent and sent[-1] == 0.0
     w.close()

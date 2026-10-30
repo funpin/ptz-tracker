@@ -14,6 +14,7 @@ from ptztracker.camera import protocol as P
 from ptztracker.ui.theme import FS_CAPTION, FS_TEXT, R_BUTTON, R_PANEL, SP, C, _rgba
 
 AUTOCLOSE_S = 10.0  # без нажатий меню закрывается само
+FOCUS_MAX_S = 3.0  # ручной фокус за одно нажатие едет не дольше (потеря отпускания не страшна)
 FOCUS_SPEED = 0.3  # ближе/дальше, пока держишь ←/→
 CTEMP_STEP = 2  # шаг цветовой температуры за нажатие (≈200 K)
 LOCAL_HOLD_S = 1.5  # столько держим только что выбранное значение, пока камера не ответила
@@ -88,6 +89,9 @@ class CameraMenu(QFrame):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._on_timeout)
+        self._focus_timer = QTimer(self)
+        self._focus_timer.setSingleShot(True)
+        self._focus_timer.timeout.connect(self._stop_focus)
         self._tick = QTimer(self)  # значения камеры приходят позже команды — перерисовка, пока меню открыто
         self._tick.setInterval(250)
         self._tick.timeout.connect(self._render)
@@ -202,12 +206,13 @@ class CameraMenu(QFrame):
         self._timer.start(int(AUTOCLOSE_S * 1000))
 
     def _on_timeout(self) -> None:
-        if self._focus_moving:
-            self._restart()  # оператор держит ←/→ — не закрываем
-        else:
-            self.close_menu()
+        self.close_menu()  # close_menu сначала останавливает фокус
+
+    def stop_focus(self) -> None:
+        self._stop_focus()
 
     def _stop_focus(self) -> None:
+        self._focus_timer.stop()
         if self._focus_moving:
             self._focus_moving = False
             s = self._s()
@@ -241,6 +246,7 @@ class CameraMenu(QFrame):
             if not self._controls.af_check.isChecked():
                 self._focus_moving = True
                 self._s().set_focus_velocity(FOCUS_SPEED * d)
+                self._focus_timer.start(int(FOCUS_MAX_S * 1000))
         elif k == "wb":
             self._wb_step(d)
         elif k == "ctemp":

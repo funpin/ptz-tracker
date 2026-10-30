@@ -1033,6 +1033,7 @@ class MainWindow(QMainWindow):
                 moved = True
             elif isinstance(it, Disconnected):
                 # отключили: камера стоит — ничего не шлём; едет — нули. Слежение не трогаем
+                self.camera_menu.stop_focus()
                 self.pad.zero_velocity()
                 if any(self._pad_applied):
                     moved = True
@@ -1152,6 +1153,7 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, e):  # noqa: N802
         if e.type() == QEvent.ActivationChange and not self.isActiveWindow():
+            self.camera_menu.stop_focus()
             self.release_all_held()
         super().changeEvent(e)
 
