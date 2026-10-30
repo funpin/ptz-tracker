@@ -20,6 +20,7 @@ class C:
     FAULT = "#EF4444"  # раскачка, стоп
     PGM = "#E8202A"  # Tally: эфир
     PVW = "#1FB35A"  # Tally: превью
+    OK = "#4CC38A"  # значки верхней панели: «всё в порядке» (не путать с зелёным Tally)
 
 
 FONT_FAMILY = "Segoe UI"

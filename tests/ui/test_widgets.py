@@ -121,3 +121,25 @@ def test_video_frame_tracking_tag(qtbot):
     assert f.tracking_tag.x() < f.width() // 2
     f.set_tally("pgm")
     assert f.onair_tag.x() > f.width() // 2
+
+
+def test_icon_recolors():
+    from ptztracker.ui.icons import icon
+
+    for name in ("video", "adjustments", "screen", "chip", "atem", "history", "robot", "menu", "track",
+                 "power", "user-x", "skeleton"):
+        assert not icon(name, "#ff0000").pixmap(18, 18).isNull(), name
+
+
+def test_status_pill_compact_hides_text(qtbot):
+    from ptztracker.ui.widgets import StatusPill
+
+    p = StatusPill("video")
+    qtbot.addWidget(p)
+    p.set("1280×720 · 25", "ok", "Видео: MJPEG")
+    assert p.text() == "1280×720 · 25" and p.toolTip() == "Видео: MJPEG" and p.kind() == "ok"
+    wide = p.sizeHint().width()
+    p.set_compact(True)
+    assert p.text() == "" and p.full_text == "1280×720 · 25" and p.sizeHint().width() < wide
+    p.set_compact(False)
+    assert p.text() == "1280×720 · 25"

@@ -21,6 +21,8 @@ with open(os.path.join(SRC, "ptztracker", "__init__.py"), encoding="utf-8") as f
 
 # модель распознавания людей (YOLO11n-pose, AGPL-3.0, как и весь проект)
 datas += [(os.path.join(SRC, "ptztracker", "models", "yolo11n-pose.onnx"), "ptztracker/models")]
+# иконки окна (свои SVG)
+datas += [(os.path.join(SRC, "ptztracker", "ui", "icons"), "ptztracker/ui/icons")]
 # onnxruntime: на Windows ставится onnxruntime-directml, но модуль называется так же — "onnxruntime"
 for pkg in ("av", "onnxruntime"):
     d, b, h = collect_all(pkg)

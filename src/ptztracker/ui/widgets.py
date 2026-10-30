@@ -9,10 +9,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from ptztracker.ui.icons import icon
 from ptztracker.ui.theme import (
     FS_CAPTION,
     FS_STATE,
@@ -137,6 +139,54 @@ class Chip(QLabel):
         x = SP[1] + 1
         p.drawEllipse(QRectF(x, (self.height() - _LAMP_SIZE) / 2, _LAMP_SIZE, _LAMP_SIZE))
         p.end()
+
+
+_PILL_COLORS = {
+    "ok": C.OK, "warn": C.LOST, "fault": C.FAULT, "off": C.TEXT_FAINT,
+    "pgm": C.PGM, "pvw": C.PVW, "accent": C.ACCENT, "neutral": C.TEXT_DIM,
+}
+
+
+class StatusPill(QToolButton):
+    """Значок верхней панели: иконка цвета состояния + короткий текст; подробности — в подсказке."""
+
+    def __init__(self, icon_name: str, text: str = "", kind: str = "off"):
+        super().__init__()
+        self._icon_name = icon_name
+        self._full = ""
+        self._kind = ""
+        self._compact = False
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setAutoRaise(True)
+        self.setProperty("pill", True)
+        self.set(text, kind, "")
+
+    def kind(self) -> str:
+        return self._kind
+
+    @property
+    def full_text(self) -> str:
+        return self._full
+
+    def set(self, text: str, kind: str, tooltip: str) -> None:
+        if (text, kind, tooltip) == (self._full, self._kind, self.toolTip()):
+            return
+        self._full = text
+        if kind != self._kind:
+            self._kind = kind
+            self.setIcon(icon(self._icon_name, _PILL_COLORS.get(kind, C.TEXT_DIM)))
+        self.setToolTip(tooltip)
+        self._apply()
+
+    def set_compact(self, on: bool) -> None:
+        if on != self._compact:
+            self._compact = on
+            self._apply()
+
+    def _apply(self) -> None:
+        show = bool(self._full) and not self._compact
+        self.setText(self._full if show else "")
+        self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon if show else Qt.ToolButtonIconOnly)
 
 
 class SectionHeader(QWidget):

@@ -65,3 +65,8 @@ def test_mac_bundle_is_a_regular_app():
     # иначе macOS считает приложение фоновым: нет своего меню и значка в Dock
     text = (ROOT / "packaging" / "ptztracker.spec").read_text(encoding="utf-8")
     assert '"LSBackgroundOnly": False' in text and "NSLocalNetworkUsageDescription" in text
+
+
+def test_spec_bundles_ui_icons():
+    text = (ROOT / "packaging" / "ptztracker.spec").read_text(encoding="utf-8")
+    assert '"ui", "icons"' in text
