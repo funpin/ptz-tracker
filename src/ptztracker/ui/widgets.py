@@ -245,6 +245,60 @@ class TrackButton(QPushButton):
         self.setToolTip(f"{text}\nПробел — включить или выключить слежение".strip())
 
 
+class PowerOverlay(QWidget):
+    """Поверх видео, когда камера найдена, но в режиме ожидания: круглая кнопка питания и подпись."""
+
+    powerOnRequested = Signal()
+    BTN = 88
+
+    def __init__(self):
+        super().__init__()
+        self.setAutoFillBackground(True)
+        self.setStyleSheet(f"PowerOverlay {{ background: {C.BG}; }}")
+        self.power_btn = QPushButton()
+        self.power_btn.setFixedSize(self.BTN, self.BTN)
+        self.power_btn.setIcon(icon("power", C.OK, 40))
+        self.power_btn.setIconSize(self.power_btn.size() * 0.45)
+        self.power_btn.setFocusPolicy(Qt.NoFocus)
+        self.power_btn.setCursor(Qt.PointingHandCursor)
+        self.power_btn.setToolTip("Включить камеру")
+        self.power_btn.setStyleSheet(
+            f"QPushButton {{ border: 3px solid {C.OK}; border-radius: {self.BTN // 2}px; background: {C.RAISED}; }}"
+            f"QPushButton:hover {{ background: {C.RAISED_HI}; }}"
+            f"QPushButton:disabled {{ border-color: {C.TEXT_FAINT}; }}"
+        )
+        self.power_btn.clicked.connect(self.powerOnRequested)
+        self.title_label = QLabel()
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setWordWrap(True)
+        self.title_label.setStyleSheet(f"color: {C.TEXT}; font-size: 18px;")
+        self.hint_label = QLabel()
+        self.hint_label.setAlignment(Qt.AlignCenter)
+        self.hint_label.setStyleSheet(f"color: {C.TEXT_DIM};")
+        lay = QVBoxLayout(self)
+        lay.addStretch(1)
+        lay.addWidget(self.power_btn, 0, Qt.AlignHCenter)
+        lay.addSpacing(SP[2])
+        lay.addWidget(self.title_label)
+        lay.addWidget(self.hint_label)
+        lay.addStretch(1)
+        self.hide()
+
+    def set_view(self, view: str, camera_name: str) -> None:
+        """view: standby | switching | иное — скрыть."""
+        if view == "standby":
+            self.title_label.setText(f"Камера {camera_name} найдена, но выключена (режим ожидания)")
+            self.hint_label.setText("Нажмите, чтобы включить")
+            self.power_btn.setEnabled(True)
+        elif view == "switching":
+            self.title_label.setText(f"Камера {camera_name} включается…")
+            self.hint_label.setText("Видео появится через несколько секунд")
+            self.power_btn.setEnabled(False)
+        self.setVisible(view in ("standby", "switching"))
+        if self.isVisible():
+            self.raise_()
+
+
 class VideoFrame(QFrame):
     """Рамка вокруг видео: цвет — Tally; угловые ярлыки поверх картинки."""
 
@@ -317,6 +371,9 @@ class VideoFrame(QFrame):
         for w, corner in self._overlays:
             w.adjustSize()
             w.raise_()
+            if corner == "fill":
+                w.setGeometry(self.rect().adjusted(off, off, -off, -off))
+                continue
             if corner == "top-left":
                 w.move(off + SP[1], off + self.tracking_tag.height() + SP[1])
             else:

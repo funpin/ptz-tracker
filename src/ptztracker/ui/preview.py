@@ -4,6 +4,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from ptztracker.ui.state import no_video_text
 from ptztracker.ui.theme import FONT_FAMILY, C, qcolor
 from ptztracker.video.frames import FrameSource
 from ptztracker.vision.types import (
@@ -41,6 +42,7 @@ class PreviewWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.camera_name = ""  # для текста «Нет видео с камеры …»
         self.setMinimumSize(480, 270)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
@@ -178,11 +180,8 @@ class PreviewWidget(QWidget):
         f = QFont(FONT_FAMILY)
         f.setPointSize(18)
         p.setFont(f)
-        text = "Нет видео"
         if self._source is not None:
-            err = self._source.stats().error
-            if err:
-                text += "\n" + err
+            text = no_video_text(self.camera_name, self._source.stats().error)
         else:
             text = "Камера не выбрана"
         p.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, text)

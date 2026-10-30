@@ -10,7 +10,6 @@ from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QPainter
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
-    QCheckBox,
     QComboBox,
     QDialog,
     QHBoxLayout,
@@ -43,9 +42,9 @@ from ptztracker.ui.camera_dialog import CameraDialog
 from ptztracker.ui.follow_panel import FollowPanel
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.preview import PreviewWidget
-from ptztracker.ui.state import TrackingView, analysis_pill, atem_pill, tracking_view, video_pill
+from ptztracker.ui.state import TrackingView, analysis_pill, atem_pill, power_view, tracking_view, video_pill
 from ptztracker.ui.theme import FS_CAPTION, SP, C
-from ptztracker.ui.widgets import SectionHeader, StatusPill, VideoFrame, keycap_width, paint_keycap
+from ptztracker.ui.widgets import PowerOverlay, StatusPill, VideoFrame, keycap_width, paint_keycap
 from ptztracker.updates import CHECK_INTERVAL_S, RELEASE_PAGE, UpdateChecker, UpdateInfo, is_newer
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
 
@@ -165,25 +164,31 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(self._top)
         self.addToolBar(Qt.TopToolBarArea, self.toolbar)
 
-        # раздел «Цель»
+        # цель — поверх видео сверху слева: «Цель: …», сбросить, скелет
         self.target_label = QLabel("Цель: не выбрана — кликните по человеку на видео")
-        self.target_label.setWordWrap(True)
-        self.reset_target_btn = QPushButton("Сбросить цель")
-        self.reset_target_btn.setProperty("variant", "ghost")
-        self.skeleton_check = QCheckBox("Скелет")
-        trow = QHBoxLayout()
+        self.reset_target_btn = StatusPill("user-x", "", "neutral")
+        self.reset_target_btn.set("", "neutral", "Сбросить цель")
+        self.skeleton_check = StatusPill("skeleton", "", "neutral")
+        self.skeleton_check.set("", "neutral", "Показать скелет (точки тела)")
+        self.skeleton_check.setCheckable(True)
+        target_bar = QWidget()
+        target_bar.setStyleSheet(f"background: {C.SURFACE}; border-radius: 6px;")
+        trow = QHBoxLayout(target_bar)
+        trow.setContentsMargins(SP[1], SP[0], SP[0], SP[0])
+        trow.setSpacing(SP[0])
+        trow.addWidget(self.target_label)
         trow.addWidget(self.reset_target_btn)
         trow.addWidget(self.skeleton_check)
-        trow.addStretch(1)
+        self.video_frame.add_overlay(target_bar, "top-left")
+        self.power_overlay = PowerOverlay()
+        self.power_overlay.powerOnRequested.connect(self._power_on)
+        self.video_frame.add_overlay(self.power_overlay, "fill")
 
         side = QWidget()
         sl = QVBoxLayout(side)
         sl.setContentsMargins(SP[1], 0, SP[1], 0)
         sl.setSpacing(SP[1])
         sl.addWidget(self.follow_panel)
-        sl.addWidget(SectionHeader("Цель"))
-        sl.addWidget(self.target_label)
-        sl.addLayout(trow)
         sl.addWidget(self.controls)
         sl.addStretch(1)
         # агент — в немодальном окне из меню ☰ (модальное заблокировало бы API: 409)
@@ -358,6 +363,7 @@ class MainWindow(QMainWindow):
         self.preview.set_source(self.session.frames)
         self.preview.set_analyzer(self.session.analyzer)
         self.preview.set_follow(self.session.follower)
+        self.preview.camera_name = cam.name
         self.follow_panel.set_composition(cam.composition)
         self.follow_panel.set_effort(cam.effort)
         self.follow_panel.set_calibrated(cam.calibration is not None)
@@ -716,6 +722,7 @@ class MainWindow(QMainWindow):
         self._poll_update_check()
         s = self.session
         cam = self._current_cfg()
+        self.power_overlay.set_view(power_view(s.power, s.online) if s else "on", s.cfg.name if s else "")
         if not s:
             self.video_pill.set(*video_pill(None, ""))
             self.analysis_pill.set("", "off", "Анализ: камера не выбрана")
@@ -776,6 +783,11 @@ class MainWindow(QMainWindow):
         b.setPopupMode(QToolButton.InstantPopup)
         b.setMenu(QMenu(self))
         return b
+
+    def _power_on(self) -> None:
+        if self.session:
+            self.session.set_power(True)
+            self._update_status()
 
     def _show_agent_window(self) -> None:
         self.agent_window.show()

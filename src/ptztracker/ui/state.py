@@ -1,5 +1,6 @@
 """Что показывает интерфейс: состояние слежения и Tally ATEM (чистые функции)."""
 
+import re
 from dataclasses import dataclass
 
 from ptztracker.ui.theme import C
@@ -113,3 +114,24 @@ def power_view(power: str, online: bool) -> str:
     if not online:
         return "offline"
     return power if power in ("standby", "switching") else "on"
+
+
+_REASONS = (
+    (("timed out", "timeout", "time out"), "камера не отвечает"),
+    (("refused",), "камера отклонила подключение"),
+    (("401", "unauthorized", "auth"), "неверный логин или пароль камеры"),
+    (("invalid data", "5xx", " 5", "not found", "404"), "камера не отдаёт видео по этому адресу"),
+)
+
+
+def no_video_text(camera_name: str, error: str | None) -> str:
+    """Текст поверх пустого видео: имя камеры и короткая причина без кодов и адресов (они — в подсказке)."""
+    head = f"Нет видео с камеры {camera_name}"
+    if not error:
+        return head
+    low = error.lower()
+    for keys, reason in _REASONS:
+        if any(k in low for k in keys):
+            return f"{head}\n{reason}"
+    short = re.sub(r"\[Errno -?\d+\]\s*|\S+://\S+|['\"]", "", error).strip(" :.")
+    return f"{head}\n{short[:57] + '…' if len(short) > 60 else short}"
