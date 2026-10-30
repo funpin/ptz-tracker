@@ -12,15 +12,18 @@ from ptztracker.control.camera_model import CameraDynamics, default_calibration
 from ptztracker.control.composition import COMPOSITIONS, BodyMeasure
 from ptztracker.control.effort import EffortProfile
 from ptztracker.control.follower import output_codes
-from ptztracker.control.framing import TILT_FROM_FH, FramingController, FramingInput
+from ptztracker.control.framing import PT_QUEUE_S, TILT_FROM_FH, FramingController, FramingInput
 from ptztracker.control.speed_adapt import SpeedAdapter
 from ptztracker.sim.ptz_model import he42_deg_s
 
 CTRL_DT = 0.04  # 25 Гц
 MEAS_DT = 1 / 14  # анализ 14 к/с
-# Наибольшая очередь команд, при которой камера с ошибкой таблицы ×1,7…×2 (или «Резко» с переминанием ±0,06) не
-# раскачивается. При разгоне τ 0,37 держалось и 0,13 с; при τ 0,12 (2026-10-29) предел ≈0,09–0,12 с (0,08 — с запасом).
-QUEUE_MAX = 0.08
+# Наибольшая очередь команд поворота, которую проверяют тесты: p95 живого пути решение → камера 121–131 мс
+# (2026-10-29). Модель регулятора ждёт половину (framing.PT_QUEUE_S) — устойчивость при ρ 0,5–1,4 держит запас.
+QUEUE_MAX = 0.13
+# Только крайний случай: таблица неверна в ×2 и подстройка по #APC ещё не нашла поправку — за первое стояние
+# при 0,13 с два разворота (не раскачка: сторож молчит), при 0,08–0,10 — один (DECISIONS, задача 6).
+QUEUE_X2_BEFORE_ADAPT = 0.08
 
 
 @dataclass
@@ -49,7 +52,8 @@ def run(
     comp: str = "waist_center",
     visible=lambda t: True,
     speed_factor: float = 1.0,  # реальная камера быстрее модели в столько раз (рассогласование калибровки)
-    cmd_delay: float = 0.0,  # команды доходят до камеры позже (очередь планировщика)
+    # команды доходят до камеры позже (очередь планировщика); по умолчанию — столько, сколько ждёт модель регулятора
+    cmd_delay: float = PT_QUEUE_S,
     zoom_cmd_delay: float | None = None,  # зум ждёт в очереди отдельно (за поворотом); None — как cmd_delay
     zoom_speed_factor: float = 1.0,  # зум камеры быстрее таблицы калибровки в столько раз
     gz_period: float | None = None,  # опрос #GZ: положение зума уходит регулятору (None — не опрашивать)

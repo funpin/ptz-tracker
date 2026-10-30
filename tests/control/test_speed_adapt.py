@@ -2,7 +2,7 @@
 
 import math
 
-from loop import QUEUE_MAX, run, sign_changes
+from loop import QUEUE_X2_BEFORE_ADAPT, run, sign_changes
 
 from ptztracker.camera import he42
 from ptztracker.camera import protocol as P
@@ -59,9 +59,10 @@ def test_camera_faster_than_table_adapts_while_walking():
 
 
 def test_adaptation_prevents_swing_at_x2():
-    """Камера вдвое быстрее таблицы (очередь 0,13 с): без подстройки сторож ловит раскачку; с ней поправка
-    успевает раньше, раскачки нет."""
-    tr = run(_walk, T=40, speed_factor=2.0, cmd_delay=QUEUE_MAX, gz_period=0.5, apc_period=0.5, adapt=True)
+    """Камера вдвое быстрее таблицы (очередь 0,08 с — QUEUE_X2_BEFORE_ADAPT; при 0,13 с за первое стояние, пока
+    поправка не найдена, два разворота без раскачки): без подстройки камера качается; с ней поправка успевает
+    раньше, раскачки нет."""
+    tr = run(_walk, T=40, speed_factor=2.0, cmd_delay=QUEUE_X2_BEFORE_ADAPT, gz_period=0.5, apc_period=0.5, adapt=True)
     assert "diverged" not in tr.state
     assert abs(_at(tr, 30.0)[0] - 2.0) <= 0.15
     assert all(n <= 1 for n in _stand_reversals(tr))

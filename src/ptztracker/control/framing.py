@@ -34,6 +34,11 @@ WALK_WINDOW_S = 0.4  # «пошёл»: за это время сместился
 WALK_SHIFT = 1.2  # ... больше этой доли мёртвой зоны (покачивание у кафедры столько не проходит)
 WALK_SHIFT_MIN = 0.06  # ... и не меньше этого (доли кадра): переминание ±0,06 при «Резко» — не ходьба
 WALK_SLOW_SHIFT = 0.16  # или за CALM_WINDOW_S в одну сторону больше этого: медленно идёт (общий план)
+# Поворот ждёт в очереди планировщика (min_interval 0,13 с, последняя команда побеждает) в среднем половину
+# интервала: модель pan/tilt регулятора считает это частью мёртвого времени. Без этого при разгоне τ 0,12 с
+# модель опережала камеру на очередь, переминание казалось ходьбой, и «Резко» качалось при ρ ≥ 0,85 (DECISIONS).
+# Модель зума идёт по командам, которые ушли (zoom_sent), — ей это не нужно.
+PT_QUEUE_S = 0.065
 BRAKE = 2.5  # тормозим твёрже, чем разгоняемся: ускорение и рывок торможения — в столько раз больше
 CATCH_UP = 10.0  # человек уходит за мягкую зону — разгон в столько раз больше a_max (по сути, как может камера)
 # Упреждение по скорости человека — полное: на ходу человек у якоря. Скорость считается с поправкой на
@@ -491,9 +496,10 @@ class FramingController:
 
     def reset(self) -> None:
         c = self.calib
-        lag = c.dead_time + c.tau
-        self.x = _Axis(+1, CameraDynamics(c.dead_time, c.tau), lag=lag)
-        self.y = _Axis(-1, CameraDynamics(c.dead_time, c.tau), fw_per_unit=TILT_FROM_FH, lag=lag)
+        dead = c.dead_time + PT_QUEUE_S
+        lag = dead + c.tau
+        self.x = _Axis(+1, CameraDynamics(dead, c.tau), lag=lag)
+        self.y = _Axis(-1, CameraDynamics(dead, c.tau), fw_per_unit=TILT_FROM_FH, lag=lag)
         self.zdyn = CameraDynamics(c.dead_time, c.tau)
         self._t_prev: float | None = None
         self._t_seen: float | None = None

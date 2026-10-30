@@ -56,7 +56,7 @@ def walk_then_stop(t, speed=0.25, t_stop=3.0):
 
 
 def test_stops_without_overshoot_after_walk():
-    # Тормозной путь камеры (τ≈0.37 с + задержка кадра) физически даёт перелёт ~v·0.6.
+    # Тормозной путь камеры (очередь + мёртвое время + τ 0,12 с + задержка кадра) физически даёт перелёт ~v·0,5.
     # Важно другое: человек не уходит из мягкой зоны, назад камера возвращается медленно
     # (без «пинг-понга»), разворот не больше одного, и в конце всё спокойно.
     from ptztracker.control.framing import SETTLE_V
@@ -84,11 +84,10 @@ def test_latency_compensation_reduces_overshoot():
             walk = [abs(x - AX) for x, t in zip(tr.img_x, tr.t) if 1.5 < t < 8.0]
             res[ctrl_latency] = (sum(walk) / len(walk), max(AX - x for x, t in zip(tr.img_x, tr.t) if t > 8.0),
                                  sign_changes(tr.pan, WATCHDOG_MOVING_V))
-        (err_c, over_c, rev_c), (err_0, _over_0, rev_0) = res[0.35], res[0.0]
-        # перелёт после остановки: с быстрым разгоном (τ 0,12) камера без компенсации тоже почти не перелетает
-        # (0,06–0,08 против 0,17–0,57 при τ 0,37), поэтому «меньше, чем без неё» уже не показатель; важно, что
-        # с компенсацией он не хуже прежнего (0,21 / 0,31)
-        assert err_c < 0.5 * err_0 and over_c <= 0.31 and rev_c < rev_0, (speed, res)
+        (err_c, over_c, rev_c), (err_0, over_0, rev_0) = res[0.35], res[0.0]
+        # перелёт после остановки физически ≈ v·(видео 0,35 + очередь PT_QUEUE_S + мёртвое время + τ + два кадра
+        # на «остановился») ≈ 0,75·v; замер с компенсацией 0,79·v / 0,83·v (0,20 / 0,29), без неё 0,29 / 0,40
+        assert err_c < 0.5 * err_0 and over_c < over_0 and over_c <= 0.85 * speed and rev_c < rev_0, (speed, res)
 
 
 def test_no_target_ramps_to_zero():
@@ -648,3 +647,38 @@ def test_zoom_in_stops_at_once_when_person_walks_off():
              adapt=True, cam_he42=True)
     assert "diverged" not in tr.state
     assert max(tr.zoom[int(15.5 / CTRL_DT):]) <= 1e-6
+
+
+def test_every_effort_stable_at_real_queue_and_table_error():
+    """Часть 2, задача 6: разгон τ 0,12 с, очередь команд 0,13 с (p95 живого поворота 121–131 мс), таблица
+    скоростей неверна в ρ = 0,5…1,4 раза (×0,8–1,07 у живой таблицы, с запасом UNCALIBRATED_SAFETY 1,3 — 0,6–0,85).
+    Любой характер 0…1, три сценария (шаг 0,2 fw/s, переминание ±0,06, прохаживание 0,31 fw/s): сторож молчит,
+    при переминании камера ходит не шире самого человека, после шага и ходьбы за последние 10 с — не больше
+    одного разворота. Было (τ 0,12, модель без очереди): «Обычно» качалось при ρ ≥ 1,2, «Резко» — при ρ ≥ 0,85."""
+    f_walk, _, t_walk = _walks(0.31, 8.0)
+    scenarios = {
+        "step": (lambda t: AX + 0.2 * min(t, 3.0), 20.0),
+        "sway": (lambda t: AX + 0.06 * math.sin(2 * math.pi * t / 3.0), 30.0),
+        "lecture": (f_walk, t_walk),
+    }
+    bad = []
+    for eff in (0.0, 0.25, 0.5, 0.75, 1.0):
+        for rho in (0.5, 0.7, 0.85, 1.07, 1.4):
+            for name, (f, T) in scenarios.items():
+                tr = run(f, T=T, effort=eff, speed_factor=rho, cmd_delay=0.13, apc_period=0.5)
+                if "diverged" in tr.state:
+                    bad.append((eff, rho, name, "diverged"))
+                    continue
+                if name == "sway":  # по командам регулятора: настоящая камера ходит ещё в ρ раз шире
+                    c = default_calibration()
+                    cam = CameraDynamics(c.dead_time, c.tau)
+                    for t, p in zip(tr.t, tr.pan):
+                        cam.command(t + 0.13, p)
+                    pos = [cam.position(t) for t in tr.t if t > 5]
+                    if max(pos) - min(pos) > 0.12:
+                        bad.append((eff, rho, name, round(max(pos) - min(pos), 3)))
+                else:
+                    late = [p for p, t in zip(tr.pan, tr.t) if t > T - 10]
+                    if sign_changes(late, WATCHDOG_MOVING_V) > 1:
+                        bad.append((eff, rho, name, sign_changes(late, WATCHDOG_MOVING_V)))
+    assert not bad, bad

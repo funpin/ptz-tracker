@@ -61,7 +61,7 @@ def test_composition_and_effort_saved(qtbot, tmp_path):
     w.follow_panel.effort_slider.setValue(20)
     w.follow_panel.effort_slider.sliderReleased.emit()
     assert w.session.follower.controller.composition.key == "waist_left"
-    assert abs(w.session.follower.controller.effort.gain - 0.9 - (1.4 - 0.9) * 0.4) < 1e-6
+    assert abs(w.session.follower.controller.effort.gain - 0.9 - (1.3 - 0.9) * 0.4) < 1e-6
     w.close()
     cam = store.load().cameras[0]
     assert cam.composition == "waist_left" and abs(cam.effort - 0.2) < 1e-9
@@ -101,5 +101,5 @@ def test_window_fits_small_screen(qtbot, tmp_path):
 def test_effort_applied_on_any_change(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     w.follow_panel.effort_slider.setValue(100)  # колесо/клик по полосе — тоже применяется
-    assert w.session.follower.controller.effort.gain == 2.2
+    assert w.session.follower.controller.effort.gain == 2.0
     w.close()
