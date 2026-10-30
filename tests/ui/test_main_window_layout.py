@@ -2,6 +2,7 @@ from PySide6.QtCore import Qt
 
 from ptztracker.config import ConfigStore
 from ptztracker.ui.main_window import MainWindow
+from ptztracker.ui.theme import C
 
 
 def make(qtbot, tmp_path):
@@ -45,13 +46,14 @@ def test_tracking_tag_follows_state(qtbot, tmp_path):
     w.close()
 
 
-def test_tile_height_constant_in_window(qtbot, tmp_path):
+def test_track_button_size_constant_in_window(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
-    before = w.follow_panel.follow_btn.height()
+    before = w.follow_panel.follow_btn.size()
     select(qtbot, w)
     w.follow_panel.follow_btn.click()
     qtbot.wait(300)
-    assert before == w.follow_panel.follow_btn.height() == 118
+    assert w.follow_panel.follow_btn.text() == "TRACK ON"
+    assert before.height() == w.follow_panel.follow_btn.height()
     w.close()
 
 
@@ -79,9 +81,9 @@ def test_hint_survives_tick_after_earlier_disable(qtbot, tmp_path):
 
 def test_long_analysis_text_keeps_width(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
-    w.analysis_label.setText("x" * 300)
+    w.analysis_pill.set("нет", "fault", "x" * 300)
     assert w.minimumSizeHint().width() <= 1640
-    assert w.analysis_label.toolTip() == "x" * 300
+    assert w.analysis_pill.toolTip() == "x" * 300
     w.close()
 
 
@@ -111,8 +113,8 @@ def test_failed_enable_keeps_swing_tile(qtbot, tmp_path):
 
 def test_link_ok_chip_is_not_tally_green(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
-    qtbot.waitUntil(lambda: w.link_label.text() == "Камера на связи", timeout=4000)
-    assert w.link_label.kind() == "neutral"  # зелёный PVW — только для Tally
+    qtbot.waitUntil(lambda: w.video_pill.kind() == "ok", timeout=4000)
+    assert C.OK != C.PVW  # зелёный PVW — только для Tally
     w.close()
 
 

@@ -32,13 +32,13 @@ def test_tally_frame_red_when_camera_in_pgm(qtbot, tmp_path, atem, monkeypatch):
     qtbot.addWidget(w)
     w.show()
     try:
-        qtbot.waitUntil(lambda: not w.atem_chip.isHidden(), timeout=2000)
+        qtbot.waitUntil(lambda: not w.atem_pill.isHidden(), timeout=2000)
         atem.set_tally((0, 1))
         qtbot.waitUntil(lambda: w.video_frame.tally() == "pgm", timeout=2000)
-        assert "ЭФИР" in w.atem_chip.text()
+        assert "PGM" in w.atem_pill.text() and "ЭФИР" in w.atem_pill.toolTip()
         atem.set_tally((0, 0))
         qtbot.waitUntil(lambda: w.video_frame.tally() is None, timeout=2000)
-        assert "ЭФИР" not in w.atem_chip.text()
+        assert "PGM" not in w.atem_pill.text()
     finally:
         w.close()
     assert w.atem is None
@@ -55,9 +55,9 @@ def test_tally_chip_warns_when_input_out_of_range(qtbot, tmp_path, atem, monkeyp
     qtbot.addWidget(w)
     w.show()
     try:
-        qtbot.waitUntil(lambda: "вне диапазона" in w.atem_chip.text(), timeout=3000)
-        assert w.atem_chip.text() == "ATEM · вход 5 вне диапазона"
-        assert w.atem_chip.kind() == "warn"
+        qtbot.waitUntil(lambda: "вне диапазона" in w.atem_pill.toolTip(), timeout=3000)
+        assert w.atem_pill.toolTip() == "ATEM · вход 5 вне диапазона"
+        assert w.atem_pill.kind() == "warn"
         assert w.video_frame.tally() is None
     finally:
         w.close()
@@ -69,7 +69,7 @@ def test_no_atem_no_chip(qtbot, tmp_path):
     w.show()
     qtbot.wait(250)
     assert w.atem is None
-    assert w.atem_chip.isHidden()
+    assert w.atem_pill.isHidden()
     assert w.video_frame.tally() is None
     w.close()
 

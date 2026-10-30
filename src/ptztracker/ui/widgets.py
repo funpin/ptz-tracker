@@ -1,6 +1,6 @@
 """Общие компоненты интерфейса: клавиша-подсказка, плитка состояния, чип, рамка видео."""
 
-from PySide6.QtCore import QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -17,8 +17,6 @@ from PySide6.QtWidgets import (
 from ptztracker.ui.icons import icon
 from ptztracker.ui.theme import (
     FS_CAPTION,
-    FS_STATE,
-    H_STATE,
     R_PANEL,
     SP,
     C,
@@ -205,186 +203,46 @@ class SectionHeader(QWidget):
         lay.addWidget(self.hint_label)
 
 
-class _Lamp(QWidget):
-    SIZE = 16
-
-    def __init__(self):
-        super().__init__()
-        self.setFixedSize(self.SIZE, self.SIZE)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.color = C.TEXT_FAINT
-        self.hollow = True
-        self.lit = True
-
-    def paintEvent(self, e):
-        if not self.lit:
-            return
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        r = QRectF(2, 2, self.SIZE - 4, self.SIZE - 4)
-        if self.hollow:
-            p.setBrush(Qt.NoBrush)
-            p.setPen(QPen(qcolor(self.color), 2))
-            p.drawEllipse(r.adjusted(1, 1, -1, -1))
-        else:
-            p.setPen(Qt.NoPen)
-            p.setBrush(qcolor(self.color))
-            p.drawEllipse(r)
-        p.end()
-
-
-class _ElideLabel(QLabel):
-    """Перенос слов, максимум 2 строки; конец 2-й строки обрезается многоточием."""
-
-    LINES = 2
-
-    def __init__(self):
-        super().__init__()
-        self._full = ""
-        self.setWordWrap(True)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        self.setFixedHeight(self.LINES * QFontMetrics(self.font()).lineSpacing() + 2)
-        self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-
-    def set_full(self, text: str) -> None:
-        self._full = text
-        self.setToolTip(text)
-        self._refit()
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        self._refit()
-
-    def _refit(self) -> None:
-        fm = QFontMetrics(self.font())
-        w = max(self.width(), 120)
-        words = self._full.split()
-        lines, cur, i = [], "", 0
-        while i < len(words) and len(lines) < self.LINES - 1:
-            cand = f"{cur} {words[i]}".strip()
-            if fm.horizontalAdvance(cand) <= w or not cur:
-                cur = cand
-                i += 1
-            else:
-                lines.append(cur)
-                cur = ""
-        rest = " ".join(([cur] if cur else []) + words[i:])
-        lines.append(fm.elidedText(rest, Qt.ElideRight, w))
-        self.setText("\n".join(lines))
-
-
-class StateTile(QPushButton):
-    """Плитка состояния слежения: высота постоянна, цвет — по виду состояния."""
+class TrackButton(QPushButton):
+    """TRACK ON/OFF в верхней панели: цвет — состояние слежения, пояснение — во всплывающей подсказке.
+    «Калибровка…» (action_btn) — отдельная кнопка рядом, видна только при раскачке."""
 
     actionClicked = Signal()
+    WORDS = {"on": "TRACK ON", "lost": "TRACK LOST"}
 
     def __init__(self):
-        super().__init__()
+        super().__init__("TRACK OFF")
         self.setCheckable(True)
         self.setFocusPolicy(Qt.NoFocus)
-        self.setFixedHeight(H_STATE)
         self.setCursor(Qt.PointingHandCursor)
-        self._kind = "off"
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(SP[2], SP[1], SP[2], SP[1])
-        lay.setSpacing(SP[0])
-
-        self.caption_label = QLabel("Слежение")
-        self.caption_label.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
-        self.caption_label.setFixedHeight(KEYCAP_H)
-        lay.addWidget(self.caption_label)
-
-        row = QHBoxLayout()
-        row.setSpacing(SP[1])
-        self._lamp = _Lamp()
-        self.word_label = QLabel()
-        row.addWidget(self._lamp)
-        row.addWidget(self.word_label, 1)
-        lay.addLayout(row)
-
-        self.why_label = _ElideLabel()
-        self.why_label.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
+        self._kind = ""
+        self._why = ""
         self.action_btn = KeyButton("Калибровка…")
         self.action_btn.setFocusPolicy(Qt.NoFocus)
-        self.action_btn.setFixedHeight(28)
-        self.action_btn.setStyleSheet(
-            f"QPushButton {{ min-height: 0; padding: 0 8px; font-size: {FS_CAPTION + 1}px; }}"
-        )
-        self.action_btn.hide()
-        # кнопка — в строке со словом состояния: пояснению нужна вся ширина (Segoe UI на Windows шире)
-        row.addWidget(self.action_btn, 0, Qt.AlignVCenter)
-        lay.addWidget(self.why_label)
-
-        for w in (self.caption_label, self.word_label, self._lamp, self.why_label):
-            w.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.action_btn.clicked.connect(self.actionClicked)
-
-        self._blink = QTimer(self)
-        self._blink.setInterval(500)  # 1 Гц: полпериода горит, полпериода нет
-        self._blink.timeout.connect(self._toggle_lamp)
+        self.action_btn.hide()
         self.set_view("off", "", "", False)
 
     def kind(self) -> str:
         return self._kind
 
     def set_view(self, kind: str, word: str, why: str, show_action: bool) -> None:
-        self._kind = kind
-        color = STATE_COLOR.get(kind, C.TEXT_FAINT)
-        self.word_label.setText(word)
-        self.word_label.setStyleSheet(
-            f"color: {C.TEXT_FAINT if kind == 'off' else color};"
-            f" font-size: {FS_STATE}px; font-weight: 800;"
-        )
-        self.why_label.set_full(why)
-        self.setToolTip(why)
-        self.action_btn.setVisible(show_action and kind == "swing")
-        self._lamp.color = color
-        self._lamp.hollow = kind == "off"
-        self._lamp.lit = True
-        if kind == "lost":
-            if not self._blink.isActive():
-                self._blink.start()
-        else:
-            self._blink.stop()
-        self._lamp.update()
-        self.update()
+        self.setText(self.WORDS.get(kind, "TRACK OFF"))
+        if kind != self._kind:
+            self._kind = kind
+            color = STATE_COLOR.get(kind, C.TEXT_FAINT)
+            self.setIcon(icon("track", color))
+            on = kind in ("on", "lost")
+            self.setStyleSheet(
+                f"QPushButton {{ border: 2px solid {color}; border-radius: {R_PANEL}px; padding: 4px 12px;"
+                f" font-weight: 700; color: {C.BG if on else C.TEXT}; background: {color if on else C.RAISED}; }}"
+            )
+        self.action_btn.setVisible(show_action)
+        self.set_why(why)
 
     def set_why(self, text: str) -> None:
-        """Заменить только пояснение (с тем же усечением и подсказкой)."""
-        self.why_label.set_full(text)
-        self.setToolTip(text)
-
-    def _toggle_lamp(self) -> None:
-        self._lamp.lit = not self._lamp.lit
-        self._lamp.update()
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        color = STATE_COLOR.get(self._kind, C.TEXT_FAINT)
-        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        p.setBrush(qcolor(C.RAISED))
-        p.setPen(Qt.NoPen)
-        p.drawRoundedRect(r, R_PANEL, R_PANEL)
-        if self._kind == "off":
-            p.setBrush(Qt.NoBrush)
-            p.setPen(QPen(qcolor(C.LINE), 1))
-            p.drawRoundedRect(r, R_PANEL, R_PANEL)
-        else:
-            p.setBrush(qcolor(color, int(255 * 0.16)))
-            p.setPen(Qt.NoPen)
-            p.drawRoundedRect(r, R_PANEL, R_PANEL)
-            p.setBrush(Qt.NoBrush)
-            p.setPen(QPen(qcolor(color), 2))
-            p.drawRoundedRect(r, R_PANEL, R_PANEL)
-        if self.underMouse():
-            p.setPen(Qt.NoPen)
-            p.setBrush(qcolor(C.TEXT, 14))
-            p.drawRoundedRect(r, R_PANEL, R_PANEL)
-        cy = SP[1] + KEYCAP_H / 2
-        paint_keycap(p, self.width() - SP[2], cy, "Пробел")
-        p.end()
+        self._why = text
+        self.setToolTip(f"{text}\nПробел — включить или выключить слежение".strip())
 
 
 class VideoFrame(QFrame):
@@ -404,6 +262,13 @@ class VideoFrame(QFrame):
         self.onair_tag = self._make_tag()
         self.tracking_tag.hide()
         self.onair_tag.hide()
+        self._overlays: list[tuple[QWidget, str]] = []
+
+    def add_overlay(self, w: QWidget, corner: str) -> None:
+        """Виджет поверх видео: «top-left» — под ярлыком слежения, «bottom-left» — внизу слева."""
+        w.setParent(self)
+        self._overlays.append((w, corner))
+        self._place_tags()
 
     def _make_tag(self) -> QLabel:
         t = QLabel(self)
@@ -449,6 +314,13 @@ class VideoFrame(QFrame):
             t.raise_()
         self.tracking_tag.move(off, off)
         self.onair_tag.move(self.width() - self.onair_tag.width() - off, off)
+        for w, corner in self._overlays:
+            w.adjustSize()
+            w.raise_()
+            if corner == "top-left":
+                w.move(off + SP[1], off + self.tracking_tag.height() + SP[1])
+            else:
+                w.move(off + SP[1], self.height() - w.height() - off - SP[1])
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
