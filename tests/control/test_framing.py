@@ -271,7 +271,7 @@ def test_gz_correction_is_partial_and_bounded():
 def test_no_zoom_in_while_walking():
     """Наезд прекращается, как только человек пошёл: не дожидаясь плавного спада скорости зума."""
     walk_at = 4.0
-    tr = run(lambda t: AX + 0.25 * max(t - walk_at, 0.0), world_u=lambda t: 0.08, T=7, cmd_delay=0.065)
+    tr = run(lambda t: AX + 0.25 * max(t - walk_at, 0.0), world_u=lambda t: 0.08, T=7, cmd_delay=QUEUE_MAX)
     zooming_in = [t for t, z in zip(tr.t, tr.zoom) if z > 0]
     assert zooming_in and min(zooming_in) < walk_at  # человек стоял — наезд шёл
     # 0,6 с на «пошёл» (WALK_WINDOW_S 0,4 + кадр): переминание при наезде не считается ходьбой, а отличить
@@ -629,7 +629,7 @@ def test_zoom_in_reaches_composition_size_while_person_sways():
     композиции, без «туда-обратно» (разворотов зума нет) и без раскачки."""
     for amp in (0.0, 0.015, 0.02):
         tr = run(lambda t, a=amp: AX + a * math.sin(2 * math.pi * t / 3.0), world_u=lambda t: 0.05, T=40,
-                 zoom_pos=0x555, cmd_delay=0.065, gz_period=0.5, apc_period=0.5, adapt=True, cam_he42=True)
+                 zoom_pos=0x555, cmd_delay=QUEUE_MAX, gz_period=0.5, apc_period=0.5, adapt=True, cam_he42=True)
         assert "diverged" not in tr.state, amp
         # размер человека в кадре — в пределах ±15% от размера композиции (0,19)
         assert abs(math.log(tr.u[-1] / COMPOSITIONS["waist_center"].u_frac)) <= 0.15, (amp, tr.u[-1])
@@ -645,7 +645,7 @@ def test_zoom_in_stops_at_once_when_person_walks_off():
     """Наезд идёт, и человек пошёл (упреждение): зум встаёт сразу, отъезд — только у края (не «туда-обратно»)."""
     def walk(t):
         return AX + (0.0 if t < 14 else 0.25 * min(t - 14, 3.0) * 0.5)
-    tr = run(walk, world_u=lambda t: 0.05, T=24, zoom_pos=0x555, cmd_delay=0.065, gz_period=0.5, apc_period=0.5,
+    tr = run(walk, world_u=lambda t: 0.05, T=24, zoom_pos=0x555, cmd_delay=QUEUE_MAX, gz_period=0.5, apc_period=0.5,
              adapt=True, cam_he42=True)
     assert "diverged" not in tr.state
     assert max(tr.zoom[int(15.5 / CTRL_DT):]) <= 1e-6

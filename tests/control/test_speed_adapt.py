@@ -2,7 +2,7 @@
 
 import math
 
-from loop import QUEUE_X2_BEFORE_ADAPT, run, sign_changes
+from loop import QUEUE_MAX, QUEUE_X2_BEFORE_ADAPT, run, sign_changes
 
 from ptztracker.camera import he42
 from ptztracker.camera import protocol as P
@@ -135,7 +135,7 @@ def test_zoom_555_aaa_555_while_walking_no_swing_with_live_he42_speeds():
     from ptztracker.control.framing import WATCHDOG_MOVING_V
 
     T = ZW_APPROACH + 2 * (ZW_LEG + ZW_STAND)
-    tr = run(_zoom_walk, world_u=_zoom_walk_u, T=T, zoom_pos=P.LENS_MIN, cmd_delay=0.065, gz_period=0.5,
+    tr = run(_zoom_walk, world_u=_zoom_walk_u, T=T, zoom_pos=P.LENS_MIN, cmd_delay=QUEUE_MAX, gz_period=0.5,
              apc_period=0.5, adapt=True, cam_he42=True)
     assert "diverged" not in tr.state
     gz = [P.LENS_MIN + z / math.log(he42.ZOOM_RATIO) * (P.LENS_MAX - P.LENS_MIN) for z in tr.cam_zoom]
@@ -170,7 +170,7 @@ def test_tilt_quiet_while_standing_during_zoom_in_with_live_he42_speeds():
     ay = COMPOSITIONS["waist_center"].anchor[1]
     for wy, sf in ((0.25, 1.0), (0.35, 1.0), (0.25, 1.5), (0.25, 2.0)):
         tr = run(lambda t: AX, world_y=lambda t, wy=wy: wy, world_u=lambda t: 0.045, T=45, zoom_pos=P.LENS_MIN,
-                 cmd_delay=0.065, gz_period=0.5, apc_period=0.5, adapt=True, cam_he42=True, speed_factor=sf)
+                 cmd_delay=QUEUE_MAX, gz_period=0.5, apc_period=0.5, adapt=True, cam_he42=True, speed_factor=sf)
         gz = [P.LENS_MIN + z / math.log(he42.ZOOM_RATIO) * (P.LENS_MAX - P.LENS_MIN) for z in tr.cam_zoom]
         key = (wy, sf)
         assert "diverged" not in tr.state, key
@@ -178,7 +178,8 @@ def test_tilt_quiet_while_standing_during_zoom_in_with_live_he42_speeds():
         assert max(abs(y - ay) for y in tr.img_y[25:]) <= 0.09, key
         for k in range(45):
             win = [tr.tilt[i] for i, t in enumerate(tr.t) if k <= t < k + 1]
-            assert sign_changes(win, eps=eps) <= 1, (key, k)
+            # камера ×2 по вертикали при очереди 0,13 с — названный предел (как QUEUE_X2_BEFORE_ADAPT): 2 разворота за секунду
+            assert sign_changes(win, eps=eps) <= (2 if sf >= 2.0 else 1), (key, k)
         assert max(abs(x) for x in tr.tilt[round(30 / 0.04):]) <= eps, key  # наезд кончился — наклон молчит
 
 
