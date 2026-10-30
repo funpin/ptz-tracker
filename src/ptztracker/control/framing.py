@@ -76,6 +76,11 @@ RETURN_V_SOFT = 1.5 * SETTLE_V  # возврат после перелёта, п
 NO_TARGET_S = 0.3
 ZOOM_ACCEL = 0.5  # ln/с²
 ZOOM_IN_AFTER_HOLD_S = 1.0
+# «Спокоен» для наезда: размах за CALM_WINDOW_S меньше ZOOM_CALM_IN·мёртвая зона (наезд начинается) и не больше
+# ZOOM_CALM_OUT·мёртвая зона (идущий наезд продолжается; размах считается в кадре сейчас, так что наезд сам
+# останавливается, когда переминание в кадре вырастает до того, что камера ещё держит без раскачки). Стоящий человек переминается ±0,03…0,06 кадра —
+# размах 0,06…0,12 больше мёртвой зоны 0,05, и по прежнему правилу «стоит» наезд не начинался.
+ZOOM_CALM_IN, ZOOM_CALM_OUT = 2.5, 3.0
 U_SMOOTH = 0.3
 # Поправка модели зума по ответу #GZ: доля расхождения за один ответ и предел одной поправки (ln).
 # Соответствие #GZ → масштаб живьём не мерялось (he42.ZOOM_RATIO) — замер не должен перебивать модель целиком.
@@ -499,6 +504,7 @@ class FramingController:
         self._zoom_active = False
         self._hold_since: float | None = None
         self._still_since: float | None = None
+        self._zoom_calm_since: float | None = None
         self._gz_t: float | None = None  # момент последнего учтённого ответа #GZ
         self._gz_ref: float | None = None  # ln масштаба (по #GZ), которому соответствует k = 1
         self._apc_t: float | None = None  # момент последнего учтённого ответа #APC
@@ -577,6 +583,11 @@ class FramingController:
         elif self._still_since is None:
             self._still_since = now
         walking = state == "moving" or self._still_since is None
+        spread = max(self.x.spread(now, k_now) / max(e.dead_x, 1e-9), self.y.spread(now, k_now) / max(dead_y, 1e-9))
+        if not active or spread >= (ZOOM_CALM_OUT if self._zoom_calm_since is not None else ZOOM_CALM_IN):
+            self._zoom_calm_since = None
+        elif self._zoom_calm_since is None:
+            self._zoom_calm_since = now
         caps = ((self.x, v_cap, e.soft_x), (self.y, min(e.v_max, self.calib.pan_max_fw(inp.zoom_pos, axis="tilt") / TILT_FROM_FH), e.soft_y))
         # недостача: на сколько догон не успевает (прогноз ухода минус порог). В середине зоны (EDGE_ZOOM_ERR…
         # HARD_EDGE_ERR) — только если поворот на пределе (v_cmd ≥ SAT_FRAC·потолок), а ошибка растёт: иначе
@@ -627,7 +638,7 @@ class FramingController:
                     want = _limit(-e.zoom_gain * size_err, e.zoom_max)
                     # Наезд — только когда человек сам стоит (≥1 с). Камера при этом может подправлять
                     # наклон: наезд идёт одним плавным движением, а не «ступеньками».
-                    calm = self._still_since is not None and now - self._still_since >= ZOOM_IN_AFTER_HOLD_S
+                    calm = self._zoom_calm_since is not None and now - self._zoom_calm_since >= ZOOM_IN_AFTER_HOLD_S
                     if want > 0 and not calm:
                         want = 0.0
             if at_edge:
@@ -641,8 +652,12 @@ class FramingController:
         # у края диапазона объектива дальше не зумируем
         if (want < 0 and zoom_pos <= P.LENS_MIN + LENS_END_MARGIN) or (want > 0 and zoom_pos >= P.LENS_MAX - LENS_END_MARGIN):
             want = 0.0
-        if any(ax.v_ff or (ax.mode == "moving" and abs(ax.v_img) >= START_V) for ax in (self.x, self.y)):
-            want = min(want, 0.0)  # человек идёт — не наезжаем
+        # человек идёт — не наезжаем. Подправка камерой за переминающимся (спокойный размах, нет упреждения) — не ходьба:
+        # иначе зум останавливался и трогался в такт переминанию
+        calm_zoom = self._zoom_calm_since is not None
+        if any(ax.v_ff or ax.walked or (not calm_zoom and ax.mode == "moving" and abs(ax.v_img) >= START_V)
+               for ax in (self.x, self.y)):
+            want = min(want, 0.0)
         if walking and self._zoom_cmd > 0 and want <= 0:
             self._zoom_cmd = 0.0  # человек пошёл — наезд прекращаем сразу, без плавного спада
         # отъезд у края разгоняется быстрее наезда (но тоже плавно, без рывков 18↔50)

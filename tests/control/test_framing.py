@@ -273,9 +273,12 @@ def test_no_zoom_in_while_walking():
     tr = run(lambda t: AX + 0.25 * max(t - walk_at, 0.0), world_u=lambda t: 0.08, T=7, cmd_delay=0.065)
     zooming_in = [t for t, z in zip(tr.t, tr.zoom) if z > 0]
     assert zooming_in and min(zooming_in) < walk_at  # человек стоял — наезд шёл
-    moving = [i for i, (t, s) in enumerate(zip(tr.t, tr.state)) if t > walk_at and s == "moving"]
+    # 0,6 с на «пошёл» (WALK_WINDOW_S 0,4 + кадр): переминание при наезде не считается ходьбой, а отличить
+    # его можно только по смещению в одну сторону (часть 2, задача 6); наезд после начала ходьбы вырастает не больше чем на 8% (замер 7%, камера встаёт через 0,3 с)
+    moving = [i for i, (t, s) in enumerate(zip(tr.t, tr.state)) if t > walk_at + 0.6 and s == "moving"]
     assert moving
     assert all(tr.zoom[i] <= 0 for i in moving)
+    assert sum(z * CTRL_DT for t, z in zip(tr.t, tr.zoom) if walk_at < t <= walk_at + 0.6) <= 0.08
 
 
 # --- сторож раскачки: только настоящие развороты (часть 1, задача 2) ---------------
@@ -617,3 +620,31 @@ def test_image_motion_follows_sent_commands():
     assert r > 1.0 and sx < -0.1 and sy > 0.1
     assert ctl.image_motion(0.5, 0.5) == (1.0, 0.0, 0.0)
 
+
+def test_zoom_in_reaches_composition_size_while_person_sways():
+    """Площадка 2026-10-29, «Пояс»: человек стоит, но переминается (±0,02 мира ≈ ±0,06 кадра на размере композиции, период 3 с) — за минуту зум не
+    доходил до размера (ошибка размера −1,1…−1,4, зум толчками раз в ~10 с): «стоит» требовало размах меньше
+    мёртвой зоны (0,05), а переминание его превышает. Теперь наезд идёт одним плавным движением до размера
+    композиции, без «туда-обратно» (разворотов зума нет) и без раскачки."""
+    for amp in (0.0, 0.015, 0.02):
+        tr = run(lambda t, a=amp: AX + a * math.sin(2 * math.pi * t / 3.0), world_u=lambda t: 0.05, T=40,
+                 zoom_pos=0x555, cmd_delay=0.065, gz_period=0.5, apc_period=0.5, adapt=True, cam_he42=True)
+        assert "diverged" not in tr.state, amp
+        # размер человека в кадре — в пределах ±15% от размера композиции (0,19)
+        assert abs(math.log(tr.u[-1] / COMPOSITIONS["waist_center"].u_frac)) <= 0.15, (amp, tr.u[-1])
+        # зум — одним движением: не больше одного разворота (вход → стоп → выход)
+        zs = [z for z in tr.zoom if abs(z) > 1e-6]
+        assert sign_changes(zs, eps=1e-6) == 0, amp
+        # и без «стоп — поехал» в такт переминанию (было 8 стартов зума за 12 с)
+        starts = sum(1 for a, b in zip(tr.zoom, tr.zoom[1:]) if a <= 1e-6 < b)
+        assert starts <= 2, (amp, starts)
+
+
+def test_zoom_in_stops_at_once_when_person_walks_off():
+    """Наезд идёт, и человек пошёл (упреждение): зум встаёт сразу, отъезд — только у края (не «туда-обратно»)."""
+    def walk(t):
+        return AX + (0.0 if t < 14 else 0.25 * min(t - 14, 3.0) * 0.5)
+    tr = run(walk, world_u=lambda t: 0.05, T=24, zoom_pos=0x555, cmd_delay=0.065, gz_period=0.5, apc_period=0.5,
+             adapt=True, cam_he42=True)
+    assert "diverged" not in tr.state
+    assert max(tr.zoom[int(15.5 / CTRL_DT):]) <= 1e-6
