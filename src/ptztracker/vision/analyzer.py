@@ -92,6 +92,31 @@ class Analyzer:
         safe_event(self.recorder, "target", id=tid, how="click", x=round(float(x), 1), y=round(float(y), 1))
         return tid
 
+    def select_neighbor(self, direction: int) -> int | None:
+        """Цель на соседа слева (−1) / справа (+1) по центру рамки; нет цели — от центра кадра."""
+        with self._lock:
+            r = self._latest
+            if r is None:
+                return None
+            tgt = next((t for t in r.tracks if t.id == self.tracker.target_id), None)
+            ref = (tgt.box[0] + tgt.box[2]) / 2 if tgt is not None else r.frame_size[0] / 2
+            best, best_d = None, None
+            for t in r.tracks:
+                if t.last_seen != r.t_capture or (tgt is not None and t.id == tgt.id):
+                    continue
+                dx = ((t.box[0] + t.box[2]) / 2 - ref) * (1 if direction > 0 else -1)
+                if dx > 0 and (best_d is None or dx < best_d):
+                    best, best_d = t, dx
+            if best is None or not self.tracker.select(best.id):
+                return None
+            self._refresh_target()
+            tid = best.id
+        # x, y — центр рамки: повтор распознавания выбирает цель так же, как по щелчку
+        cx, cy = (best.box[0] + best.box[2]) / 2, (best.box[1] + best.box[3]) / 2
+        safe_event(self.recorder, "target", id=tid, how="pad_right" if direction > 0 else "pad_left",
+                   x=round(float(cx), 1), y=round(float(cy), 1))
+        return tid
+
     def clear_target(self) -> None:
         with self._lock:
             self.tracker.clear_target()

@@ -207,3 +207,69 @@ def test_unknown_power_reply_keeps_commands_flowing():
         assert _wait(lambda: "#R04" in s.sim.received, 1.0)
     finally:
         s.stop()
+
+
+def test_iris_step_from_auto_switches_manual_without_jump():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.iris == s.sim.iris_pos)
+        x = s.sim.iris_pos
+        assert s.sim.iris_auto
+        s.iris_step(+1)
+        assert _wait(lambda: any(c.startswith("#AXI") for c in s.sim.received), 1.5)
+        assert s.sim.received.index("#D30") < next(i for i, c in enumerate(s.sim.received) if c.startswith("#AXI"))
+        assert not s.sim.iris_auto
+        assert 0 < s.sim.iris_pos - x <= 0x1000 // 16 + 1
+    finally:
+        s.stop()
+
+
+def test_iris_step_unknown_queries_then_applies():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        s._image = type(s._image)()  # значение ещё неизвестно
+        x = s.sim.iris_pos
+        s.iris_step(-1)
+        assert _wait(lambda: s.sim.iris_pos < x, 2.0)
+    finally:
+        s.stop()
+
+
+def test_iris_step_does_not_disable_follow():
+    s = CameraSession(sim_cfg(), analysis=False)
+    calls = []
+    s.on_manual = lambda: calls.append(1)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.iris is not None)
+        s.iris_step(+1)
+        s.gain_step(+1)
+        time.sleep(0.4)
+        assert calls == []
+    finally:
+        s.stop()
+
+
+def test_gain_step_clamps_and_goes_manual_from_auto():
+    from ptztracker.camera import protocol as P
+
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.gain == 0x08)
+        s.gain_step(+1)
+        assert _wait(lambda: s.image.gain == 0x0B and s.sim.gain_code == 0x0B, 1.5)
+        for _ in range(3):
+            s.gain_step(-1)
+        assert _wait(lambda: s.sim.gain_code == 0x08, 1.5)
+        s.gain_step(-1)
+        time.sleep(0.3)
+        assert s.sim.gain_code == 0x08
+        s.set_gain(P.GAIN_AUTO)
+        assert _wait(lambda: s.image.gain == P.GAIN_AUTO, 1.5)
+        s.gain_step(+1)
+        assert _wait(lambda: s.sim.gain_code == 0x08, 1.5)
+    finally:
+        s.stop()

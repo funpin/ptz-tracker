@@ -456,7 +456,7 @@ def _first_click(ep: Episode) -> tuple[float, float, float] | None:
     """(t, x, y) первого щелчка по человеку — в пикселях кадра анализа."""
     clicks = []
     for e in ep.events("target"):
-        if e.get("how") != "click":
+        if e.get("how") not in ("click", "pad_left", "pad_right"):
             continue
         t, x, y = _time(e), _num(e.get("x")), _num(e.get("y"))
         if t is not None and x is not None and y is not None:

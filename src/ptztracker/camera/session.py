@@ -46,6 +46,8 @@ class ImageState:
     gain: int | None = None
     wb: int | None = None
     color_temp: int | None = None
+    iris: int | None = None
+    iris_auto: bool | None = None
 
 
 class CameraSession:
@@ -84,6 +86,9 @@ class CameraSession:
         # питание и изображение — из ответов, которые планировщик и так получает; окно только читает
         self._power = "unknown"
         self._image = ImageState()
+        self._last_manual_gain: int | None = None
+        self._pending_steps: dict[str, int] = {}
+        self._step_lock = threading.Lock()
 
     # --- жизненный цикл ------------------------------------------------
 
@@ -335,7 +340,9 @@ class CameraSession:
         return self._image
 
     def refresh_image(self) -> None:
-        for key, cmd in (("q_gain", P.Q_GAIN), ("q_wb", P.Q_WB), ("q_ctemp", P.Q_COLOR_TEMP)):
+        for key, cmd in (
+            ("q_gain", P.Q_GAIN), ("q_wb", P.Q_WB), ("q_ctemp", P.Q_COLOR_TEMP), ("q_iris", P.Q_IRIS),
+        ):
             self.scheduler.submit(key, cmd, Priority.QUERY, only_if_changed=False)
 
     def _on_reply(self, info: dict) -> None:
@@ -351,13 +358,74 @@ class CameraSession:
                 if now == "on" and was in ("standby", "switching"):
                     self.refresh_image()
             elif ok and (cmd == P.Q_GAIN or str(cmd).startswith("OGU:")):
-                self._image = dataclasses.replace(self._image, gain=P.parse_gain(reply))
+                g = P.parse_gain(reply)
+                if g != P.GAIN_AUTO:
+                    self._last_manual_gain = g
+                self._image = dataclasses.replace(self._image, gain=g)
+                self._apply_pending("gain")
             elif ok and (cmd == P.Q_WB or str(cmd).startswith("OAW:")):
                 self._image = dataclasses.replace(self._image, wb=P.parse_wb(reply))
+            elif ok and cmd == P.Q_IRIS:
+                auto = P.parse_iris_auto(reply)
+                img = dataclasses.replace(self._image, iris=P.parse_iris(reply))
+                self._image = img if auto is None else dataclasses.replace(img, iris_auto=auto)
+                self._apply_pending("iris")
+            elif ok and str(cmd).startswith("#AXI"):
+                self._image = dataclasses.replace(self._image, iris=P.parse_iris(reply.replace("axi", "gi", 1)))
+            elif ok and str(cmd).startswith("#D3"):
+                self._image = dataclasses.replace(self._image, iris_auto=str(cmd)[3:] == "1")
             elif ok and (cmd == P.Q_COLOR_TEMP or str(cmd).startswith("OSD:B1:")):
                 self._image = dataclasses.replace(self._image, color_temp=P.parse_color_temp(reply))
         except ValueError:
             log.debug("Непонятный ответ на %s: %r", cmd, reply)
+
+    def _apply_pending(self, what: str) -> None:
+        with self._step_lock:
+            d = self._pending_steps.pop(what, 0)
+        if d:
+            (self._iris_apply if what == "iris" else self._gain_apply)(d)
+
+    def _step_or_query(self, what: str, known: bool, d: int, key: str, cmd: str) -> None:
+        """Применить шаг сразу, если значение известно; иначе запомнить его и спросить камеру (без ожидания)."""
+        if known:
+            (self._iris_apply if what == "iris" else self._gain_apply)(d)
+            return
+        with self._step_lock:
+            self._pending_steps[what] = max(-4, min(4, self._pending_steps.get(what, 0) + d))
+        self.scheduler.submit(key, cmd, Priority.QUERY, only_if_changed=False)
+
+    def iris_step(self, d: int) -> None:
+        """Ирис на 1/16 хода шире (+1) или уже (−1). Слежение не трогает; не блокирует."""
+        self._step_or_query("iris", self._image.iris is not None, d, "q_iris", P.Q_IRIS)
+
+    def gain_step(self, d: int) -> None:
+        """Gain на следующий/предыдущий код (+1 ярче). Из AUTO — переход в ручной на прежнем значении."""
+        self._step_or_query("gain", self._image.gain is not None, d, "q_gain", P.Q_GAIN)
+
+    def _iris_apply(self, d: int) -> None:
+        pos = self._image.iris
+        if pos is None:
+            return
+        if self._image.iris_auto is not False:
+            self.set_iris_auto(False)
+            self._image = dataclasses.replace(self._image, iris_auto=False)
+        step = (P.LENS_MAX - P.LENS_MIN) // 16
+        new = max(P.LENS_MIN, min(P.LENS_MAX, pos + (step if d > 0 else -step)))
+        self._submit("iris", P.iris_abs(new))
+        self._image = dataclasses.replace(self._image, iris=new)
+
+    def _gain_apply(self, d: int) -> None:
+        g = self._image.gain
+        if g is None:
+            return
+        codes = P.GAIN_CODES
+        if g == P.GAIN_AUTO:
+            new = self._last_manual_gain if self._last_manual_gain in codes else codes[0]
+        else:
+            i = codes.index(g) if g in codes else min(range(len(codes)), key=lambda k: abs(codes[k] - g))
+            new = codes[max(0, min(len(codes) - 1, i + (1 if d > 0 else -1)))]
+        self.set_gain(new)
+        self._image = dataclasses.replace(self._image, gain=new)
 
     def set_power(self, on: bool) -> None:
         if not on:
