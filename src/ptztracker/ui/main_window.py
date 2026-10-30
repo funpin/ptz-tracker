@@ -255,6 +255,7 @@ class MainWindow(QMainWindow):
         self.diag_action = menu.addAction("Диагностика камеры…", self._run_diagnostics)
         self.atem_action = menu.addAction("ATEM…", self._edit_atem)
         self.agent_action = menu.addAction("Агент…", self._show_agent_window)
+        self.power_action = menu.addAction("Перевести камеру в режим ожидания…", self._power_menu)
         menu.addSeparator()
         self.save_moment_action = QAction("Сохранить момент (F9)", self)  # не ручное управление: слежение не трогаем
         self.save_moment_action.triggered.connect(lambda: self.save_moment())
@@ -723,6 +724,9 @@ class MainWindow(QMainWindow):
         s = self.session
         cam = self._current_cfg()
         self.power_overlay.set_view(power_view(s.power, s.online) if s else "on", s.cfg.name if s else "")
+        self.power_action.setText("Включить камеру" if s and s.power == "standby"
+                                  else "Перевести камеру в режим ожидания…")
+        self.power_action.setEnabled(s is not None)
         if not s:
             self.video_pill.set(*video_pill(None, ""))
             self.analysis_pill.set("", "off", "Анализ: камера не выбрана")
@@ -784,6 +788,24 @@ class MainWindow(QMainWindow):
         b.setPopupMode(QToolButton.InstantPopup)
         b.setMenu(QMenu(self))
         return b
+
+    def _power_menu(self) -> None:
+        s = self.session
+        if s is None:
+            return
+        if s.power == "standby":
+            self._power_on()
+            return
+        # как любое ручное действие: слежение и агент выключаются до вопроса и до #O0
+        self.agent_panel.revoke()
+        self.release_all_held()
+        if f := self._follower():
+            f.disable("выключено оператором")
+        self._sync_follow()
+        q = (f"Перевести камеру {s.cfg.name} в режим ожидания?\n"
+             "Видео пропадёт; включение займёт около 8 секунд.")
+        if QMessageBox.question(self, "Режим ожидания", q) == QMessageBox.Yes:
+            s.set_power(False)
 
     def _power_on(self) -> None:
         if self.session:

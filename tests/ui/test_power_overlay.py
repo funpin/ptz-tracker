@@ -67,3 +67,43 @@ def test_target_controls_on_video(qtbot, tmp_path):
     w.skeleton_check.setChecked(True)
     assert w.preview.show_skeleton
     w.close()
+
+
+def test_standby_asks_and_stops_follow(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    w = make(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: bool(w.session.analyzer.latest() and w.session.analyzer.latest().tracks), timeout=8000)
+    tr = w.session.analyzer.latest().tracks[0]
+    w.session.analyzer.select_at((tr.box[0] + tr.box[2]) / 2, (tr.box[1] + tr.box[3]) / 2)
+    w.track_btn.click()
+    qtbot.waitUntil(lambda: w.session.follower.enabled, timeout=2000)
+    w.agent_panel.allow_check.setChecked(True)
+    asked = []
+
+    def no(*a, **k):
+        asked.append(w.session.follower.enabled)  # к вопросу слежение уже выключено
+        return QMessageBox.No
+
+    monkeypatch.setattr(QMessageBox, "question", no)
+    w.power_action.trigger()
+    assert asked == [False]
+    assert not w.agent_panel.allow_check.isChecked()
+    qtbot.wait(300)
+    assert "#O0" not in w.session.sim.received
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    w.power_action.trigger()
+    qtbot.waitUntil(lambda: "#O0" in w.session.sim.received, timeout=1500)
+    w.close()
+
+
+def test_power_action_text_follows_state(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: w.session.power == "on", timeout=4000)
+    w._update_status()
+    assert "режим ожидания" in w.power_action.text()
+    w.session.set_power(False)
+    qtbot.waitUntil(lambda: w.power_action.text() == "Включить камеру", timeout=3000)
+    w.power_action.trigger()
+    qtbot.waitUntil(lambda: "#O1" in w.session.sim.received, timeout=1500)
+    w.close()
