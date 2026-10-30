@@ -170,3 +170,60 @@ def test_lab_restores_sigint_default_handler(tmp_path, sessions, monkeypatch):
         assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
     finally:
         signal.signal(signal.SIGINT, prev)
+
+
+class FakePad:
+    """Геймпад без устройства: SDL запускается, но подключённого контроллера нет."""
+
+    def open(self):
+        return True
+
+    def poll(self):
+        return None
+
+    def close(self):
+        pass
+
+
+def test_lab_gamepad_without_device(monkeypatch, capsys):
+    monkeypatch.setattr(lab, "SdlBackend", FakePad)
+    rc = main(["--lab", "gamepad", "--seconds", "0.2"])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert result_of(out)["connected"] is False
+
+
+def test_lab_gamepad_no_pygame(monkeypatch, capsys):
+    class NoSdl(FakePad):
+        def open(self):
+            raise ImportError("pygame")
+
+    monkeypatch.setattr(lab, "SdlBackend", NoSdl)
+    rc = main(["--lab", "gamepad", "--seconds", "0.2"])
+    res = result_of(capsys.readouterr().out)
+    assert rc == 1 and res["error"] == "no_sdl"
+
+
+def test_lab_gamepad_connected_reports_buttons(monkeypatch, capsys):
+    from ptztracker.gamepad.device import RawPad
+
+    class Pad(FakePad):
+        n = 0
+
+        def poll(self):
+            Pad.n += 1
+            return RawPad({"leftx": 0.5}, frozenset({"cross"} if Pad.n % 2 else ()))
+
+        def info(self):
+            return {"name": "DualSense", "type": "ps5", "has_led": True, "has_rumble": True, "power": None}
+
+        def set_led(self, rgb):
+            pass
+
+        def rumble(self, low, high, ms):
+            pass
+
+    monkeypatch.setattr(lab, "SdlBackend", Pad)
+    rc = main(["--lab", "gamepad", "--seconds", "0.3"])
+    res = result_of(capsys.readouterr().out)
+    assert rc == 0 and res["connected"] is True and res["buttons_seen"] == ["cross"] and res["type"] == "ps5"

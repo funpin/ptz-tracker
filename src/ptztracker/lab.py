@@ -25,6 +25,7 @@ from ptztracker.config import (
     get_password,
     record_dir,
 )
+from ptztracker.gamepad.device import SdlBackend
 from ptztracker.recorder import NullRecorder
 from ptztracker.video.rtsp import redact_url
 
@@ -140,6 +141,11 @@ def run_lab(args) -> int:
     if cmd in MOVING and not args.not_on_air:
         _say(NOT_ON_AIR_TEXT)
         return _bad(cmd, EXIT_NOT_ON_AIR, "not_on_air")
+    if cmd == "gamepad":  # камеру не трогает и IP не требует
+        if args.seconds <= 0:
+            _say("--seconds должно быть больше нуля.")
+            return _bad(cmd, EXIT_BAD_ARGS, "bad_args")
+        return _gamepad(args)
     if not args.ip:
         _say("Укажите IP камеры: --ip 10.0.0.12 (или --ip sim для симулятора).")
         return _bad(cmd, EXIT_BAD_ARGS, "bad_args")
@@ -206,6 +212,72 @@ def run_lab(args) -> int:
         data["error"] = str(e)
         return _finish(session, data, 1)
     return _finish(session, data, code)
+
+
+PAD_COLORS = ((255, 0, 0), (255, 128, 0), (160, 0, 255), (0, 200, 255), (0, 255, 0), (255, 255, 255))  # по 1 с
+
+
+def _gamepad(args) -> int:
+    """Пробник геймпада: печатает изменения осей и кнопок, красит светодиод, коротко вибрирует."""
+    pad = SdlBackend()
+    data: dict = {"command": "gamepad", "connected": False}
+    try:
+        pad.open()
+    except ImportError as e:
+        _say(f"Нет pygame (SDL): {e}")
+        return _bad("gamepad", 1, "no_sdl")
+    seen: set[str] = set()
+    last_axes: dict[str, float] = {}
+    last_buttons: frozenset[str] = frozenset()
+    start = time.monotonic()
+    colored = 0
+    rumbled = False
+    waited = False
+    try:
+        while time.monotonic() - start < args.seconds:
+            raw = pad.poll()
+            if raw is None:
+                if not waited:
+                    _say("Геймпад не найден. Подключите DualSense по USB или Bluetooth…")
+                    waited = True
+                _sleep(0.25)
+                continue
+            if not data["connected"]:
+                data.update(connected=True, **pad.info())
+                _say(f"Геймпад: {data['name']} ({data['type']}), светодиод: {data['has_led']}, "
+                     f"вибрация: {data['has_rumble']}, заряд: {data['power']}")
+                start = time.monotonic()  # секунды считаем от подключения
+            t = time.monotonic() - start
+            if colored < len(PAD_COLORS) and t >= colored:
+                pad.set_led(PAD_COLORS[colored])
+                _say(f"Светодиод: {PAD_COLORS[colored]}")
+                colored += 1
+            if not rumbled and t >= 0.5:
+                pad.rumble(0.5, 0.5, 200)
+                _say("Вибрация 0,2 с")
+                rumbled = True
+            for k, v in raw.axes.items():
+                if abs(v - last_axes.get(k, 0.0)) >= 0.05:
+                    _say(f"ось {k}: {v:+.2f}")
+                    last_axes[k] = v
+            for b in sorted(raw.buttons - last_buttons):
+                _say(f"кнопка {b}: нажата")
+                seen.add(b)
+            for b in sorted(last_buttons - raw.buttons):
+                _say(f"кнопка {b}: отпущена")
+            last_buttons = raw.buttons
+            _sleep(0.05)
+    except KeyboardInterrupt:
+        _say("Прервано (Ctrl+C).")
+        data["interrupted"] = True
+        code = EXIT_INTERRUPTED
+    else:
+        code = 0
+    finally:
+        pad.close()
+    data.update(buttons_seen=sorted(seen), background_ok=None, exit_code=code)
+    _result(**data)
+    return code
 
 
 def _finish(session: CameraSession, data: dict, code: int, stopped: bool = False) -> int:

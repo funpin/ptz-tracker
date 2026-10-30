@@ -65,3 +65,8 @@ def test_mac_bundle_is_a_regular_app():
     # иначе macOS считает приложение фоновым: нет своего меню и значка в Dock
     text = (ROOT / "packaging" / "ptztracker.spec").read_text(encoding="utf-8")
     assert '"LSBackgroundOnly": False' in text and "NSLocalNetworkUsageDescription" in text
+
+
+def test_pygame_dependency_and_spec():
+    assert "pygame-ce" in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"pygame"' in (ROOT / "packaging" / "ptztracker.spec").read_text(encoding="utf-8")
