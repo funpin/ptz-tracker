@@ -303,13 +303,14 @@ class GamepadThread:
         """Один шаг опроса. В режиме QTimer после сбоя (_dead) вызовы ничего не делают; stop() всё равно нужно вызвать."""
         if self._dead:
             return
+        was = self._connected
         try:
             self._tick()
         except Exception:
             log_thread.exception("Геймпад: сбой в цикле опроса")
             self._dead = True
-            was = self._connected
-            self._connected = False
+            with self._lock:
+                self._connected = False
             self._safe(lambda: self._on_intents([Disconnected()]))  # дубль безвреден
             if was:
                 self._safe(lambda: self._on_connection(None))
@@ -357,7 +358,8 @@ class GamepadThread:
                 self._b.set_player_index(self._player)
             self._on_connection(info)
         elif pad is None and self._connected:
-            self._connected = False
+            with self._lock:
+                self._connected = False
             self._rumble = []
             if intents:
                 self._on_intents(intents)  # сначала Disconnected: сбой обратного вызова связи его не теряет

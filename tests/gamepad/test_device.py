@@ -156,3 +156,17 @@ def test_rumble_queued_while_disconnected_dropped():
     for _ in range(3):
         th.tick()
     assert not [c for c in b.calls if c[0] == "rumble"]
+
+
+def test_on_intents_raises_on_unplug_still_reports_connection_lost():
+    b, th, got, conn = mk([RawPad(), None])
+    th.tick()
+    calls = []
+
+    def boom(x):
+        calls.append(x)
+        raise RuntimeError("x")
+
+    th._on_intents = boom
+    th.tick()
+    assert conn[-1] is None and calls
