@@ -14,7 +14,8 @@ def test_set_view_updates_track_button_and_hint(qtbot):
 def test_composition_buttons_show_digit(qtbot):
     p = FollowPanel()
     qtbot.addWidget(p)
-    assert p.comp_buttons["full"].hotkey == "4"
+    assert p.comp_buttons["full"].text().startswith("4 ")
+    assert "клавиша 4" in p.comp_buttons["full"].toolTip()
 
 
 def test_calibrate_signal(qtbot):

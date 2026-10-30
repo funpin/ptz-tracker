@@ -127,3 +127,18 @@ def test_status_pill_compact_hides_text(qtbot):
     assert p.text() == "" and p.full_text == "1280×720 · 25" and p.sizeHint().width() < wide
     p.set_compact(False)
     assert p.text() == "1280×720 · 25"
+
+
+def test_power_overlay_round_and_opaque(qtbot):
+    from PySide6.QtCore import Qt
+
+    from ptztracker.ui.widgets import PowerOverlay
+
+    o = PowerOverlay()
+    qtbot.addWidget(o)
+    o.resize(800, 450)
+    o.set_view("standby", "KZ")
+    o.show()
+    qtbot.wait(20)
+    assert o.power_btn.width() == o.power_btn.height() == PowerOverlay.BTN
+    assert o.testAttribute(Qt.WA_StyledBackground)

@@ -49,9 +49,11 @@ class FollowPanel(QWidget):
         grid = QGridLayout()
         grid.setSpacing(SP[0])
         for i, (key, comp) in enumerate(COMPOSITIONS.items()):
-            b = KeyButton(SHORT_TITLES.get(key, comp.title), str(i + 1), variant="choice")
+            # цифра клавиши — в самой подписи: на узкой кнопке нарисованная клавиша наползала на текст
+            b = KeyButton(f"{i + 1} {SHORT_TITLES.get(key, comp.title)}", variant="choice")
             b.setToolTip(f"{comp.title} — клавиша {i + 1}")
             b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)  # пять в ряд — поровну, без мин. ширины
+            b.setStyleSheet("padding: 0 2px;")
             b.setCheckable(True)
             b.setFocusPolicy(Qt.NoFocus)
             b.clicked.connect(lambda _=False, k=key: self.compositionChanged.emit(k))
