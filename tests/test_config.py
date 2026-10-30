@@ -251,3 +251,14 @@ def test_saved_mjpeg_url_gets_framerate(tmp_path, saved, fixed):
         encoding="utf-8",
     )
     assert ConfigStore(p).load().cameras[0].rtsp_url == fixed
+
+
+def test_pad_number_roundtrip_and_old_config(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"cameras": [{"id": "a", "name": "A", "ip": "10.0.0.12"}]}), encoding="utf-8")
+    store = ConfigStore(p)
+    cfg = store.load()
+    assert cfg.cameras[0].pad_number is None
+    cfg.cameras[0].pad_number = 3
+    store.save(cfg)
+    assert store.load().cameras[0].pad_number == 3
