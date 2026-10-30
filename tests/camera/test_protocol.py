@@ -1,5 +1,6 @@
 import pytest
 
+from ptztracker.camera import protocol as PR
 from ptztracker.camera.protocol import (
     CameraError,
     build_url,
@@ -100,3 +101,51 @@ def test_parse():
 def test_parse_garbage():
     with pytest.raises(ValueError):
         parse_pan_tilt("p1")
+
+
+# --- питание, gain, баланс белого (замер AW-HE40 2026-10-30, §7 спеки) ---
+
+
+def test_parse_power():
+    assert PR.parse_power("p1") == "on"
+    assert PR.parse_power("p0") == "standby"
+    assert PR.parse_power("p3") == "switching"
+    for body in ("ER2:O", "", "x", "p9"):
+        assert PR.parse_power(body) == "unknown"
+    assert PR.POWER_ON == "#O1" and PR.POWER_STANDBY == "#O0"
+
+
+def test_gain_codes():
+    assert PR.GAIN_CODES[0] == 0x08 and PR.GAIN_CODES[-1] == 0x38 and len(PR.GAIN_CODES) == 17
+    assert PR.gain(0x0B) == "OGU:0B"
+    assert PR.gain(PR.GAIN_AUTO) == "OGU:80"
+    for bad in (0x09, 0x39, 0x07):
+        with pytest.raises(ValueError):
+            PR.gain(bad)
+    assert PR.gain_db(0x11) == 9
+    assert PR.gain_db(0x80) is None
+    assert PR.parse_gain("OGU:11") == 0x11
+    with pytest.raises(ValueError):
+        PR.parse_gain("ER1:QGU")
+
+
+def test_wb():
+    assert PR.wb_mode(9) == "OAW:9"
+    for bad in (6, 7, 8, 10):
+        with pytest.raises(ValueError):
+            PR.wb_mode(bad)
+    assert PR.parse_wb("OAW:9") == 9
+    assert PR.WB_MODES[4] == "3200K" and PR.WB_MODES[9] == "VAR"
+
+
+def test_color_temp():
+    assert PR.color_temp(0x1A) == "OSD:B1:01A"
+    assert PR.color_temp(PR.COLOR_TEMP_MAX) == "OSD:B1:04B"
+    with pytest.raises(ValueError):
+        PR.color_temp(0x4C)
+    assert PR.parse_color_temp("OSD:B1:01A") == 0x1A
+    assert PR.color_temp_kelvin(0x1A) == 5000
+
+
+def test_build_url_cam():
+    assert "/aw_cam?cmd=OGU:0B&res=1" in build_url("h", "OGU:0B")
