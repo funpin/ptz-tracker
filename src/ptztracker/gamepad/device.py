@@ -1,4 +1,5 @@
-"""Слой устройства: геймпад через SDL (pygame-ce). Видео не инициализируется, окна нет.
+"""Слой устройства: геймпад через SDL (pygame-ce). Видео — только пустой драйвер dummy (event.pump без него
+не работает), окон нет.
 
 pygame импортируется лениво, в SdlBackend.open(): без него модуль импортируется, тесты работают на фейке.
 Фоновые события нужны, чтобы стик работал, пока окно программы не в фокусе (оператор в другом окне).
@@ -12,6 +13,7 @@ from dataclasses import dataclass, field
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 os.environ.setdefault("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1")
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")  # без видеосистемы event.pump() бросает pygame.error
 
 BUTTONS = ("cross", "circle", "square", "triangle", "l1", "r1", "l3", "r3",
            "dpad_up", "dpad_down", "dpad_left", "dpad_right", "touchpad", "options")
@@ -34,14 +36,16 @@ class SdlBackend:
         self._pg = None
         self._controller = None
         self._ctl = None
+        self._pump_error_logged = False
         self._mapping: dict[str, int] = {}
 
     def open(self) -> bool:
-        """Запускает только joystick/controller (без видео и звука). Любой сбой SDL — False и одна строка в лог."""
+        """Запускает joystick/controller и пустое видео dummy (без окон и звука). Любой сбой SDL — False и одна строка в лог."""
         try:
             import pygame
             import pygame._sdl2.controller as controller
 
+            pygame.display.init()  # драйвер dummy: ни окна, ни Cocoa
             pygame.joystick.init()
             controller.init()
             p = pygame
@@ -77,7 +81,10 @@ class SdlBackend:
             return None
         try:
             return self._poll()
-        except self._pg.error:
+        except self._pg.error as e:
+            if not self._pump_error_logged:
+                self._pump_error_logged = True
+                log.debug("Опрос геймпада: pygame.error: %s", e)
             self._ctl = None  # устройство пропало посреди опроса
             return None
 
@@ -132,6 +139,7 @@ class SdlBackend:
                 self._controller.quit()
             if self._pg is not None:
                 self._pg.joystick.quit()
+                self._pg.display.quit()
         except Exception:
             pass
         self._ctl = self._pg = self._controller = None

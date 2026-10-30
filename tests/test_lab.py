@@ -241,3 +241,24 @@ def test_lab_gamepad_connected_reports_buttons(monkeypatch, capsys):
     rc = main(["--lab", "gamepad", "--seconds", "0.3"])
     res = result_of(capsys.readouterr().out)
     assert rc == 0 and res["connected"] is True and res["buttons_seen"] == ["cross"] and res["type"] == "ps5"
+
+
+def test_sdl_backend_poll_pump_error_is_logged(caplog):
+    import logging
+    import types
+
+    from ptztracker.gamepad.device import SdlBackend
+
+    class PgError(Exception):
+        pass
+
+    def pump():
+        raise PgError("video system not initialized")
+
+    b = SdlBackend()
+    b._pg = types.SimpleNamespace(error=PgError, event=types.SimpleNamespace(pump=pump))
+    with caplog.at_level(logging.DEBUG, logger="ptztracker.gamepad.device"):
+        assert b.poll() is None
+        assert b.poll() is None
+    msgs = [r for r in caplog.records if "video system" in r.getMessage()]
+    assert len(msgs) == 1  # один раз, не на каждый опрос
