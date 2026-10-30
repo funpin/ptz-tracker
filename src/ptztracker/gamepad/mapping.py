@@ -16,9 +16,11 @@ from .intents import (
     MenuNav,
     MenuOpen,
     Neighbor,
+    NextCamera,
     PanTilt,
     Preset,
     PushFocus,
+    SaveMoment,
     Stop,
     ToggleFollow,
     Zoom,
@@ -32,6 +34,7 @@ REPEAT_RATE = 6.0         # ...столько шагов в секунду
 NEIGHBOR_THRESHOLD = 0.6  # правый стик вбок; взводится снова после возврата в мёртвую зону
 
 _PRESET_BUTTONS = {"cross": 0, "circle": 1, "square": 2, "triangle": 3}
+_HOLD_BUTTONS = ("cross", "circle", "square", "triangle", "create")  # короткое/длинное нажатие
 _REPEAT_BUTTONS = {"dpad_right": IrisStep(+1), "dpad_left": IrisStep(-1),
                    "dpad_up": GainStep(+1), "dpad_down": GainStep(-1)}
 _PLAIN_BUTTONS = {"r3": ToggleFollow(), "touchpad": Stop(), "l3": PushFocus(),
@@ -125,7 +128,7 @@ class Mapper:
                 elif b in ("touchpad", "r3"):
                     out.append(Stop() if b == "touchpad" else ToggleFollow())
                 continue
-            if b in _PRESET_BUTTONS:
+            if b in _HOLD_BUTTONS:
                 self._holds[b] = [t, False]
             elif b in _REPEAT_BUTTONS:
                 out.append(_REPEAT_BUTTONS[b])
@@ -138,7 +141,7 @@ class Mapper:
                 # перезапись пресета разрушительна: запоминаем только при виденном удержании; после сбоя опроса
                 # или при долгом удержании без записи не делаем ничего (оператор повторит)
                 if t - self._last_t <= STALL_S and t - hold[0] < PRESET_HOLD_S:
-                    out.append(Preset(_PRESET_BUTTONS[b], False))
+                    out.append(NextCamera() if b == "create" else Preset(_PRESET_BUTTONS[b], False))
             self._repeat.pop(b, None)
         if menu:
             self._holds.clear()
@@ -147,7 +150,7 @@ class Mapper:
             for b, hold in self._holds.items():
                 if not hold[1] and t - hold[0] >= PRESET_HOLD_S:
                     hold[1] = True
-                    out.append(Preset(_PRESET_BUTTONS[b], True))
+                    out.append(SaveMoment() if b == "create" else Preset(_PRESET_BUTTONS[b], True))
             for b in sorted(self._repeat):
                 if t >= self._repeat[b] and b in pad.buttons:
                     out.append(_REPEAT_BUTTONS[b])  # не больше шага за опрос: после паузы без «очереди» шагов

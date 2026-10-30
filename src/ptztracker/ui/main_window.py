@@ -42,9 +42,11 @@ from ptztracker.gamepad.intents import (
     GainStep,
     IrisStep,
     Neighbor,
+    NextCamera,
     PanTilt,
     Preset,
     PushFocus,
+    SaveMoment,
     Stop,
     ToggleFollow,
     Zoom,
@@ -1001,6 +1003,11 @@ class MainWindow(QMainWindow):
                 self.toggle_follow()
             elif isinstance(it, Composition):
                 self._pad_composition(it.d)
+            elif isinstance(it, NextCamera):
+                self._pad_next_camera()
+            elif isinstance(it, SaveMoment):
+                self.save_moment("геймпад")
+                self.pad.rumble(RUMBLE_PRESET_STORED)
             else:
                 self._pad_camera_intent(it)
         if moved:
@@ -1035,6 +1042,15 @@ class MainWindow(QMainWindow):
         elif isinstance(it, PushFocus):
             s.push_focus()
         # MenuOpen/MenuNav/MenuAccept/MenuClose — Задача 8
+
+    def _pad_next_camera(self) -> None:
+        """Create (коротко): следующая камера списка по кругу, как выбор в списке; одна камера — «некуда»."""
+        n = self.camera_combo.count()
+        if n < 2:
+            self.pad.rumble(RUMBLE_NOWHERE)
+            return
+        self.camera_combo.setCurrentIndex((self.camera_combo.currentIndex() + 1) % n)  # → _on_combo → _activate
+        self.pad.rumble(RUMBLE_NOWHERE)  # подтверждение; огоньки номера уже обновил _activate
 
     def _pad_stop_motion(self) -> None:
         """Геймпад больше ничего не держит: нули, автомат заперт до центра, опрос упора стоит."""

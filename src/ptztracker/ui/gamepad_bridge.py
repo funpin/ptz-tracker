@@ -15,6 +15,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Qt, Signal
 
+from ptztracker.gamepad.battery import BatteryEstimator
 from ptztracker.gamepad.device import GamepadThread, SdlBackend
 from ptztracker.gamepad.feedback import (
     RUMBLE_FOLLOW_AUTO_OFF,
@@ -77,6 +78,8 @@ class GamepadBridge(QObject):
     connectionChanged = Signal(object)  # info (dict) или None; в потоке Qt
     _raw = Signal(list, int)  # из потока опроса: намерения и поколение стопа
     _conn = Signal(object)  # из потока опроса
+    _batt = Signal(object, object)  # из потока опроса: процент, заряжается
+    batteryChanged = Signal()  # в потоке Qt
     _follow = Signal(bool, object)  # из потока слежения
     _limit = Signal()  # из потока LimitWatch
 
@@ -88,10 +91,14 @@ class GamepadBridge(QObject):
         self._vel = (0.0, 0.0, 0.0)
         self._led: tuple[int, int, int] | None = None
         self._player: int | None = None
+        self.battery_percent: int | None = None
+        self.battery_charging: bool | None = None
+        self._battery = BatteryEstimator()
         self._mapper = _LockedMapper(Mapper(menu_open or (lambda: False)))
         self._thread: GamepadThread | None = None
         self._raw.connect(self._on_raw, Qt.QueuedConnection)
         self._conn.connect(self._on_conn, Qt.QueuedConnection)
+        self._batt.connect(self._on_batt, Qt.QueuedConnection)
         self._follow.connect(self._on_follow, Qt.QueuedConnection)
         self._limit.connect(self._on_limit, Qt.QueuedConnection)
         if backend is None:
@@ -103,7 +110,8 @@ class GamepadBridge(QObject):
             ok = False
         if not ok:
             return
-        self._thread = GamepadThread(backend, self._mapper, self._emit_raw, self._conn.emit, hz=hz)
+        self._thread = GamepadThread(backend, self._mapper, self._emit_raw, self._conn.emit, hz=hz,
+                                    on_battery=self._batt.emit)
         self._thread.start()
 
     @property
@@ -137,7 +145,21 @@ class GamepadBridge(QObject):
                 self._thread.set_player(self._player)
         else:
             log.info("Геймпад отключён")
+            self._on_batt(None, None)
         self.connectionChanged.emit(info)
+
+    def _on_batt(self, percent, charging) -> None:
+        if percent is None:
+            self._battery.reset()
+        else:
+            self._battery.add(time.monotonic(), int(percent), bool(charging))
+        self.battery_percent = percent
+        self.battery_charging = charging
+        self.batteryChanged.emit()
+
+    def battery_remaining_s(self) -> float | None:
+        """Оценка до разряда, с; None — заряжается или данных ещё мало."""
+        return self._battery.remaining_s()
 
     def _on_follow(self, on: bool, reason) -> None:
         if on:

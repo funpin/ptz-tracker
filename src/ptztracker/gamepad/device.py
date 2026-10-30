@@ -18,6 +18,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from .battery import parse_dualsense_battery
 from .intents import Disconnected
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
@@ -25,7 +26,7 @@ os.environ.setdefault("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")  # без видеосистемы event.pump() бросает pygame.error
 
 BUTTONS = ("cross", "circle", "square", "triangle", "l1", "r1", "l3", "r3",
-           "dpad_up", "dpad_down", "dpad_left", "dpad_right", "touchpad", "options")
+           "dpad_up", "dpad_down", "dpad_left", "dpad_right", "touchpad", "options", "create")
 STICK_AXES = ("leftx", "lefty", "rightx", "righty")  # −1…1, вниз = + (как в SDL)
 TRIGGER_AXES = ("l2", "r2")  # 0…1
 
@@ -37,6 +38,8 @@ class RawPad:
 
 
 log = logging.getLogger(__name__)
+DUALSENSE_VID, DUALSENSE_PID = 0x054C, 0x0CE6
+BATTERY_PERIOD_S = 5.0
 TOUCHPAD_BUTTON = 20  # SDL_CONTROLLER_BUTTON_TOUCHPAD в SDL2; в pygame-ce 2.5 константы нет (15 — это MISC1, кнопка микрофона)
 
 
@@ -49,6 +52,9 @@ class SdlBackend:
         self._warned: set[str] = set()
         self._mapping: dict[str, int] = {}
         self._sdl = None
+        self._hid = None            # дескриптор SDL_hid для чтения заряда
+        self._hid_tried = False
+        self._last_battery: tuple[int | None, bool | None] = (None, None)
 
     def open(self) -> bool:
         """Запускает joystick/controller и пустое видео dummy (без окон и звука). Любой сбой SDL — False и одна строка в лог."""
@@ -67,7 +73,7 @@ class SdlBackend:
                 "r3": p.CONTROLLER_BUTTON_RIGHTSTICK, "dpad_up": p.CONTROLLER_BUTTON_DPAD_UP,
                 "dpad_down": p.CONTROLLER_BUTTON_DPAD_DOWN, "dpad_left": p.CONTROLLER_BUTTON_DPAD_LEFT,
                 "dpad_right": p.CONTROLLER_BUTTON_DPAD_RIGHT, "touchpad": TOUCHPAD_BUTTON,
-                "options": p.CONTROLLER_BUTTON_START,
+                "options": p.CONTROLLER_BUTTON_START, "create": p.CONTROLLER_BUTTON_BACK,
             }
             self._pg, self._controller = pygame, controller
             return True
@@ -80,6 +86,7 @@ class SdlBackend:
         if self._ctl is not None and self._ctl.attached():
             return True
         self._ctl = None
+        self._close_hid()
         c = self._controller
         for i in range(c.get_count()):
             if c.is_controller(i):
@@ -191,7 +198,58 @@ class SdlBackend:
             idx = -1 if n is None else max(1, min(4, int(n))) - 1
             self._call("set_player_index", self._set_player_index, idx)
 
+    def _hid_lib(self):
+        lib = self._sdl_lib()
+        if not getattr(lib, "_hid_typed", False):
+            lib.SDL_hid_open.restype = ctypes.c_void_p
+            lib.SDL_hid_open.argtypes = [ctypes.c_ushort, ctypes.c_ushort, ctypes.c_wchar_p]
+            lib.SDL_hid_read_timeout.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int]
+            lib.SDL_hid_close.argtypes = [ctypes.c_void_p]
+            lib._hid_typed = True
+        return lib
+
+    def _close_hid(self) -> None:
+        h = self._hid
+        self._hid, self._hid_tried = None, False
+        self._last_battery = (None, None)
+        if h:
+            try:
+                self._hid_lib().SDL_hid_close(h)
+            except Exception:
+                pass
+
+    def _read_battery(self) -> tuple[int | None, bool | None]:
+        if self._ctl is None or "dualsense" not in (self._ctl.name or "").lower():
+            return (None, None)
+        lib = self._hid_lib()
+        if self._hid is None:
+            if self._hid_tried:
+                return (None, None)
+            self._hid_tried = True
+            self._hid = lib.SDL_hid_open(DUALSENSE_VID, DUALSENSE_PID, None) or None
+            if self._hid is None:
+                raise OSError("SDL_hid_open не открыл DualSense")
+        buf = ctypes.create_string_buffer(128)
+        for _ in range(32):  # вычитываем очередь, нужен самый свежий отчёт
+            n = lib.SDL_hid_read_timeout(self._hid, buf, 128, 0)
+            if n < 0:
+                raise OSError("SDL_hid_read_timeout вернул ошибку")
+            if n == 0:
+                break
+            parsed = parse_dualsense_battery(buf.raw[:n])
+            if parsed is not None:
+                self._last_battery = parsed
+        return self._last_battery
+
+    def battery(self) -> tuple[int | None, bool | None]:
+        """(процент шагом 10, заряжается) для DualSense; иначе или при сбое (None, None). Вызывать не чаще раза в 5 с."""
+        out: list = []
+        if self._call("battery", lambda: out.append(self._read_battery()) or True):
+            return out[0]
+        return (None, None)
+
     def close(self) -> None:
+        self._close_hid()
         try:
             if self._ctl is not None:
                 self._ctl.quit()
@@ -218,9 +276,14 @@ class GamepadThread:
 
     def __init__(self, backend, mapper, on_intents: Callable[[list], None],
                  on_connection: Callable[[dict | None], None], hz: float = 100.0,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 on_battery: Callable[[int | None, bool | None], None] | None = None) -> None:
         self._b, self._mapper = backend, mapper
         self._on_intents, self._on_connection = on_intents, on_connection
+        self._on_battery = on_battery
+        self._batt_next = 0.0
+        self._batt_last: tuple | None = None
+        self._batt_warned = False
         self._period = 1.0 / hz
         self._clock = clock
         self._q: queue.SimpleQueue = queue.SimpleQueue()
@@ -356,11 +419,13 @@ class GamepadThread:
                 self._b.set_led(self._led)
             if self._player is not None:
                 self._b.set_player_index(self._player)
+            self._batt_next, self._batt_last = 0.0, None
             self._on_connection(info)
         elif pad is None and self._connected:
             with self._lock:
                 self._connected = False
             self._rumble = []
+            self._publish_battery((None, None))
             if intents:
                 self._on_intents(intents)  # сначала Disconnected: сбой обратного вызова связи его не теряет
                 intents = []
@@ -369,3 +434,25 @@ class GamepadThread:
             self._on_intents(intents)
         if self._connected:
             self._step_rumble(now)
+            self._poll_battery(now)
+
+    def _publish_battery(self, val: tuple) -> None:
+        if self._on_battery is None or val == self._batt_last:
+            return
+        self._batt_last = val
+        self._on_battery(*val)
+
+    def _poll_battery(self, now: float) -> None:
+        """Заряд — раз в 5 с; сбой не роняет опрос (одна строка в лог), публикуем только изменения."""
+        read = getattr(self._b, "battery", None)
+        if read is None or self._on_battery is None or now < self._batt_next:
+            return
+        self._batt_next = now + BATTERY_PERIOD_S
+        try:
+            val = tuple(read())
+        except Exception as e:
+            if not self._batt_warned:
+                self._batt_warned = True
+                log_thread.debug("Заряд геймпада не прочитан: %s: %s", type(e).__name__, e)
+            val = (None, None)
+        self._publish_battery(val)

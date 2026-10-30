@@ -9,9 +9,11 @@ from ptztracker.gamepad.intents import (
     MenuNav,
     MenuOpen,
     Neighbor,
+    NextCamera,
     PanTilt,
     Preset,
     PushFocus,
+    SaveMoment,
     Stop,
     ToggleFollow,
     Zoom,
@@ -181,3 +183,32 @@ def test_neighbor_deflected_at_connect_disarmed():
     assert m.update(pad(rightx=0.9), 0.1) == []
     assert m.update(pad(), 0.2) == []
     assert m.update(pad(rightx=0.9), 0.3) == [Neighbor(+1)]
+
+
+def test_create_short_next_camera():
+    m = mk()
+    m.update(pad({"create"}), 0.0)
+    assert m.update(pad(), 0.3) == [NextCamera()]
+
+
+def test_create_long_saves_moment_once_release_silent():
+    m = mk()
+    m.update(pad({"create"}), 0.0)
+    m.update(pad({"create"}), 0.5)
+    assert m.update(pad({"create"}), 1.0) == [SaveMoment()]
+    assert m.update(pad({"create"}), 1.5) == []
+    assert m.update(pad(), 1.6) == []
+
+
+def test_create_release_after_poll_gap_does_nothing():
+    m = mk()
+    m.update(pad({"create"}), 0.0)
+    m.update(pad({"create"}), 0.1)
+    assert m.update(pad(), 0.9) == []
+
+
+def test_create_ignored_in_menu():
+    m = mk(menu=True)
+    m.update(pad({"create"}), 0.0)
+    assert m.update(pad({"create"}), 1.5) == []
+    assert m.update(pad(), 1.6) == []

@@ -26,6 +26,7 @@ class PadBackend:
     def __init__(self, fail=False):
         self.pad = RawPad()
         self.fail = fail
+        self.batt = (None, None)
         self.calls = []
         self._lock = threading.Lock()
 
@@ -52,6 +53,9 @@ class PadBackend:
 
     def rumble(self, low, high, ms):
         self._rec("rumble", low, high, ms)
+
+    def battery(self):
+        return self.batt
 
     def close(self):
         pass
@@ -434,3 +438,57 @@ def test_pad_number_for(name, pad, idx, want):
     cams = [CameraConfig(id=str(i), name="x", ip="10.0.0.12") for i in range(3)]
     cams[idx] = CameraConfig(id=str(idx), name=name, ip="10.0.0.12", pad_number=pad)
     assert pad_number_for(cams[idx], cams) == want
+
+
+def test_create_short_selects_next_camera_wraps(qtbot, tmp_path):
+    cams = [CameraConfig(id="a", name="KZ_PTZ_1", ip="10.0.0.12"), CameraConfig(id="b", name="KZ_PTZ_2", ip="10.0.0.13")]
+    w, b = make(qtbot, tmp_path, cameras=cams)
+    seen = []
+    w._activate = lambda cam: seen.append(cam.id)
+    assert w.camera_combo.currentData() == "sim"
+    press(qtbot, b, "create")
+    qtbot.waitUntil(lambda: seen == ["a"], timeout=2000)
+    assert w.camera_combo.currentData() == "a"
+    press(qtbot, b, "create")
+    qtbot.waitUntil(lambda: seen == ["a", "b"], timeout=2000)
+    qtbot.waitUntil(lambda: b.of("rumble").count(RUMBLE_NOWHERE[0]) == 2, timeout=1000)  # подтверждение
+    w.close()
+
+
+def test_create_single_camera_nowhere(qtbot, tmp_path):
+    w, b = make(qtbot, tmp_path)
+    w.camera_combo.blockSignals(True)
+    w.camera_combo.removeItem(0)  # остаётся один «Симулятор» (в конфиге по умолчанию есть ещё камера)
+    w.camera_combo.blockSignals(False)
+    assert w.camera_combo.count() == 1
+    session = w.session
+    press(qtbot, b, "create")
+    qtbot.waitUntil(lambda: b.of("rumble") == [RUMBLE_NOWHERE[0]], timeout=1000)
+    assert w.session is session
+    w.close()
+
+
+def test_create_long_saves_moment(qtbot, tmp_path):
+    w, b = make(qtbot, tmp_path)
+    reasons = []
+    w.save_moment = lambda reason="F9": reasons.append(reason)
+    b.pad = stick(buttons={"create"})
+    qtbot.waitUntil(lambda: reasons == ["геймпад"], timeout=3000)
+    qtbot.waitUntil(lambda: b.of("rumble") == [RUMBLE_PRESET_STORED[0]], timeout=1000)
+    b.pad = stick()
+    qtbot.wait(200)
+    assert reasons == ["геймпад"] and b.of("rumble") == [RUMBLE_PRESET_STORED[0]]
+    w.close()
+
+
+def test_battery_exposed_on_bridge(qtbot, tmp_path):
+    b = PadBackend()
+    b.batt = (80, False)
+    w, b = make(qtbot, tmp_path, backend=b)
+    qtbot.waitUntil(lambda: w.pad.battery_percent == 80, timeout=2000)
+    assert w.pad.battery_charging is False and w.pad.battery_remaining_s() is None
+    w.pad._on_batt(70, True)
+    assert w.pad.battery_charging is True and w.pad.battery_remaining_s() is None
+    w.pad._on_conn(None)
+    assert w.pad.battery_percent is None and w.pad.battery_charging is None
+    w.close()

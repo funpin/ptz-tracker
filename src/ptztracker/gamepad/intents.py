@@ -79,9 +79,19 @@ class MenuClose:
 
 
 @dataclass(frozen=True)
+class NextCamera:
+    pass
+
+
+@dataclass(frozen=True)
+class SaveMoment:
+    pass
+
+
+@dataclass(frozen=True)
 class Disconnected:
     pass
 
 
 Intent = (PanTilt | Zoom | Preset | IrisStep | GainStep | Neighbor | ToggleFollow | Stop | PushFocus
-          | Composition | MenuOpen | MenuNav | MenuAccept | MenuClose | Disconnected)
+          | Composition | MenuOpen | MenuNav | MenuAccept | MenuClose | NextCamera | SaveMoment | Disconnected)
