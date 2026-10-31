@@ -7,10 +7,13 @@ import time
 
 from ptztracker.camera import protocol as P
 from ptztracker.camera.client import CameraClient
+from ptztracker.camera.protocol import CameraError
 from ptztracker.diagnostics.motion import measure_shift
 from ptztracker.video.frames import FrameSource
 
 PACE_S = 0.15  # пауза между командами при замерах (с запасом к 130 мс)
+ER2_RETRY_S = 0.15  # пауза перед повтором команды, на которую камера ответила er2 («занята»)
+ER2_RETRY_TOTAL_S = 2.0  # дольше не повторяем: в ожидании (standby) камера отвечает ER2 на всё
 SPEED_MAX_S = 1.5
 SPEED_MAX_FRACTION = 0.25
 
@@ -18,17 +21,26 @@ log = logging.getLogger(__name__)
 
 
 class Pacer:
-    """Отправка команд не чаще PACE_S."""
+    """Отправка команд не чаще PACE_S; на er2 («занята») повторяет до ER2_RETRY_TOTAL_S, потом бросает ошибку."""
 
     def __init__(self, client: CameraClient, gap: float = PACE_S):
         self.client, self.gap, self._last = client, gap, 0.0
 
     def send(self, cmd: str) -> str:
-        wait = self._last + self.gap - time.monotonic()
-        if wait > 0:
-            time.sleep(wait)
-        self._last = time.monotonic()
-        return self.client.send(cmd)
+        deadline = time.monotonic() + ER2_RETRY_TOTAL_S
+        while True:
+            wait = self._last + self.gap - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            self._last = time.monotonic()
+            try:
+                return self.client.send(cmd)
+            except CameraError as e:
+                # er1/er3 — ошибка команды, повтор не поможет; er2 — камера занята (пульт, ожидание, частые команды)
+                if e.code != "er2" or time.monotonic() + ER2_RETRY_S >= deadline:
+                    raise
+                log.info("%s: er2, повтор", cmd)
+                time.sleep(ER2_RETRY_S)
 
     def timed_send(self, cmd: str) -> tuple[str, float]:
         """Отправить и вернуть (ответ, момент посередине запроса) — когда камера, вероятно, его получила."""
