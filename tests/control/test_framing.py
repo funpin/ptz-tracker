@@ -9,7 +9,15 @@ from ptztracker.camera import he42
 from ptztracker.control.camera_model import CameraDynamics, default_calibration
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
-from ptztracker.control.framing import BRAKE, TRACK_ZOOM_MAX, WATCHDOG_MOVING_V, SwingWatch
+from ptztracker.control.framing import (
+    BRAKE,
+    TRACK_ZOOM_MAX,
+    WATCHDOG_MOVING_V,
+    ZOOM_LIMIT_LEAD_S,
+    ZOOM_LIMIT_RELEASE,
+    FramingController,
+    SwingWatch,
+)
 
 AX = COMPOSITIONS["waist_center"].anchor[0]
 E = EffortProfile.at(0.5)
@@ -136,6 +144,42 @@ def test_zoom_in_stops_at_track_zoom_max_for_far_person():
         stop = next(i for i, g in enumerate(gz) if g >= TRACK_ZOOM_MAX - 0x20)
         assert all(z <= 0 for z in tr.zoom[stop + 100:]), adapt  # у предела наезда больше нет
         assert gz[-1] - gz[stop + 100] <= 0x10, adapt
+
+
+def test_zoom_command_cut_at_limit_even_when_size_error_is_in_dead_zone():
+    """У предела идущий наезд гасится сразу, а не плавным спадом: размер цели уже в мёртвой зоне (want = 0),
+    но команда «ближе» ещё >0 — раньше её гасил только случай want > 0, и зум полз за предел."""
+    for eff in (0.0, 0.5, 1.0):
+        e = EffortProfile.at(eff)
+        ctrl = FramingController(COMPOSITIONS["waist_center"], e, default_calibration(), 0.15)
+        ctrl._u = ctrl.composition.u_frac  # размер ровно по цели: ошибка 0, в мёртвой зоне
+        ctrl._zoom_cmd = e.zoom_max  # наезд идёт на полной скорости
+        cmd, size_err = ctrl._zoom(1.0, 0.04, True, False, e, TRACK_ZOOM_MAX)
+        assert abs(size_err) < e.zoom_dead
+        assert cmd <= 0.0, eff
+
+
+def test_zoom_limit_release_exceeds_lead_term_at_sharpest_effort():
+    """Обнуление команды наезда при остановке убирает слагаемое ZOOM_LIMIT_LEAD_S·cmd из прогноза: запас снятия
+    защёлки должен быть больше него на «Резко», иначе остановка сама снимала бы защёлку и наезд дёргался."""
+    assert ZOOM_LIMIT_RELEASE > ZOOM_LIMIT_LEAD_S * EffortProfile.at(1.0).zoom_max
+
+
+def test_zoom_in_resumes_after_release_far_near_far():
+    """Далеко (наезд до предела) → близко (отъезд ниже предела, защёлка снята) → снова далеко: наезд идёт заново
+    и снова доходит до предела."""
+    far, near = 0.02, 0.5
+    tr = run(lambda t: AX, world_u=lambda t: near if 45 <= t < 62 else far, T=110, zoom_pos=0x73F, gz_period=0.5,
+             cmd_delay=QUEUE_MAX)
+    gz = _gz_of(tr, 0x73F)
+    first = [g for t, g in zip(tr.t, gz) if t < 45]
+    mid = [g for t, g in zip(tr.t, gz) if 45 <= t < 62]
+    last = [g for t, g in zip(tr.t, gz) if t >= 62]
+    assert max(first) >= TRACK_ZOOM_MAX - 0x60  # первый подъезд дошёл до предела
+    assert min(mid) < TRACK_ZOOM_MAX - 0x100  # отъехал заметно ниже предела (защёлка снята)
+    # второй подъезд: зум снова идёт «ближе» и доходит до предела, не выше +0x20
+    assert max(last) >= TRACK_ZOOM_MAX - 0x60 and max(last) <= TRACK_ZOOM_MAX + 0x20
+    assert max(last) - min(last) >= 0x80
 
 
 def test_zoom_in_blocked_beyond_limit_but_zoom_out_free():

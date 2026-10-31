@@ -34,7 +34,9 @@ def test_episode_is_small_and_replays():
     # «ближе» на теле; повороты и наклоны — те же.
     assert all(a[:2] == b[:2] for a, b in zip(res.codes_rec, res.codes_new))
     diff = [(a[2], b[2], z) for a, b, z in zip(res.codes_rec, res.codes_new, res.zoom_pos) if a != b]
-    assert diff and all(old > 50 and new <= 50 and z >= 0xC00 for old, new, z in diff)
+    # расхождений мало: измерено 126 тактов из 1344 (~9%); предел 20% ловит случай, когда зум почти не наезжает вообще
+    assert diff and len(diff) < 0.2 * len(res.codes_rec)
+    assert all(old > 50 and new <= 50 and z >= 0xC00 for old, new, z in diff)
     assert all(b[2] <= 50 for b, z in zip(res.codes_new, res.zoom_pos) if z >= TRACK_ZOOM_MAX)
 
 
