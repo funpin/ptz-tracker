@@ -64,7 +64,7 @@ def run(
     cam_dead_time: float | None = None,  # мёртвое время камеры на самом деле (None — как в калибровке)
     meas_dt: float = MEAS_DT,  # период замеров анализа (MJPEG 2: 12 к/с → 1/12)
     adapt: bool = False,  # как Follower: скорости → коды камеры (с поправкой), подстройка скорости по #APC/#GZ
-    # камера — как живая HE42 (adapt=True): постоянные °/с по коду (sim.ptz_model.he42_deg_s) при любом зуме,
+    # камера — как живая HE42 (adapt=True): постоянные °/с по коду (sim.ptz_model.he42_deg_s) до 0xD54, выше — медленнее,
     # а не таблица калибровки регулятора: проверяет саму таблицу (площадка 2026-10-29, §3б)
     cam_he42: bool = False,
 ) -> Trace:
@@ -129,8 +129,9 @@ def run(
             k = math.exp(cam_z.position(t))
             if adapter is not None and cam_he42:  # °/с камеры → мировые единицы (доли кадра на зуме старта)
                 adapter.pt_sent(t, qp, qt, gz_pos)
-                cam_x.command(t, speed_factor * he42_deg_s(qp) / hfov_at(zoom_pos))
-                cam_y.command(t, speed_factor * he42_deg_s(qt) / hfov_at(zoom_pos) / TILT_FROM_FH)
+                true_gz = round(zoom_pos + cam_z.position(t) / math.log(he42.ZOOM_RATIO) * (P.LENS_MAX - P.LENS_MIN))
+                cam_x.command(t, speed_factor * he42_deg_s(qp, true_gz) / hfov_at(zoom_pos))  # на теле — медленнее
+                cam_y.command(t, speed_factor * he42_deg_s(qt, true_gz) / hfov_at(zoom_pos) / TILT_FROM_FH)
                 continue
             if adapter is not None:  # камера едет по таблице без поправки, только в speed_factor раз быстрее
                 adapter.pt_sent(t, qp, qt, gz_pos)

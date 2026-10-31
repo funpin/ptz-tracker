@@ -1,7 +1,7 @@
 """Виртуальная PTZ-камера: принимает те же команды, что AW-HE42, и двигается как она.
 
-Скорости (°/с, от зума не зависят), разгон и зум — из замеров живой камеры (camera.he42), углы обзора —
-из паспорта (he42.HFOV_*), шкала APC — he42.APC_DEG_PER_UNIT.
+Скорости (°/с, до 0xD54 от зума не зависят, на теле замедляются), разгон и зум — из замеров живой камеры
+(camera.he42), углы обзора — из паспорта (he42.HFOV_*), шкала APC — he42.APC_DEG_PER_UNIT.
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ ZOOM_RATIO_MAX = he42.ZOOM_RATIO
 ZOOM_RATE = 0.4  # доля диапазона зума в секунду при переходе к абсолютной позиции
 LENS_MIN, LENS_MAX = 0x555, 0xFFF
 
-# Как живая HE42 (площадка 2026-10-29): постоянные °/с при любом зуме, наклон — как поворот; в долях кадра
-# скорость растёт при приближении.
+# Как живая HE42 (площадка 2026-10-29): постоянные °/с до 0xD54, наклон — как поворот; в долях кадра скорость
+# растёт при приближении. Выше 0xD54 поворот замедляется (AW-HE40, клуб 2026-10-30, he42.TELE_PAN_DEG_S).
 HE42_DEG_S = {50: 0.0, **he42.PAN_DEG_S}
 HE42_ZOOM_LN_S = {50: 0.0, **he42.ZOOM_LN_S}
 
@@ -44,9 +44,11 @@ def _signed_interp(table: dict[int, float], code: int) -> float:
     return 0.0
 
 
-def he42_deg_s(code: int) -> float:
-    """Скорость pan/tilt (град/с, со знаком) для кода 01–99."""
-    return _signed_interp(HE42_DEG_S, code)
+def he42_deg_s(code: int, zoom_pos: int | None = None) -> float:
+    """Скорость pan/tilt (град/с, со знаком) для кода 01–99; zoom_pos — положение #GZ (None — до 0xD54, без
+    замедления на теле, he42.TELE_PAN_DEG_S)."""
+    v = _signed_interp(HE42_DEG_S, code)
+    return v if zoom_pos is None else v * he42.tele_pan_ratio(code, zoom_pos)
 
 
 def he42_zoom_ln_s(code: int) -> float:
@@ -129,8 +131,9 @@ class SimPtz:
                     self._target = None
             else:
                 div = self.zoom_ratio() if self.speed_with_zoom else 1.0
-                tgt_p = he42_deg_s(self.pan_code) / div
-                tgt_t = he42_deg_s(self.tilt_code) / div
+                gz = self._zoom_units()
+                tgt_p = he42_deg_s(self.pan_code, gz) / div
+                tgt_t = he42_deg_s(self.tilt_code, gz) / div
                 self.pan_vel += (tgt_p - self.pan_vel) * a
                 self.tilt_vel += (tgt_t - self.tilt_vel) * a
             if self._zoom_target is not None:

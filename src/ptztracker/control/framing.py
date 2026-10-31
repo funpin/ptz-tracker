@@ -69,6 +69,12 @@ WATCHDOG_APC_MIN_DEG = 0.02  # за полупериод меньше — кам
 WATCHDOG_APC_MIN_STEP = max(1, math.ceil(WATCHDOG_APC_MIN_DEG / he42.APC_DEG_PER_UNIT))  # в единицах #APC
 TILT_FROM_FH = 9 / 16  # скорость по вертикали (доли высоты) → эквивалент по ширине кадра 16:9
 LENS_END_MARGIN = 8
+# Предел наезда при слежении (#GZ): выше 0xD54 угол обзора меньше ~7° и любое движение — большая доля кадра, а
+# поворот камеры замедляется (he42.TELE_PAN_DEG_S). «Пояс» на дальнего человека (HE40 2026-10-30) уводил зум до
+# 0xF41 (~3°) — размер цели просто не достигается. Ручной зум и отъезд не ограничены.
+TRACK_ZOOM_MAX = 0xD55
+ZOOM_LIMIT_RELEASE = 0.03  # ln: наезд снова разрешён, когда зум отъехал от предела больше чем на столько
+ZOOM_LIMIT_LEAD_S = 0.1  # команда наезда, ещё не дошедшая до камеры (очередь планировщика), — в прогнозе положения
 LOST_STOP_S = 0.5
 LOST_COAST_S = 0.6  # человек ушёл за край быстрее камеры и пропал — столько ещё идём за ним
 STILL_V = 0.02  # медленнее — считаем, что человек стоит
@@ -508,6 +514,7 @@ class FramingController:
         self._u_t: float | None = None
         self._zoom_cmd = 0.0
         self._zoom_active = False
+        self._zoom_capped = False  # наезд остановлен у TRACK_ZOOM_MAX (защёлка с запасом ZOOM_LIMIT_RELEASE)
         self._hold_since: float | None = None
         self._still_since: float | None = None
         self._zoom_calm_since: float | None = None
@@ -623,6 +630,18 @@ class FramingController:
         """Во сколько раз картинка увеличена зумом с момента старта регулятора."""
         return math.exp(self.zdyn.position(t))
 
+    def _zoom_limit_reached(self, now: float, zoom_pos: int) -> bool:
+        """Дошёл ли зум (с учётом уже отправленного и тормозного пути) до TRACK_ZOOM_MAX. Защёлка: после остановки
+        у предела наезд не трогается заново от дрожания #GZ — только когда зум отъехал на ZOOM_LIMIT_RELEASE."""
+        ln = zoom_ln(zoom_pos) if self._gz_ref is None else self._gz_ref
+        ln += self.zdyn.position(now) + self.zdyn.coast(now) + max(self._zoom_cmd, 0.0) * ZOOM_LIMIT_LEAD_S
+        limit = zoom_ln(TRACK_ZOOM_MAX)
+        if ln >= limit:
+            self._zoom_capped = True
+        elif ln < limit - ZOOM_LIMIT_RELEASE:
+            self._zoom_capped = False
+        return self._zoom_capped
+
     def _zoom(
         self, now: float, dt: float, active: bool, walking: bool, e: EffortProfile, zoom_pos: int,
         shortfall: float = 0.0,
@@ -655,6 +674,10 @@ class FramingController:
                 want = min(want, -ESCAPE_ZOOM * min(1.0, miss / EDGE_SHORTFALL))
         elif any(ax.exit_cmd and now - ax.active_t <= LOST_COAST_S for ax in (self.x, self.y)) and not self.diverged:
             want, escaping = -ESCAPE_ZOOM, True  # ушёл за край и пропал: идём за ним и шире, чтобы снова увидеть
+        capped = self._zoom_limit_reached(now, zoom_pos)
+        if want > 0 and capped:
+            want = 0.0  # размер цели не достигается: у предела наезда дальше не едем
+            self._zoom_cmd = min(self._zoom_cmd, 0.0)  # уже идущий наезд — сразу стоп: торможение учтено в прогнозе
         # у края диапазона объектива дальше не зумируем
         if (want < 0 and zoom_pos <= P.LENS_MIN + LENS_END_MARGIN) or (want > 0 and zoom_pos >= P.LENS_MAX - LENS_END_MARGIN):
             want = 0.0

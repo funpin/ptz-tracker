@@ -10,7 +10,7 @@ from ptztracker.camera.client import CameraClient
 from ptztracker.control.calibration import CalibrationRunner, fit_ramp, monotone_curve
 from ptztracker.sim.frame_source import SimFrameSource
 from ptztracker.sim.http_server import SimHttpServer
-from ptztracker.sim.ptz_model import HE42_DEG_S, SimPtz, he42_deg_s
+from ptztracker.sim.ptz_model import SimPtz, he42_deg_s
 from ptztracker.sim.scene import SyntheticStage
 
 
@@ -216,8 +216,9 @@ def test_wizard_waits_for_zoom_that_starts_late():
     sim.handle = late_zoom
     try:
         cal = CalibrationRunner(client.send, src, lambda m: None, zooms=[0xFFF], codes=(70, 80)).run()
-        # °/с камеры от зума не зависят (как у живой HE42); угол обзора — по доехавшему #GZ
-        truth = {c: HE42_DEG_S[c] / he42.HFOV_TELE_DEG for c in (70, 80)}
+        # °/с камеры до 0xD54 от зума не зависят (как у живой HE42), на теле — замедлены (HE40, he42.TELE_PAN_DEG_S);
+        # угол обзора — по доехавшему #GZ
+        truth = {c: he42_deg_s(c, 0xFFF) / he42.HFOV_TELE_DEG for c in (70, 80)}
         for code, want in truth.items():
             assert abs(cal.pan.speed(code, 0xFFF) / want - 1) < 0.1, (code, cal.pan.speed(code, 0xFFF), want)
     finally:

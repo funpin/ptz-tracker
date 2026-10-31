@@ -1,5 +1,6 @@
+from ptztracker.camera import he42
 from ptztracker.camera.protocol import parse_pan_tilt, parse_zoom
-from ptztracker.sim.ptz_model import SimPtz
+from ptztracker.sim.ptz_model import SimPtz, he42_deg_s
 
 
 class FakeClock:
@@ -47,10 +48,11 @@ def test_no_instant_jump_on_start():
     assert s.pan_vel < 90 * 0.2  # инерция
 
 
-def test_constant_deg_s_at_any_zoom_like_live_he42():
-    """Площадка 2026-10-29: у живой HE42 «Speed With Zoom Pos.» выключена — °/с одни на любом зуме."""
+def test_constant_deg_s_up_to_d54_like_live_he42():
+    """Площадка 2026-10-29: у живой HE42 °/с одни на любом зуме до тела; выше 0xD54 поворот замедляется
+    (клуб 2026-10-30, тест ниже). Было: «на любом зуме», включая FFF."""
     a, b = SimPtz(), SimPtz()
-    a.zoom, b.zoom = 0.0, 1.0
+    a.zoom, b.zoom = 0.0, (0xD54 - 0x555) / (0xFFF - 0x555)
     for s in (a, b):
         s.handle("#PTS7070")
         run(s, 1.0)
@@ -209,3 +211,17 @@ def test_wb_and_temp():
     assert s.handle("OSD:B1:04B") == "OSD:B1:04B"
     assert s.handle("OSD:B1:04C").upper().startswith("ER3")
     assert s.handle("QSD:B1") == "OSD:B1:04B"
+
+
+def test_slower_at_tele_like_live_he40():
+    """AW-HE40 (клуб 2026-10-30): выше 0xD54 поворот замедляется (he42.TELE_PAN_DEG_S), симулятор — так же, как модель."""
+    wide, tele = SimPtz(), SimPtz()
+    wide.zoom, tele.zoom = 0.0, 1.0
+    for s in (wide, tele):
+        s.handle("#PTS7070")
+        for _ in range(300):  # 3 с: разгон и мёртвое время давно прошли
+            s.update(0.01)
+    assert abs(wide.pan_vel - he42.PAN_DEG_S[70]) < 0.05
+    assert abs(tele.pan_vel - 2.47) < 0.05 and abs(tele.tilt_vel - 2.47) < 0.05
+    assert he42_deg_s(70) == he42.PAN_DEG_S[70]  # без зума — как прежде (широкий угол)
+    assert abs(he42_deg_s(70, 0xFFF) - 2.47) < 1e-6

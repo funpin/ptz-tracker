@@ -9,7 +9,7 @@ from ptztracker.camera import he42
 from ptztracker.control.camera_model import CameraDynamics, default_calibration
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
-from ptztracker.control.framing import BRAKE, WATCHDOG_MOVING_V, SwingWatch
+from ptztracker.control.framing import BRAKE, TRACK_ZOOM_MAX, WATCHDOG_MOVING_V, SwingWatch
 
 AX = COMPOSITIONS["waist_center"].anchor[0]
 E = EffortProfile.at(0.5)
@@ -113,6 +113,38 @@ def test_zoom_in_only_when_holding_and_zoom_out_at_edge():
     # человек у края кадра → отъезд сразу, даже если размер в норме
     tr2 = run(lambda t: AX + 0.45, T=1.5)
     assert min(tr2.zoom) < 0
+
+
+def _gz_of(tr, zoom_pos):
+    """Положение #GZ камеры по ln масштаба в следе замкнутого контура (старт — zoom_pos)."""
+    from ptztracker.camera import protocol as P
+
+    return [zoom_pos + z / math.log(he42.ZOOM_RATIO) * (P.LENS_MAX - P.LENS_MIN) for z in tr.cam_zoom]
+
+
+def test_zoom_in_stops_at_track_zoom_max_for_far_person():
+    """HE40 2026-10-30: «Пояс» на дальнего человека (u ≈ 0,02) увёл зум до 0xF41 (~3°). Слежение не приближает
+    дальше TRACK_ZOOM_MAX: зум останавливается у предела (с допуском на разгон/торможение), команд «ближе» дальше
+    нет, туда-сюда не качается."""
+    for adapt in (False, True):
+        tr = run(lambda t: AX, world_u=lambda t: 0.02, T=45, zoom_pos=0x73F, gz_period=0.5,
+                 apc_period=0.5 if adapt else None, adapt=adapt, cmd_delay=QUEUE_MAX)
+        gz = _gz_of(tr, 0x73F)
+        assert max(gz) <= TRACK_ZOOM_MAX + 0x20, (adapt, hex(round(max(gz))))
+        assert max(gz) >= TRACK_ZOOM_MAX - 0x60, (adapt, hex(round(max(gz))))  # дошла до предела, не застряла раньше
+        assert sign_changes(tr.zoom) == 0, adapt  # без «туда-сюда»
+        stop = next(i for i, g in enumerate(gz) if g >= TRACK_ZOOM_MAX - 0x20)
+        assert all(z <= 0 for z in tr.zoom[stop + 100:]), adapt  # у предела наезда больше нет
+        assert gz[-1] - gz[stop + 100] <= 0x10, adapt
+
+
+def test_zoom_in_blocked_beyond_limit_but_zoom_out_free():
+    """Зум уже выше предела (рука оператора): «ближе» не командуем, отъезд не ограничен."""
+    tr = run(lambda t: AX, world_u=lambda t: 0.02, T=10, zoom_pos=0xF00, gz_period=0.5)
+    assert all(z <= 0 for z in tr.zoom)
+    tr2 = run(lambda t: AX, world_u=lambda t: 0.5, T=12, zoom_pos=0xF00, gz_period=0.5)  # слишком крупный
+    assert min(tr2.zoom) < -0.1
+    assert _gz_of(tr2, 0xF00)[-1] < 0xE00
 
 
 def test_zoom_does_not_hunt():

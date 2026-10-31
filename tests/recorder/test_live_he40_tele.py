@@ -11,6 +11,7 @@
 
 from pathlib import Path
 
+from ptztracker.control.framing import TRACK_ZOOM_MAX
 from ptztracker.recorder.reader import Episode
 from ptztracker.recorder.replay import replay_controller
 
@@ -26,8 +27,15 @@ def test_episode_is_small_and_replays():
     assert EPISODE.stat().st_size <= 1024 * 1024
     res = replay_controller(Episode.open(EPISODE))
     s = res.summary()
-    assert res.calibration_ok and s.skipped_events == 0 and s.max_code_diff == 0
+    assert res.calibration_ok and s.skipped_events == 0
     assert 55 <= s.following_s <= 65 and s.target_switches == 0
+    # Было: коды совпадали с записью во всём (max_code_diff == 0). Теперь регулятор не приближает зум выше
+    # TRACK_ZOOM_MAX (HE40 2026-10-30, DECISIONS): расходятся только коды зума, и только там, где в записи зум шёл
+    # «ближе» на теле; повороты и наклоны — те же.
+    assert all(a[:2] == b[:2] for a, b in zip(res.codes_rec, res.codes_new))
+    diff = [(a[2], b[2], z) for a, b, z in zip(res.codes_rec, res.codes_new, res.zoom_pos) if a != b]
+    assert diff and all(old > 50 and new <= 50 and z >= 0xC00 for old, new, z in diff)
+    assert all(b[2] <= 50 for b, z in zip(res.codes_new, res.zoom_pos) if z >= TRACK_ZOOM_MAX)
 
 
 def test_pan_swings_on_tele_while_position_is_stale():

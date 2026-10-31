@@ -1,5 +1,6 @@
 import math
 
+from ptztracker.camera import he42
 from ptztracker.config import ConfigStore, default_config
 from ptztracker.control.camera_model import (
     Calibration,
@@ -41,7 +42,7 @@ def test_default_table_constant_deg_s_like_live_he42():
     from ptztracker.control.calibration import hfov_at
 
     c = default_calibration()
-    for z in (0x555, 0x6A9, 0x800, 0x954, 0xAAA, 0xC00, 0xD55, 0xFFF):
+    for z in (0x555, 0x6A9, 0x800, 0x954, 0xAAA, 0xC00, 0xD55):  # выше 0xD54 — замедление на теле, тесты ниже
         assert abs(c.pan_fw(70, z) * hfov_at(z) / 13.0 - 1) <= 0.1, hex(z)
         grow = c.pan_fw(70, z) / c.pan_fw(70, 0x555)
         assert abs(grow / (hfov_at(0x555) / hfov_at(z)) - 1) <= 0.1, hex(z)
@@ -49,6 +50,37 @@ def test_default_table_constant_deg_s_like_live_he42():
     # прямой замер по #APC на 555 (°/с): таблица мастера калибровки сходится с ним в пределах 10%
     for code, deg in ((55, 0.31), (60, 1.70), (63, 3.65), (65, 6.05), (70, 13.0), (75, 21.5)):
         assert abs(c.pan_fw(code, 0x555) * hfov_at(0x555) / deg - 1) <= 0.1, code
+
+
+def test_default_table_follows_tele_slowdown_above_d54():
+    """AW-HE40 (клуб 2026-10-30): выше 0xD54 поворот медленнее (he42.TELE_PAN_DEG_S). Код 70 на FFF — 2,5 °/с,
+    не 13,6; до 0xD54 таблица прежняя."""
+    from ptztracker.control.calibration import hfov_at
+
+    c = default_calibration()
+    assert abs(c.pan_fw(70, 0xFFF) * hfov_at(0xFFF) / 2.47 - 1) <= 0.02
+    assert abs(c.pan_fw(63, 0xFFF) * hfov_at(0xFFF) / 1.20 - 1) <= 0.02
+    assert abs(c.pan_fw(75, 0xEA9) * hfov_at(0xEA9) / 9.92 - 1) <= 0.03
+    assert abs(c.pan_fw(70, 0xD54) * hfov_at(0xD54) / 13.62 - 1) <= 0.02  # без изменений
+    # на 0xF00 между EA9 и FFF — между их °/с
+    deg = c.pan_fw(75, 0xF00) * hfov_at(0xF00)
+    assert 5.10 < deg < 9.92
+
+
+def test_saved_calibration_without_tele_points_still_slows_above_d54():
+    """Калибровка, снятая на низких зумах (до 0xD54), не знает про тело: выше 0xD54 к ней применяется то же
+    замедление; внутри измеренного диапазона и выше своей верхней точки с замером на теле — ничего лишнего."""
+    t = SpeedTable({0x555: [(63, 0.06), (70, 0.2)], 0x9AA: [(63, 0.15), (70, 0.5)]})
+    assert t.speed(70, 0x9AA) == 0.5  # внутри измеренного — как есть
+    assert t.speed(70, 0xD54) == 0.5  # до 0xD54 — прежнее поведение (крайняя таблица)
+    assert abs(t.speed(70, 0xFFF) / (0.5 * he42.tele_pan_ratio(70, 0xFFF)) - 1) < 1e-9
+    assert abs(t.speed(-70 + 100, 0xFFF) + t.speed(70, 0xFFF)) < 1e-12  # зеркально
+    # есть точка на теле (замер уже включает замедление): над ней дополнительно не замедляем
+    t2 = SpeedTable({0x555: [(70, 0.2)], 0xFFF: [(70, 0.7)]})
+    assert t2.speed(70, 0xFFF) == 0.7
+    t3 = SpeedTable({0x555: [(70, 0.2)]})  # единственная точка, зум выше неё и выше 0xD54
+    assert abs(t3.speed(70, 0xFFF) / (0.2 * he42.tele_pan_ratio(70, 0xFFF)) - 1) < 1e-9
+    assert t3.speed(70, 0xA00) == 0.2
 
 
 def test_zoom_interpolation_between_positions():

@@ -157,6 +157,24 @@ def test_zoom_555_aaa_555_while_walking_no_swing_with_live_he42_speeds():
     assert near_aaa >= 1
 
 
+def test_no_adaptation_needed_on_tele_with_live_he40_slowdown():
+    """Выше 0xD54 камера замедляет поворот (he42.TELE_PAN_DEG_S), и таблица регулятора это знает: на ходьбе
+    у 0xE00…0xFF0 подстройка скорости остаётся у 1 (±0,1) и сторож молчит."""
+
+    def walk(t):  # как _walk, но быстрее: 0,4 fw/s — коды 60–65 на теле
+        ph = t % (2 * (LEG_S + STAND_S))
+        x = 0.4 * min(ph, LEG_S)
+        if ph > LEG_S + STAND_S:
+            x -= 0.4 * min(ph - LEG_S - STAND_S, LEG_S)
+        return AX + x
+
+    for zoom_pos in (0xE00, 0xF00, 0xFF0):
+        tr = run(walk, world_u=lambda t: 0.19, T=40, zoom_pos=zoom_pos, cmd_delay=QUEUE_MAX, gz_period=0.5,
+                 apc_period=0.5, adapt=True, cam_he42=True)
+        assert "diverged" not in tr.state, hex(zoom_pos)
+        assert all(abs(s[0] - 1.0) <= 0.1 and abs(s[1] - 1.0) <= 0.1 for s in tr.scale), (hex(zoom_pos), tr.scale[-1])
+
+
 def test_tilt_quiet_while_standing_during_zoom_in_with_live_he42_speeds():
     """Площадка 2026-10-29, прогон 4б: после наезда зума до ~0xA8E наклон закачался (коды 23↔75, ошибка до ±0,58,
     сторож выключил слежение). Человек стоит, мелкий на общем плане, камера наезжает 555 → ~AA0 (сдвиг якоря

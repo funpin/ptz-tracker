@@ -52,6 +52,16 @@ class SpeedTable:
         self._zooms = sorted(self.points)
 
     def _speed_pos(self, n: int, zoom: int) -> float:
+        v = self._speed_measured(n, zoom)
+        top = self._zooms[-1]
+        if zoom > max(top, he42.TELE_START_GZ):
+            # Выше верхней измеренной точки таблица держит её скорость; поворот на теле камера замедляет
+            # (he42.TELE_PAN_DEG_S) — добавляем замедление, которого в этой точке ещё не было. Если точка уже
+            # на теле, замер включает его сам.
+            v *= he42.tele_pan_ratio(n, zoom) / he42.tele_pan_ratio(n, top)
+        return v
+
+    def _speed_measured(self, n: int, zoom: int) -> float:
         zs = self._zooms
         if len(zs) == 1 or zoom <= zs[0]:
             return _interp_curve(self.points[zs[0]], n)
@@ -278,10 +288,11 @@ DEFAULT_ZOOM_STEPS = 16
 
 
 def default_calibration(safety: float = 1.0) -> Calibration:
-    """Средние значения до калибровки: камера держит постоянные °/с (he42.PAN_DEG_S) на любом зуме, поэтому
-    в долях кадра скорость растёт при приближении как 1 / угол обзора; точки — DEFAULT_ZOOM_STEPS + 1 положений
-    зума. Наклон — по той же таблице (у HE42 он в °/с ровно как поворот). Было (до 2026-10-29): одна точка
-    по зуму — одни и те же fw/s на любом зуме (думали, камера сама замедляет pan на теле).
+    """Средние значения до калибровки: камера держит постоянные °/с (he42.PAN_DEG_S) до 0xD54, поэтому
+    в долях кадра скорость растёт при приближении как 1 / угол обзора; выше 0xD54 поворот замедляется
+    (he42.TELE_PAN_DEG_S, AW-HE40 2026-10-30); точки — DEFAULT_ZOOM_STEPS + 1 положений зума. Наклон — по той
+    же таблице (у HE42 он в °/с ровно как поворот). Было (до 2026-10-29): одна точка по зуму — одни и те же fw/s
+    на любом зуме (думали, камера сама замедляет pan на теле).
 
     safety > 1 — считать камеру быстрее замеров: ошибиться в «медленную» сторону безопасно
     (регулятор устойчив до ρ≈0.5), а в «быструю» — раскачка (устойчив до ρ≈1.7).
@@ -291,5 +302,5 @@ def default_calibration(safety: float = 1.0) -> Calibration:
     for k in range(DEFAULT_ZOOM_STEPS + 1):
         z = P.LENS_MIN + round(span * k / DEFAULT_ZOOM_STEPS)
         hfov = he42.hfov_deg((z - P.LENS_MIN) / span)
-        points[z] = [(c, deg * safety / hfov) for c, deg in he42.PAN_DEG_S.items()]
+        points[z] = [(c, deg * he42.tele_pan_ratio(c, z) * safety / hfov) for c, deg in he42.PAN_DEG_S.items()]
     return Calibration(pan=SpeedTable(points), zoom=ZoomTable(list(he42.ZOOM_LN_S.items())))
