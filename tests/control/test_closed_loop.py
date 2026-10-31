@@ -129,6 +129,15 @@ def test_zoom_converges_to_waist():
     assert sum(1 for a, b in zip(zsigns, zsigns[1:]) if a != b) <= 2
 
 
+def test_nose_held_at_anchor_height_not_centre():
+    # «Пояс · центр» на проективном симуляторе: когда камера успокоилась, нос стоит на высоте якоря (≈0,25 кадра),
+    # а не в центре (0,5) — иначе кадр снят «от груди», а не «от лица».
+    rows = run_follow("stand", 20)
+    ay = COMPOSITIONS["waist_center"].anchor[1]
+    ys = [r["y"] for r in rows if r["t"] > 15 and r["vis"]]
+    assert ys and abs(np.mean(ys) - ay) <= 0.05, np.mean(ys)
+
+
 def test_with_h264_latency():
     # таблица как у камеры в деле — со стандартным запасом: при ρ = 1 и задержке 0,6 с первая ходьба перелетала
     # цель и камера разворачивалась (4–6 смен знака в ~40% прогонов, лимит 3)

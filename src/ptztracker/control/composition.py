@@ -11,10 +11,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ptztracker.vision.types import KP_L_SHOULDER, KP_NOSE, KP_R_SHOULDER
+from ptztracker.vision.types import KP_L_EAR, KP_L_SHOULDER, KP_NOSE, KP_R_EAR, KP_R_SHOULDER
 
 KP_MIN_CONF = 0.3
 U_PER_SHOULDER = 0.375  # у взрослого «нос→плечи» ≈ 0.375 ширины плеч (15 см / 40 см)
+EAR_U_RANGE = (0.6, 1.6)  # «уши→плечи» принимаем, если в этих долях от U по ширине плеч (иначе — шум)
 
 
 @dataclass(frozen=True)
@@ -65,10 +66,25 @@ def measure_body(
         if has_nose and sy - nose[1] / h > 0:
             # голову наклонил — «нос→плечи» сжимается, а плечи нет: берём большее
             u = max(sy - nose[1] / h, sw_u)
+        if u is None and last_u is None:
+            # Спиной с самого начала: носа не было и запомнить нечего. Опорная точка должна быть та же
+            # («плечи минус U»), иначе кадр прыгнет, когда нос появится: U — по ушам, а без них — по ширине плеч.
+            u = _u_from_ears(keypoints, sy, h, sw_u)
+            ref_u = u if u is not None else sw_u
+            return BodyMeasure((sx, sy - ref_u), u, True)  # размер по ширине плеч — догадка, зум по нему не ведём
         ref_u = last_u if last_u is not None else u
-        if ref_u is not None:
-            return BodyMeasure((sx, sy - ref_u), u, True)
+        return BodyMeasure((sx, sy - ref_u), u, True)
     bx = (box[0] + box[2]) / 2 / w
     top = box[1] / h
     dy = last_u if last_u is not None else 0.08 * (box[3] - box[1]) / h
     return BodyMeasure((bx, top + dy), None, False)
+
+
+def _u_from_ears(keypoints: np.ndarray, sy: float, h: int, sw_u: float) -> float | None:
+    """U по ушам: середина видимых ушей на высоте носа. None — ушей не видно или значение неправдоподобно."""
+    ys = [kp[1] for kp in (keypoints[KP_L_EAR], keypoints[KP_R_EAR]) if kp[2] >= KP_MIN_CONF]
+    if not ys:
+        return None
+    u = sy - float(np.mean(ys)) / h
+    lo, hi = EAR_U_RANGE
+    return float(u) if lo * sw_u <= u <= hi * sw_u else None

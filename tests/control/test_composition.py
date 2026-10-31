@@ -3,10 +3,14 @@ import numpy as np
 from ptztracker.control.composition import COMPOSITIONS, DEFAULT_COMPOSITION, measure_body
 
 
-def kp(nose=None, ls=None, rs=None):
+def kp(nose=None, ls=None, rs=None, le=None, re=None):
     k = np.zeros((17, 3), np.float32)
     if nose:
         k[0] = (*nose, 0.9)
+    if le:
+        k[3] = (*le, 0.9)
+    if re:
+        k[4] = (*re, 0.9)
     if ls:
         k[5] = (*ls, 0.9)
     if rs:
@@ -54,3 +58,41 @@ def test_head_turn_does_not_move_reference_x():
     a = measure_body(kp((320, 100), (350, 160), (290, 160)), (260, 60, 380, 360), (640, 360), None)
     b = measure_body(kp((345, 100), (350, 160), (290, 160)), (260, 60, 380, 360), (640, 360), a.u)
     assert abs(b.nose[0] - a.nose[0]) < 0.005
+
+
+def test_back_view_anchor_from_shoulders():
+    # Докладчик спиной с самого начала: носа нет, last_u нет. Опорная точка должна лечь туда же,
+    # где её дала бы фронтальная съёмка этой позы (нос на y=100, плечи на y=160, ширина плеч 156 = 2,6·U),
+    # иначе кадр прыгнет, когда нос появится.
+    box = (220, 60, 420, 360)
+    size = (640, 360)
+    shoulders = dict(ls=(398, 160), rs=(242, 160))
+    frontal = measure_body(kp((320, 100), **shoulders), box, size, None)
+    u_true = 60 / 360
+
+    # с ушами: середина ушей ≈ высота носа
+    ears = measure_body(kp(None, le=(345, 98), re=(295, 98), **shoulders), box, size, None)
+    assert ears.confident
+    assert abs(ears.nose[0] - frontal.nose[0]) < 1e-6
+    assert abs(ears.nose[1] - frontal.nose[1]) < 0.3 * u_true
+    assert ears.u is not None and abs(ears.u / u_true - 1) < 0.3  # меряли по ушам — размер можно отдать зуму
+
+    # одно ухо (голова боком к камере) — тоже годится
+    one_ear = measure_body(kp(None, re=(295, 98), **shoulders), box, size, None)
+    assert one_ear.confident and abs(one_ear.nose[1] - frontal.nose[1]) < 0.3 * u_true
+
+    # без ушей: U = ширина плеч · U_PER_SHOULDER; размер не отдаём — он угадан, зум по нему не ведём
+    plain = measure_body(kp(None, **shoulders), box, size, None)
+    assert plain.confident and plain.u is None
+    assert abs(plain.nose[0] - frontal.nose[0]) < 1e-6
+    assert abs(plain.nose[1] - frontal.nose[1]) < 0.3 * u_true
+    # и это не «верх рамки + 8%» (прежний запасной вариант: y = 60+0,08·300 = 84 → ниже/выше на 0,3 U и более)
+    assert abs(plain.nose[1] - (60 + 0.08 * 300) / 360) > 0.02
+
+    # нелепые уши (высоко над головой) отбрасываются как не лезущие в разумные границы от sw_u
+    silly = measure_body(kp(None, le=(345, 0), re=(295, 0), **shoulders), box, size, None)
+    assert silly.u is None and abs(silly.nose[1] - frontal.nose[1]) < 0.3 * u_true
+
+    # last_u по-прежнему главнее
+    kept = measure_body(kp(None, le=(345, 98), re=(295, 98), **shoulders), box, size, 0.1)
+    assert abs(kept.nose[1] - (160 / 360 - 0.1)) < 1e-6 and kept.u is None

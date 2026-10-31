@@ -11,6 +11,7 @@ from ptztracker.video.frames import Frame
 
 # Ключевые точки COCO-17
 KP_NOSE = 0
+KP_L_EAR, KP_R_EAR = 3, 4
 KP_L_SHOULDER, KP_R_SHOULDER = 5, 6
 KP_L_HIP, KP_R_HIP = 11, 12
 KP_L_KNEE, KP_R_KNEE = 13, 14
