@@ -309,6 +309,18 @@ def test_agent_settings_calibrate_and_calibration_lock(qtbot, tmp_path, monkeypa
     w.close()
 
 
+def test_api_409_while_menu_open(qtbot, tmp_path):
+    w, port, tok = make_window(qtbot, tmp_path)
+    w.agent_panel.allow_check.setChecked(True)
+    w.agent_panel.off_air_check.setChecked(True)
+    w.camera_menu.open()
+    for path, body in MOVING:
+        code, data = call_bg(qtbot, port, path, token=tok, body=body)
+        assert code == 409 and "меню камеры" in data["error"], path
+    w.camera_menu.close_menu()
+    w.close()
+
+
 def test_events_frame_and_moment(qtbot, tmp_path):
     w, port, tok = make_window(qtbot, tmp_path)
     qtbot.waitUntil(lambda: w.preview.has_frame(), timeout=3000)

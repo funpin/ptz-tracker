@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import uuid
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
@@ -70,6 +71,13 @@ class CameraDialog(QDialog):
         self.atem_spin.setSpecialValueText("нет")
         self.atem_spin.setValue(atem_input_of(cfg) if cfg else 0)
 
+        self.pad_spin = QSpinBox()
+        self.pad_spin.setRange(0, 4)
+        self.pad_spin.setSpecialValueText("авто")
+        self.pad_spin.setToolTip("Какими белыми точками светится геймпад для этой камеры. Авто — цифры в конце названия, "
+                                 "иначе место в списке")
+        self.pad_spin.setValue((cfg.pad_number or 0) if cfg else 0)
+
         form = QFormLayout()
         form.addRow("Название", self.name_edit)
         form.addRow("IP-адрес", self.ip_edit)
@@ -78,6 +86,7 @@ class CameraDialog(QDialog):
         form.addRow("RTSP-адрес (необязательно)", self.rtsp_edit)
         form.addRow("Мин. интервал команд", self.interval_spin)
         form.addRow("Вход ATEM", self.atem_spin)
+        form.addRow("Номер на геймпаде", self.pad_spin)
 
         self.test_button = QPushButton("Проверить связь")
         self.test_result = QLabel("")
@@ -121,16 +130,18 @@ class CameraDialog(QDialog):
         self.test_result.setText(msg)
 
     def result_config(self) -> CameraConfig:
-        return CameraConfig(
-            id=self._cfg.id if self._cfg else self._new_id,
+        fields = dict(
             name=self.name_edit.text().strip(),
             ip=self.ip_edit.text(),
-            kind=self._cfg.kind if self._cfg else "panasonic",
             username=self.user_edit.text().strip() or None,
             rtsp_url=self.rtsp_edit.text().strip() or None,
             min_interval=self.interval_spin.value() / 1000,
             atem_input=self.atem_spin.value(),
+            pad_number=self.pad_spin.value() or None,
         )
+        if self._cfg is not None:  # калибровка, поправка скорости, композиция, усилие, поток сохраняются
+            return dataclasses.replace(self._cfg, **fields)
+        return CameraConfig(id=self._new_id, kind="panasonic", **fields)
 
     def password(self) -> str | None:
         return self.pass_edit.text() or None

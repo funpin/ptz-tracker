@@ -143,6 +143,9 @@ class WindowBackend:
             raise ApiError(409, "Идёт калибровка камеры.")
         if QApplication.activeModalWidget() is not None:
             raise ApiError(409, "В программе открыто окно (диалог) — дождитесь, пока оператор его закроет.")
+        menu = getattr(self.w, "camera_menu", None)
+        if menu is not None and menu.is_open:
+            raise ApiError(409, "В программе открыто меню камеры — дождитесь, пока оператор его закроет.")
         return fn(*args)
 
     def _follow_args(self, b: dict):

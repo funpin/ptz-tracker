@@ -32,3 +32,19 @@ def _no_update_check(request, monkeypatch):
     from ptztracker.ui import main_window
 
     monkeypatch.setattr(main_window.MainWindow, "_start_update_check", lambda self: None)
+
+
+class _NoPad:
+    """Геймпада нет: окна в тестах не трогают SDL и настоящее устройство."""
+
+    def open(self):
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _no_real_gamepad(request, monkeypatch):
+    if request.node.path.parent.name not in ("ui", "api"):
+        return
+    from ptztracker.ui import main_window
+
+    monkeypatch.setattr(main_window, "make_pad_backend", _NoPad)

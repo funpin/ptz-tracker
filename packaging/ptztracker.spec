@@ -24,7 +24,7 @@ datas += [(os.path.join(SRC, "ptztracker", "models", "yolo11n-pose.onnx"), "ptzt
 # иконки окна (свои SVG)
 datas += [(os.path.join(SRC, "ptztracker", "ui", "icons"), "ptztracker/ui/icons")]
 # onnxruntime: на Windows ставится onnxruntime-directml, но модуль называется так же — "onnxruntime"
-for pkg in ("av", "onnxruntime"):
+for pkg in ("av", "onnxruntime", "pygame"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b

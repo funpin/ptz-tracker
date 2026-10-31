@@ -199,3 +199,14 @@ def parse_wb(body: str) -> int:
 
 def parse_color_temp(body: str) -> int:
     return _parse_hex(r"OSD:B1:([0-9A-Fa-f]{3})", body, "цветовой температуры")
+
+
+def parse_iris(body: str) -> int:
+    """`gi` + 3 hex (+ необязательный флаг авто) -> позиция ириса."""
+    return _parse_hex(r"gi([0-9A-Fa-f]{3})[0-9A-Fa-f]?", body, "ириса")
+
+
+def parse_iris_auto(body: str) -> bool | None:
+    """Флаг авто из 4-символьной формы `giXXXf` (1 — авто); в 3-символьной его нет -> None."""
+    m = re.fullmatch(r"gi[0-9A-Fa-f]{3}([01])", body.strip())
+    return None if m is None else m.group(1) == "1"

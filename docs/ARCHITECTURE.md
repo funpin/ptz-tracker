@@ -17,6 +17,7 @@
 | `api/` | Локальный HTTP-API для агента (только 127.0.0.1, токен) | `ApiServer`, `WindowBackend`, `QtInvoker` |
 | `lab.py` | Команды без окна `--lab record\|follow\|calibrate` для агента | `run_lab` |
 | `ui/` | Окна Qt: главное окно, превью с рамками и зонами, панели. `theme.py` — единственный источник цветов (держит `test_no_hardcoded_colors`) и основных размеров; `widgets.py` — общие элементы (`TrackButton`, `StatusPill` — значки верхней панели, `PowerOverlay` — кнопка питания поверх видео, `KeyButton`, `VideoFrame` с рамкой Tally и накладками); `icons.py` + `icons/*.svg` — свои иконки, перекрашиваются под состояние; `state.py` — чистые функции «что показать» (`tracking_view`, `tally_chip`, `video_pill`, `analysis_pill`, `atem_pill`, `power_view`, `no_video_text`). Все редкие действия — в одном меню ☰ внутри окна (меню «Сервис» в строке macOS нет); F9 ловит фильтр клавиш окна; `atem_dialog.py` — настройки ATEM; `agent_panel.py` — флажки разрешений агенту; `replay_window.py` — просмотр записи | `MainWindow`, `PreviewWidget`, `FollowPanel`, `TrackButton`, `AtemDialog`, `AgentPanel`, `ReplayWindow` |
+| `gamepad/` | Геймпад DualSense без Qt: `device` (SDL через pygame-ce, поток опроса ~100 Гц, свет, вибрация, номер игрока), `mapping` (чистый автомат «оси и кнопки + время → намерения»), `intents`, `feedback` (цвет полосы, вибро-паттерны), `battery` (заряд и оценка до разряда) | `GamepadThread`, `Mapper`, `PadStatus`, `BatteryEstimator` |
 | `tally/` | Клиент Tally микшера ATEM по UDP, без Qt: фоновый поток, неизменяемый снимок | `AtemTally`, `TallySnapshot`, `atem_input_of` |
 | `models/` | Модель YOLO11n-pose (ONNX, AGPL-3.0) | `POSE_MODEL_PATH` |
 
@@ -46,6 +47,15 @@
 
   Интерфейс читает их состояние таймерами (`MainWindow._sync_follow`, `_update_status`, `_sync_tally`) и сам никогда не ждёт сеть или нейросеть.
 - **`Analyzer.latest()` и `Follower.output`** — неизменяемые снимки: UI их только читает. Трекер меняется только под замком анализатора.
+
+## Геймпад (`gamepad/`, `ui/gamepad_bridge.py`, `ui/camera_menu.py`, `ui/hotkeys_dialog.py`)
+
+Путь намерения: поток опроса (`GamepadThread`, SDL) → `Mapper.update` → намерения (`PanTilt`, `Zoom`, `Preset`, `IrisStep`, `GainStep`, `Neighbor`, `ToggleFollow`, `Stop`, …) → сигнал в поток Qt (`GamepadBridge.intents`, `QueuedConnection`) → `MainWindow._on_pad_intents` → те же методы сессии, что у клавиатуры. Новых путей к камере нет, поэтому «ручное действие выключает слежение до отправки команды» работает само.
+
+- **Кто держит скорость.** Скорость геймпада помнит `GamepadBridge` (`velocity()`); клавиатура и экранный джойстик — свои. В сессию уходит сумма ±1. Деактивация окна обнуляет клавиатуру и мышь, но не геймпад; Стоп (тачпад, Esc, кнопка) и смена камеры обнуляют всех и запирают автомат (`latch_stop`) до возврата стиков и курков в центр. Намерения движения, выданные до стопа и дошедшие после него, отбрасываются по номеру поколения.
+- **Обратный путь.** Цвет полосы (`PadStatus` из снимков состояния, ставится только при смене), вибрация (слежение вкл/выкл само, упор по `LimitWatch`, пресет записан, «некуда»), огоньки игрока (`pad_number_for`), заряд (`batteryChanged`). Устройство трогает только поток опроса; в него команды идут через очередь.
+- **Меню Options** (`camera_menu.py`) — виджет поверх видео; для API это «открытый диалог» (409). Фокус вручную ограничен 3 с на нажатие.
+- **Нет SDL / нет pygame-ce** — `SdlBackend.open()` возвращает ложь, программа работает без геймпада. SDL работает с драйвером видео `dummy`, окно не создаётся.
 
 ## Чёрный ящик (`recorder/`)
 

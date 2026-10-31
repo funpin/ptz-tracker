@@ -34,12 +34,36 @@ from ptztracker.config import AppConfig, CameraConfig, ConfigStore, get_password
 from ptztracker.control.camera_model import DEFAULT_TABLE_ID
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
+from ptztracker.gamepad.device import SdlBackend
+from ptztracker.gamepad.feedback import RUMBLE_NOWHERE, RUMBLE_PRESET_STORED, PadStatus
+from ptztracker.gamepad.intents import (
+    Composition,
+    Disconnected,
+    GainStep,
+    IrisStep,
+    MenuAccept,
+    MenuClose,
+    MenuNav,
+    MenuOpen,
+    Neighbor,
+    NextCamera,
+    PanTilt,
+    Preset,
+    PushFocus,
+    SaveMoment,
+    Stop,
+    ToggleFollow,
+    Zoom,
+)
 from ptztracker.tally import atem_input_of
 from ptztracker.tally.atem import AtemTally
 from ptztracker.ui.agent_panel import AgentPanel
 from ptztracker.ui.atem_dialog import AtemDialog
 from ptztracker.ui.camera_dialog import CameraDialog
+from ptztracker.ui.camera_menu import CameraMenu
 from ptztracker.ui.follow_panel import FollowPanel
+from ptztracker.ui.gamepad_bridge import GamepadBridge, pad_number_for
+from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.preview import PreviewWidget
 from ptztracker.ui.state import TrackingView, analysis_pill, atem_pill, power_view, tracking_view, video_pill
@@ -59,11 +83,24 @@ KEY_ZOOM_SPEED = 0.5
 SIDE_WIDTH = 372
 _HOTKEYS = [
     ("Пробел", "слежение"), ("1–5", "кадр"), ("← → ↑ ↓", "поворот"), ("+ −", "зум"), ("Esc", "стоп"),
-    ("F9", "сохранить момент"),
-]
+    ("F9", "сохранить момент"), ("M", "меню камеры"),
+]  # F1 («справка») в строку состояния не добавляем: окно F1 показывает её сам
 _PAN_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
+_MENU_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter}
 _ZOOM_IN_KEYS = {Qt.Key_Plus, Qt.Key_Equal}
 _ZOOM_OUT_KEYS = {Qt.Key_Minus, Qt.Key_Underscore}
+
+
+def make_pad_backend():
+    """Устройство геймпада по умолчанию (тесты подменяют)."""
+    return SdlBackend()
+
+
+_PAD_SIZES = ("waist", "full", "wide")  # L1/R1: только крупность, от ближнего к общему
+
+
+def _clamp1(v: float) -> float:
+    return max(-1.0, min(1.0, v))
 
 
 class _Cap(QWidget):
@@ -89,7 +126,7 @@ class MainWindow(QMainWindow):
     _saveFinished = Signal(object)  # Future записи; приходит из рабочего потока, обрабатывается в Qt-потоке
 
     def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None, atem_port: int = 9910,
-                 checker_factory: Callable[[str], UpdateChecker] | None = UpdateChecker):
+                 checker_factory: Callable[[str], UpdateChecker] | None = UpdateChecker, gamepad_backend=None):
         super().__init__(parent)
         self.setWindowTitle("PTZ Tracker")
         self.resize(1640, 850)
@@ -105,6 +142,15 @@ class MainWindow(QMainWindow):
         self._atem_port = atem_port
         self.atem: AtemTally | None = None
         self._tally_shown: tuple | None = None
+        # геймпад: свой поток опроса; без SDL/устройства мост ничего не делает. Mapper читает camera_menu.is_open.
+        self.pad = GamepadBridge(gamepad_backend if gamepad_backend is not None else make_pad_backend(),
+                                 menu_open=self._menu_is_open, parent=self)
+        self.pad.intents.connect(self._on_pad_intents)
+        self.pad.connectionChanged.connect(lambda _info: self._sync_pad_player())
+        self.pad.connectionChanged.connect(lambda _info: self._update_pad_chip())
+        self.pad.batteryChanged.connect(self._update_pad_chip)
+        self._pad_applied = (0.0, 0.0, 0.0)  # скорость геймпада в последней отправке
+        self._last_waist = "waist_center"  # куда вернуться в пояс по R1 из «Роста»
 
         self.preview = PreviewWidget()
         self.video_frame = VideoFrame(self.preview)
@@ -140,6 +186,9 @@ class MainWindow(QMainWindow):
         self.blackbox_btn.setPopupMode(QToolButton.InstantPopup)
         self.agent_badge = StatusPill("robot", "AGENT", "accent")
         self.agent_badge.hide()
+        self.pad_chip = StatusPill("gamepad")
+        self.pad_chip.hide()
+        self.hotkeys_dialog: HotkeysDialog | None = None
         self.main_menu_btn = self._menu_button("menu", "Меню")
         self.track_btn = self.follow_panel.follow_btn
 
@@ -155,8 +204,8 @@ class MainWindow(QMainWindow):
         tl.addWidget(self.camera_combo)
         tl.addWidget(self.cameras_btn)
         tl.addStretch(1)
-        for w in (self.video_pill, self.analysis_pill, self.atem_pill, self.blackbox_btn, self.agent_badge,
-                  self.main_menu_btn):
+        for w in (self.video_pill, self.analysis_pill, self.atem_pill, self.blackbox_btn, self.pad_chip,
+                  self.agent_badge, self.main_menu_btn):
             tl.addWidget(w)
         tl.addSpacing(SP[1])
         tl.addWidget(self.track_btn.action_btn)
@@ -183,6 +232,9 @@ class MainWindow(QMainWindow):
         self.power_overlay = PowerOverlay()
         self.power_overlay.powerOnRequested.connect(self._power_on)
         self.video_frame.add_overlay(self.power_overlay, "fill")
+        self.camera_menu = CameraMenu(lambda: self.session, self.controls)
+        self.video_frame.add_overlay(self.camera_menu, "center")
+        self.camera_menu.openChanged.connect(self._on_menu_changed)
 
         side = QWidget()
         sl = QVBoxLayout(side)
@@ -297,6 +349,7 @@ class MainWindow(QMainWindow):
         self._follow_timer = QTimer(self)
         self._follow_timer.timeout.connect(self._sync_follow)
         self._follow_timer.timeout.connect(self._sync_tally)
+        self._follow_timer.timeout.connect(self._sync_pad)
         self._follow_timer.start(100)
         self._view_shown: TrackingView | None = None
         # API агента: оператор сам включил/выключил слежение (пробел, кнопка) — слежение теперь его
@@ -338,6 +391,10 @@ class MainWindow(QMainWindow):
 
     def _activate(self, cam: CameraConfig | None) -> None:
         self.agent_panel.revoke()  # смена камеры: агент теряет управление
+        self.camera_menu.close_menu()  # до остановки сессии: ручной фокус получает ноль
+        # геймпад: старой камере — нули; новая поедет, только когда стики вернутся в центр
+        self._pad_stop_motion()
+        self.pad.cancel_holds()
         self.release_all_held()
         self._speed_scale_saved_t = float("-inf")  # «раз в минуту» — для каждой камеры заново
         if self.session:
@@ -355,17 +412,23 @@ class MainWindow(QMainWindow):
             act.setChecked(act.data() == want)
             act.setEnabled(real)
         if cam is None:
+            self._sync_pad_player()
             return
         self.session = CameraSession(cam, scene_path=self.cfg.sim_scene_path, app_cfg=self.cfg)
         self.session.start()
         self.session.on_manual = self.agent_panel.revoke
         if self.session.follower:
-            self.session.follower.on_change = self.agent_panel.on_follow_change  # раскачка, аварийный стоп
+            self.session.follower.on_change = self._on_follow_change  # поток слежения
+        if self.session.limit_watch:
+            self.session.limit_watch.set_on_limit(self.pad.notify_limit)  # поток LimitWatch → сигнал моста
+        self._sync_pad_player()
         self.preview.set_source(self.session.frames)
         self.preview.set_analyzer(self.session.analyzer)
         self.preview.set_follow(self.session.follower)
         self.preview.camera_name = cam.name
         self.follow_panel.set_composition(cam.composition)
+        if cam.composition.startswith("waist"):
+            self._last_waist = cam.composition
         self.follow_panel.set_effort(cam.effort)
         self.follow_panel.set_calibrated(cam.calibration is not None)
         self.follow_panel.set_state(False, None)
@@ -376,6 +439,13 @@ class MainWindow(QMainWindow):
             self._save()
 
     # --- слежение -----------------------------------------------------
+
+    def _on_follow_change(self, on: bool, reason: str | None) -> None:
+        """Follower.on_change (из любого потока): раскачка/аварийный стоп снимают агента; вибрация геймпада."""
+        try:
+            self.agent_panel.on_follow_change(on, reason)
+        finally:
+            self.pad.notify_follow(on, reason)
 
     def _follower(self):
         return self.session.follower if self.session else None
@@ -542,6 +612,8 @@ class MainWindow(QMainWindow):
         return lab
 
     def _on_composition(self, key: str) -> None:
+        if key.startswith("waist"):
+            self._last_waist = key
         cam = self._current_cfg()
         self.follow_panel.set_composition(key)
         if cam is None:
@@ -606,6 +678,7 @@ class MainWindow(QMainWindow):
             self.cfg.cameras = [cam if c.id == cam.id else c for c in self.cfg.cameras]
             self._save()
             self._fill_combo(cam.id)
+            self._sync_pad_player()  # мог измениться номер на геймпаде
 
     def _delete_camera(self) -> None:
         cur = self._current_cfg()
@@ -876,12 +949,26 @@ class MainWindow(QMainWindow):
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self._on_composition(comp_keys[key])
                 return True
+            if key == Qt.Key_F1:
+                if et == QEvent.KeyPress and not event.isAutoRepeat():
+                    self.show_hotkeys()
+                return True
             if key == Qt.Key_F9:  # сохранить момент: не ручное управление, слежение не трогаем
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self.save_moment()
                 return True
             if key == Qt.Key_Escape and et == QEvent.KeyPress:
                 self.emergency_stop()
+                return True
+            if key == Qt.Key_M:
+                if et == QEvent.KeyPress and not event.isAutoRepeat():
+                    if not self.camera_menu.is_open:
+                        self.release_all_held()
+                    self.camera_menu.toggle()
+                return True
+            if self.camera_menu.is_open and key in _MENU_KEYS:
+                if not event.isAutoRepeat():
+                    self._menu_key(key, et == QEvent.KeyPress)
                 return True
             if key in _PAN_KEYS | _ZOOM_IN_KEYS | _ZOOM_OUT_KEYS:
                 if not event.isAutoRepeat():
@@ -897,22 +984,211 @@ class MainWindow(QMainWindow):
         """Общий аварийный стоп (Esc и кнопка «Стоп»): снять разрешение агенту, отпустить клавиши,
         выключить слежение, остановить камеру."""
         self.agent_panel.revoke()
+        self._pad_stop_motion()  # стоп обнуляет и геймпад: снова поедет после возврата стика в центр
         self.release_all_held()
         if self.session:
             self.session.emergency_stop()
+        self.camera_menu.close_menu()  # сначала стоп, потом закрытие
+
+    def _menu_key(self, key: int, press: bool) -> None:
+        m = self.camera_menu
+        if key in (Qt.Key_Left, Qt.Key_Right):
+            m.nav((key == Qt.Key_Right) - (key == Qt.Key_Left), 0) if press else m.nav(0, 0)
+        elif press and key in (Qt.Key_Up, Qt.Key_Down):
+            m.nav(0, (key == Qt.Key_Down) - (key == Qt.Key_Up))
+        elif press:
+            m.accept()
+
+    def _menu_is_open(self) -> bool:
+        """Читает поток опроса геймпада (мост создаётся раньше меню)."""
+        m = getattr(self, "camera_menu", None)
+        return bool(m and m.is_open)
+
+    def _on_menu_changed(self, _open: bool) -> None:
+        self.pad.cancel_holds()
+        self._sync_pad()
 
     def _apply_held(self) -> None:
-        if not self.session:
-            return
+        """Скорость в сессию: сумма клавиатуры и геймпада с ограничением ±1 по каждой оси."""
         h = self._held
-        vx = KEY_PAN_SPEED * ((Qt.Key_Right in h) - (Qt.Key_Left in h))
-        vy = KEY_PAN_SPEED * ((Qt.Key_Up in h) - (Qt.Key_Down in h))
-        vz = KEY_ZOOM_SPEED * (bool(h & _ZOOM_IN_KEYS) - bool(h & _ZOOM_OUT_KEYS))
-        self.session.set_pan_tilt_velocity(vx, vy)
-        self.session.set_zoom_velocity(vz)
+        kv = (KEY_PAN_SPEED * ((Qt.Key_Right in h) - (Qt.Key_Left in h)),
+              KEY_PAN_SPEED * ((Qt.Key_Up in h) - (Qt.Key_Down in h)),
+              KEY_ZOOM_SPEED * (bool(h & _ZOOM_IN_KEYS) - bool(h & _ZOOM_OUT_KEYS)))
+        pv = self.pad.velocity()
+        self._pad_applied = pv
+        ks, ps = self.session, self._pad_session()
+        if ks is not None and ks is ps:
+            self._send_velocity(ks, tuple(_clamp1(a + b) for a, b in zip(kv, pv)))
+            return
+        if ks is not None:
+            self._send_velocity(ks, kv)
+        if ps is not None:
+            self._send_velocity(ps, pv)
+
+    @staticmethod
+    def _send_velocity(s: CameraSession, v: tuple[float, float, float]) -> None:
+        s.set_pan_tilt_velocity(v[0], v[1])
+        s.set_zoom_velocity(v[2])
+
+    # --- геймпад ------------------------------------------------------
+
+    def _pad_session(self) -> CameraSession | None:
+        """Сессия, которой управляет геймпад. Единственное место выбора камеры для геймпада."""
+        return self.session
+
+    def _on_pad_intents(self, intents: list) -> None:
+        """Намерения геймпада (поток Qt): те же пути, что клавиатура и кнопки окна."""
+        moved = False
+        for it in intents:
+            if isinstance(it, (PanTilt, Zoom)):
+                moved = True
+            elif isinstance(it, Disconnected):
+                # отключили: камера стоит — ничего не шлём; едет — нули. Слежение не трогаем
+                self.camera_menu.stop_focus()
+                self.pad.zero_velocity()
+                if any(self._pad_applied):
+                    moved = True
+            elif isinstance(it, Stop):
+                self.emergency_stop()
+                moved = False
+            elif isinstance(it, ToggleFollow):
+                self.toggle_follow()
+            elif isinstance(it, Composition):
+                self._pad_composition(it.d)
+            elif isinstance(it, NextCamera):
+                self._pad_next_camera()
+            elif isinstance(it, SaveMoment):
+                self.save_moment("геймпад")
+                self.pad.rumble(RUMBLE_PRESET_STORED)
+            elif isinstance(it, MenuOpen):
+                self.camera_menu.open()
+            elif isinstance(it, MenuNav):
+                self.camera_menu.nav(it.dx, it.dy)
+            elif isinstance(it, MenuAccept):
+                self.camera_menu.accept()
+            elif isinstance(it, MenuClose):
+                self.camera_menu.close_menu()
+            else:
+                self._pad_camera_intent(it)
+        if moved:
+            self._apply_held()
+            ps = self._pad_session()
+            if ps is not None and ps.limit_watch:
+                ps.limit_watch.set_demand(*self.pad.velocity())
+
+    def _pad_camera_intent(self, it) -> None:
+        s = self._pad_session()
+        if s is None:
+            return
+        if isinstance(it, Preset):
+            if it.store:
+                s.store_preset(it.n)
+                self.pad.rumble(RUMBLE_PRESET_STORED)
+            else:
+                s.recall_preset(it.n)
+        elif isinstance(it, IrisStep):
+            if not s.iris_step(it.d):
+                self.pad.rumble(RUMBLE_NOWHERE)
+        elif isinstance(it, GainStep):
+            step = getattr(s, "gain_step", None)
+            if step is None or not step(it.d):
+                self.pad.rumble(RUMBLE_NOWHERE)
+        elif isinstance(it, Neighbor):
+            a = s.analyzer
+            if a is None or a.select_neighbor(it.d) is None:
+                self.pad.rumble(RUMBLE_NOWHERE)
+            else:
+                self._update_status()
+        elif isinstance(it, PushFocus):
+            s.push_focus()
+
+    def _pad_next_camera(self) -> None:
+        """Create (коротко): следующая камера списка по кругу, как выбор в списке; одна камера — «некуда»."""
+        n = self.camera_combo.count()
+        if n < 2:
+            self.pad.rumble(RUMBLE_NOWHERE)
+            return
+        self.camera_combo.setCurrentIndex((self.camera_combo.currentIndex() + 1) % n)  # → _on_combo → _activate
+        self.pad.rumble(RUMBLE_NOWHERE)  # подтверждение; огоньки номера уже обновил _activate
+
+    def _pad_stop_motion(self) -> None:
+        """Геймпад больше ничего не держит: нули, автомат заперт до центра, опрос упора стоит."""
+        self.pad.reset_motion()
+        self._pad_applied = (0.0, 0.0, 0.0)
+        s = self._pad_session()
+        if s is not None and s.limit_watch:
+            s.limit_watch.set_demand(0.0, 0.0, 0.0)
+
+    def _pad_composition(self, d: int) -> None:
+        """Только крупность: пояс ↔ рост ↔ общий. L1 (−1) — шире, R1 (+1) — ближе; за краем — «некуда».
+        В пояс из роста — на последнюю сторону пояса (слева/центр/справа)."""
+        cam = self._current_cfg()
+        if cam is None:
+            return
+        cur = cam.composition if cam.composition in COMPOSITIONS else "waist_center"
+        i = _PAD_SIZES.index("waist" if cur.startswith("waist") else cur)
+        j = i - d
+        if not 0 <= j < len(_PAD_SIZES):
+            self.pad.rumble(RUMBLE_NOWHERE)
+            return
+        self._on_composition(self._last_waist if _PAD_SIZES[j] == "waist" else _PAD_SIZES[j])
+
+    def show_hotkeys(self) -> None:
+        if self.hotkeys_dialog is None:
+            self.hotkeys_dialog = HotkeysDialog(parent=self)
+        self.hotkeys_dialog.show()
+        self.hotkeys_dialog.raise_()
+
+    def _update_pad_chip(self) -> None:
+        """Чип «номер · заряд · сколько осталось»; без геймпада скрыт."""
+        if not self.pad.connected:
+            self.pad_chip.hide()
+            self._fit_top_bar()
+            return
+        s = self._pad_session()
+        num = pad_number_for(s.cfg, self._cameras()) if s is not None else None
+        parts = [str(num)] if num is not None else []
+        pct, kind = self.pad.battery_percent, "ok"
+        if pct is not None:
+            parts.append(f"{pct}%")
+            if self.pad.battery_charging:
+                parts.append("заряжается")
+            else:
+                rem = self.pad.battery_remaining_s()
+                parts.append("считаю…" if rem is None else fmt_remaining(rem))
+                if pct <= 20:
+                    kind = "warn"
+        name = (self.pad.info or {}).get("name") or "Геймпад"
+        tip = f"{name}: огоньки на геймпаде показывают номер камеры" + (f"\nЗаряд {pct}%" if pct is not None else "")
+        self.pad_chip.set(" · ".join(parts), kind, tip)
+        self.pad_chip.show()
+        self._fit_top_bar()
+
+    def _sync_pad_player(self) -> None:
+        """Огоньки игрока = номер камеры геймпада; без камеры — погасить."""
+        s = self._pad_session()
+        self.pad.set_player(pad_number_for(s.cfg, self._cameras()) if s is not None else None)
+        self._update_pad_chip()
+
+    def _sync_pad(self) -> None:
+        """Цвет полосы из снимков (сеть не ждём); мост шлёт его, только если цвет изменился."""
+        if not self.pad.available:
+            return
+        s = self._pad_session()
+        inp = atem_input_of(s.cfg) if s is not None else 0
+        state = self.atem.tally(inp) if self.atem is not None and inp else None
+        f = s.follower if s is not None else None
+        self.pad.set_status(PadStatus(
+            on_program=state == "pgm",
+            on_preview=state == "pvw",
+            link_ok=bool(s and s.online),
+            standby=getattr(s, "power", None) in ("standby", "switching"),
+            menu_open=self.camera_menu.is_open,
+            following=bool(f and f.enabled),
+        ))
 
     def release_all_held(self) -> None:
-        """Отпустить все удерживаемые клавиши — камера останавливается."""
+        """Отпустить клавиши и мышь; скорость, которую держит геймпад, остаётся."""
         if self._held:
             self._held.clear()
             self._apply_held()
@@ -920,6 +1196,7 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, e):  # noqa: N802
         if e.type() == QEvent.ActivationChange and not self.isActiveWindow():
+            self.camera_menu.stop_focus()
             self.release_all_held()
         super().changeEvent(e)
 
@@ -934,6 +1211,8 @@ class MainWindow(QMainWindow):
         if self.atem:
             self.atem.stop()
             self.atem = None
+        self.pad.stop(timeout=0.1)  # до остановки сессии; Qt не ждёт SDL: зависший поток доделает выход сам
+        self._pad_stop_motion()
         self.release_all_held()
         if self.session:
             self.session.stop()

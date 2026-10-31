@@ -170,3 +170,130 @@ def test_lab_restores_sigint_default_handler(tmp_path, sessions, monkeypatch):
         assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
     finally:
         signal.signal(signal.SIGINT, prev)
+
+
+class FakePad:
+    """Геймпад без устройства: SDL запускается, но подключённого контроллера нет."""
+
+    def open(self):
+        return True
+
+    def poll(self):
+        return None
+
+    def close(self):
+        pass
+
+
+def test_lab_gamepad_without_device(monkeypatch, capsys):
+    monkeypatch.setattr(lab, "SdlBackend", FakePad)
+    rc = main(["--lab", "gamepad", "--seconds", "0.2"])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert result_of(out)["connected"] is False
+
+
+def test_lab_gamepad_no_pygame(monkeypatch, capsys):
+    class NoSdl(FakePad):
+        def open(self):
+            raise ImportError("pygame")
+
+    monkeypatch.setattr(lab, "SdlBackend", NoSdl)
+    rc = main(["--lab", "gamepad", "--seconds", "0.2"])
+    res = result_of(capsys.readouterr().out)
+    assert rc == 1 and res["error"] == "no_sdl"
+
+
+@pytest.mark.parametrize("failure", ["raise", "false"])
+def test_lab_gamepad_sdl_failure(monkeypatch, capsys, failure):
+    class Broken(FakePad):
+        def open(self):
+            if failure == "raise":
+                raise RuntimeError("SDL_Init failed")
+            return False
+
+    monkeypatch.setattr(lab, "SdlBackend", Broken)
+    rc = main(["--lab", "gamepad", "--seconds", "0.2"])
+    res = result_of(capsys.readouterr().out)
+    assert rc == 1 and res["error"] == "no_sdl"
+
+
+def test_lab_gamepad_connected_reports_buttons(monkeypatch, capsys):
+    from ptztracker.gamepad.device import RawPad
+
+    class Pad(FakePad):
+        n = 0
+
+        def poll(self):
+            Pad.n += 1
+            return RawPad({"leftx": 0.5}, frozenset({"cross"} if Pad.n % 2 else ()))
+
+        def info(self):
+            return {"name": "DualSense", "type": "ps5", "has_led": True, "has_rumble": True, "power": None}
+
+        def set_led(self, rgb):
+            pass
+
+        def rumble(self, low, high, ms):
+            pass
+
+    monkeypatch.setattr(lab, "SdlBackend", Pad)
+    rc = main(["--lab", "gamepad", "--seconds", "0.3"])
+    res = result_of(capsys.readouterr().out)
+    assert rc == 0 and res["connected"] is True and res["buttons_seen"] == ["cross"] and res["type"] == "ps5"
+
+
+def test_sdl_backend_poll_pump_error_is_logged(caplog):
+    import logging
+    import types
+
+    from ptztracker.gamepad.device import SdlBackend
+
+    class PgError(Exception):
+        pass
+
+    def pump():
+        raise PgError("video system not initialized")
+
+    b = SdlBackend()
+    b._pg = types.SimpleNamespace(error=PgError, event=types.SimpleNamespace(pump=pump))
+    with caplog.at_level(logging.DEBUG, logger="ptztracker.gamepad.device"):
+        assert b.poll() is None
+        assert b.poll() is None
+    msgs = [r for r in caplog.records if "video system" in r.getMessage()]
+    assert len(msgs) == 1  # один раз, не на каждый опрос
+
+
+def test_sdl_backend_led_takes_one_tuple_and_failures_are_logged(caplog):
+    import logging
+
+    from ptztracker.gamepad.device import SdlBackend
+
+    got = []
+
+    class Ctl:
+        def set_led(self, color):  # как в pygame-ce: ровно один позиционный аргумент
+            got.append(color)
+            return True
+
+    b = SdlBackend()
+    b._ctl = Ctl()
+    b.set_led((1, 2, 3))
+    assert got == [(1, 2, 3)]
+
+    class Bad:
+        def set_led(self, color):
+            raise TypeError("boom")
+
+        def rumble(self, low, high, ms):
+            return False
+
+    b = SdlBackend()
+    b._ctl = Bad()
+    with caplog.at_level(logging.DEBUG, logger="ptztracker.gamepad.device"):
+        b.set_led((1, 2, 3))
+        b.set_led((4, 5, 6))
+        b.rumble(0.5, 0.5, 100)
+        b.rumble(0.5, 0.5, 100)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert sum("set_led" in m for m in msgs) == 1 and sum("rumble" in m for m in msgs) == 1

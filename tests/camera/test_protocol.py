@@ -149,3 +149,15 @@ def test_color_temp():
 
 def test_build_url_cam():
     assert "/aw_cam?cmd=OGU:0B&res=1" in build_url("h", "OGU:0B")
+
+
+def test_parse_iris():
+    import pytest
+
+    from ptztracker.camera import protocol as P
+
+    assert P.parse_iris("giFFF0") == 0xFFF
+    assert P.parse_iris("gi555") == 0x555
+    assert P.parse_iris_auto("gi5551") is True and P.parse_iris_auto("gi555") is None
+    with pytest.raises(ValueError):
+        P.parse_iris("ER1")

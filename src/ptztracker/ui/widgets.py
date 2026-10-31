@@ -377,7 +377,9 @@ class VideoFrame(QFrame):
             if corner == "fill":
                 w.setGeometry(self.rect().adjusted(off, off, -off, -off))
                 continue
-            if corner == "top-left":
+            if corner == "center":
+                w.move(max(off, (self.width() - w.width()) // 2), max(off, (self.height() - w.height()) // 2))
+            elif corner == "top-left":
                 w.move(off + SP[1], off + self.tracking_tag.height() + SP[1])
             else:
                 w.move(off + SP[1], self.height() - w.height() - off - SP[1])

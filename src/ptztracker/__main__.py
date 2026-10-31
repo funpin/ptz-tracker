@@ -26,7 +26,8 @@ def _parser() -> argparse.ArgumentParser:
                    help="controller — через регулятор (по умолчанию), analysis — через распознавание")
     r.add_argument("--view", action="store_true", help="открыть запись в окне просмотра")
     lab = p.add_argument_group("команды без окна для агента (--ip, --user, --out — те же)")
-    lab.add_argument("--lab", choices=("record", "follow", "calibrate"), help="запись / слежение / калибровка без окна")
+    lab.add_argument("--lab", choices=("record", "follow", "calibrate", "gamepad"),
+                     help="запись / слежение / калибровка без окна; gamepad — проверка геймпада (камеру не трогает)")
     lab.add_argument("--seconds", type=float, default=30.0, help="сколько секунд писать или следить")
     lab.add_argument("--select", metavar="X,Y", help="кого вести: пиксели кадра анализа")
     lab.add_argument("--composition", help="композиция кадра (waist_center, waist_left, waist_right, full, wide)")

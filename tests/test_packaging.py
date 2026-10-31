@@ -67,6 +67,11 @@ def test_mac_bundle_is_a_regular_app():
     assert '"LSBackgroundOnly": False' in text and "NSLocalNetworkUsageDescription" in text
 
 
+def test_pygame_dependency_and_spec():
+    assert "pygame-ce" in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"pygame"' in (ROOT / "packaging" / "ptztracker.spec").read_text(encoding="utf-8")
+
+
 def test_spec_bundles_ui_icons():
     text = (ROOT / "packaging" / "ptztracker.spec").read_text(encoding="utf-8")
     assert '"ui", "icons"' in text
