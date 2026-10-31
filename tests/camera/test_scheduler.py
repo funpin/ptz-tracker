@@ -4,7 +4,7 @@ import pytest
 
 from ptztracker.camera.client import CameraUnreachable
 from ptztracker.camera.protocol import CameraError
-from ptztracker.camera.scheduler import CommandScheduler, Priority
+from ptztracker.camera.scheduler import QUERY_MAX_WAIT_S, CommandScheduler, Priority
 
 
 class FakeClock:
@@ -424,3 +424,117 @@ def test_busy_camera_does_not_starve_probe(env):
         clock.t += 1
     assert sent.count("#O") >= 3
     assert any(c and c.startswith("#PTS") for c in sent)  # стоп не выброшен
+
+
+def _tracking_with_query(s, clock, query_at=0.0, T=2.0):
+    """Регулятор 25 Гц обновляет pt и зум каждый такт; запрос положения встаёт в очередь в query_at.
+
+    Возвращает, через сколько после постановки запрос ушёл (None — не ушёл).
+    """
+    sent_q = None
+    t0 = clock.t
+    next_tick, queued = t0, False
+    pan = 40
+    while clock.t - t0 < T:
+        if clock.t >= next_tick - 1e-9:
+            next_tick += 0.04
+            pan = pan + 2 if pan < 90 else 40
+            s.submit("pt", _pt(pan), Priority.TRACKING)
+            s.submit("zoom", f"#Z{60 + pan % 7:02d}", Priority.TRACKING_ZOOM)
+        if not queued and clock.t - t0 >= query_at - 1e-9:
+            s._st.queries.append(_query_item(s, "#GZ", clock.t))
+            queued = True
+        if s.pump() == "#GZ" and sent_q is None:
+            sent_q = clock.t - t0 - query_at
+        clock.t = round(clock.t + 0.005, 6)
+    return sent_q
+
+
+def _query_item(s, cmd, now):
+    from concurrent.futures import Future
+
+    from ptztracker.camera.scheduler import _Item
+
+    return _Item(cmd, Priority.QUERY, next(s._seq), future=Future(), submitted=now)
+
+
+def test_query_not_starved_by_continuous_tracking(env):
+    """HE40 2026-10-30: #APC/#GZ ждали до 7 с за непрерывным слежением. Теперь — не дольше ~0,4 с + окно."""
+    s, clock, _ = env
+    waited = _tracking_with_query(s, clock, query_at=0.5)
+    assert waited is not None and waited <= 0.55, waited
+
+
+def test_young_query_does_not_preempt_tracking(env):
+    s, clock, _ = env
+    s.submit("pt", _pt(60), Priority.TRACKING)
+    s._st.queries.append(_query_item(s, "#GZ", clock.t))
+    clock.t += 0.2
+    assert s.pump() == _pt(60)  # запрос моложе QUERY_MAX_WAIT_S: слежение не вытесняется
+
+
+def test_aged_query_goes_before_tracking_and_tracking_zoom(env):
+    s, clock, _ = env
+    s._st.queries.append(_query_item(s, "#GZ", clock.t))
+    clock.t += QUERY_MAX_WAIT_S + 0.01
+    s.submit("pt", _pt(60), Priority.TRACKING)
+    s.submit("zoom", "#Z70", Priority.TRACKING_ZOOM)
+    assert s.pump() == "#GZ"
+    clock.t += 0.13
+    assert s.pump() == _pt(60)
+
+
+def test_aged_query_never_preempts_emergency_or_manual(env):
+    s, clock, _ = env
+    s._st.queries.append(_query_item(s, "#GZ", clock.t))
+    clock.t += 5.0
+    s.submit("pt", "#PTS6050", Priority.MANUAL)
+    assert s.pump() == "#PTS6050"
+    clock.t += 0.13
+    s.submit("pt", _pt(60), Priority.TRACKING)
+    assert s.pump() == "#GZ"
+    # аварийный стоп уходит раньше состарившегося запроса и ничего не теряет
+    s._st.queries.append(_query_item(s, "#APC", clock.t))
+    clock.t += 5.0
+    s.emergency_stop()
+    sent = []
+    for _ in range(4):
+        clock.t += 0.13
+        sent.append(s.pump())
+    assert sent[:3] == ["#PTS5050", "#Z50", "#F50"] and sent[3] == "#APC"
+
+
+def test_abandoned_query_is_not_sent(env):
+    s, clock, send = env
+    with pytest.raises(TimeoutError):
+        s.query("#GZ", timeout=0.01)  # планировщик не запущен: вызывающий бросил запрос по таймауту
+    s.submit("pt", _pt(60), Priority.TRACKING)
+    clock.t += 5.0
+    assert s.pump() == _pt(60)
+    clock.t += 0.13
+    assert s.pump() is None
+    assert send.calls == [_pt(60)]
+    assert not s.pending()
+
+
+def test_query_abandoned_while_in_flight_does_not_break_thread():
+    gate, started = threading.Event(), threading.Event()
+
+    def slow_send(cmd):
+        started.set()
+        gate.wait(2)
+        return cmd.lstrip("#")
+
+    s = CommandScheduler(slow_send, min_interval=0.01)
+    s.start()
+    try:
+        with pytest.raises(TimeoutError):
+            s.query("#GZ", timeout=0.1)  # ушёл в камеру, но ответ придёт, когда вызывающего уже нет
+        assert started.is_set()
+        gate.set()
+        s.submit("pt", "#PTS6050", Priority.MANUAL)
+        assert s.wait_idle(2.0)
+        assert s._thread.is_alive()
+    finally:
+        gate.set()
+        s.stop()

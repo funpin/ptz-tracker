@@ -13,7 +13,8 @@ import logging
 import re
 import threading
 import time
-from concurrent.futures import Future
+from concurrent.futures import Future, InvalidStateError
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Callable
@@ -31,9 +32,27 @@ UNREACHABLE_BACKOFF_S = 1.0
 # по обеим осям), если это отъезд (человек у края кадра) или если зум останавливает/разворачивает уже
 # отправленный зум. Поворот уступает не больше одного окна подряд.
 ZOOM_WINDOW_AFTER_S = 0.3
+# Запрос положения (#APC, #GZ), прождавший столько, уходит раньше слежения (поворота и зума), но не раньше аварийных и
+# ручных команд. Живая HE40 (2026-10-30): слежение заново занимало ячейки pt и zoom каждый такт, и запросы ждали до 7 с —
+# регулятор считал скорости по зуму 10-секундной давности. Запрос — одна команда в секунду, поворот теряет из-за него
+# не больше одного окна.
+QUERY_MAX_WAIT_S = 0.4
 PT_SMALL_CHANGE = 2
 _PT_RE = re.compile(r"#PTS(\d\d)(\d\d)")
 _ZOOM_RE = re.compile(r"#Z(\d\d)")
+
+
+def _settle(fut: Future | None, result: str | None = None, exc: Exception | None = None) -> None:
+    """Выдать ответ вызывающему запрос; если он уже отказался ждать (future отменён) — молча пропустить."""
+    if fut is None or fut.cancelled():
+        return
+    try:
+        if exc is not None:
+            fut.set_exception(exc)
+        else:
+            fut.set_result(result)
+    except InvalidStateError:
+        pass
 
 
 class Priority(IntEnum):
@@ -134,10 +153,19 @@ class CommandScheduler:
 
     def query(self, cmd: str, timeout: float = 2.0) -> str:
         fut: Future = Future()
+        item = _Item(cmd, Priority.QUERY, next(self._seq), future=fut, submitted=self._clock())
         with self._cond:
-            self._st.queries.append(_Item(cmd, Priority.QUERY, next(self._seq), future=fut, submitted=self._clock()))
+            self._st.queries.append(item)
             self._cond.notify()
-        return fut.result(timeout=timeout)
+        try:
+            return fut.result(timeout=timeout)
+        except FutureTimeout:
+            # вызывающий ушёл: запрос, не успевший уйти, из очереди убираем (иначе он отправится «в никуда»)
+            with self._cond:
+                if item in self._st.queries:
+                    self._st.queries.remove(item)
+            fut.cancel()
+            raise
 
     def emergency_stop(self) -> None:
         if self.queries_only:  # камерой управляет другой пульт: наш стоп заморозил бы её
@@ -220,11 +248,16 @@ class CommandScheduler:
 
     def _take_due(self, now: float) -> _Item | None:
         self._drop_expired(now)
+        self._st.queries[:] = [q for q in self._st.queries if not (q.future and q.future.cancelled())]
         wait = self._wait_s(now)
         if wait is None or wait > 0:
             return None
         candidates = list(self._st.slots.values()) + self._st.queries
         item = min(candidates, key=lambda i: (i.priority, i.seq))
+        if item.priority in (Priority.TRACKING, Priority.TRACKING_ZOOM) and self._st.queries:
+            oldest = self._st.queries[0]
+            if now - oldest.submitted >= QUERY_MAX_WAIT_S:
+                item = oldest  # состарившийся запрос впереди слежения; аварийные и ручные команды он не обгоняет
         if self._probe_next and self.probe_key in self._st.slots:
             item = self._st.slots[self.probe_key]
         self._probe_next = False
@@ -316,16 +349,14 @@ class CommandScheduler:
                     self._st.last_sent[item.key] = item.cmd
                 self._unreachable_streak = 0
                 self.last_error = None
-            if item.future:
-                item.future.set_result(resp)
+            _settle(item.future, resp)
             self._set_online(True)
             return True, resp
 
     def _on_failure(self, item: _Item, err: Exception, unreachable: bool) -> None:
         self.last_error = str(err)
         log.warning("Команда %s не прошла: %s", item.cmd, err)
-        if item.future:
-            item.future.set_exception(err)
+        _settle(item.future, exc=err)
         with self._cond:
             if unreachable:
                 self._unreachable_streak += 1
