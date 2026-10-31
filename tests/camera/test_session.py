@@ -376,3 +376,56 @@ def test_gain_auto_without_manual_stale_cache_requeries():
         assert _wait(lambda: s.sim.gain_code == 0x0B, 2.0)  # камера реально на 0x08 — не авто
     finally:
         s.stop()
+
+
+def test_standby_does_not_flood_queue_and_power_button_works():
+    # ревью: в ожидании камера отвечает ER2 на запросы и стопы, а er2 планировщик повторял без конца —
+    # пульс #O голодал, а #O1 после Esc устаревал, и камера не включалась
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        s.sim.power_on_s = 0.5
+        assert _wait(lambda: s.power == "on")
+        s.set_power(False)
+        assert _wait(lambda: s.power == "standby", 1.0)
+        s.refresh_image()
+        s.emergency_stop()
+        time.sleep(0.3)
+        n0 = len(s.sim.received)
+        time.sleep(2.2)
+        sent = list(s.sim.received)[n0:]
+        assert "#O" in sent  # пульс идёт
+        assert len(sent) <= 4, sent  # и больше ничего не повторяется
+        s.set_power(True)
+        assert _wait(lambda: s.power == "on", 4.0)
+    finally:
+        s.stop()
+
+
+def test_standby_from_remote_counts_as_manual_and_clears_queue():
+    s = CameraSession(sim_cfg(), analysis=False)
+    calls = []
+    s.on_manual = lambda: calls.append("manual")
+    s.start()
+    try:
+        assert _wait(lambda: s.power == "on")
+        s.sim._standby = True  # выключили с пульта (handle() мог бы попасть в окно 130 мс и получить eR2)
+        assert _wait(lambda: s.power == "standby", 3.0)
+        assert calls == ["manual"]
+        assert not s.scheduler.pending() or _wait(lambda: not s.scheduler.pending(), 2.5)
+    finally:
+        s.stop()
+
+
+def test_gain_resent_after_remote_change():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.gain == 0x08)
+        s.set_gain(0x0B)
+        assert _wait(lambda: s.sim.gain_code == 0x0B, 1.0)
+        s.sim.gain_code = 0x08  # вернули с пульта
+        s.set_gain(0x0B)
+        assert _wait(lambda: s.sim.gain_code == 0x0B, 1.0)
+    finally:
+        s.stop()

@@ -22,11 +22,14 @@ class Recorder:
         self.calls: list[str] = []
         self.ok: list[str] = []
         self.fail_next: list[Exception] = []
+        self.fail_with = None  # cmd -> Exception | None: постоянная ошибка (камера в ожидании)
 
     def __call__(self, cmd):
         self.calls.append(cmd)
         if self.fail_next:
             raise self.fail_next.pop(0)
+        if self.fail_with and (err := self.fail_with(cmd)):
+            raise err
         self.ok.append(cmd)
         return "p1" if cmd == "#O" else cmd.lstrip("#")
 
@@ -392,3 +395,32 @@ def test_pan_stop_er3_still_retried(env):
         s.pump()
         clock.t += 0.131
     assert "#PTS5050" in send.ok
+
+
+def test_drop_pending_keeps_only_named_keys(env):
+    s, clock, _ = env
+    s.submit("pt", "#PTS9950", Priority.MANUAL)
+    s.submit("q_gain", "QGU", Priority.QUERY, only_if_changed=False)
+    s.submit("power", "#O1", Priority.MANUAL, only_if_changed=False)
+    s.emergency_stop()
+    s.submit("power", "#O1", Priority.MANUAL, only_if_changed=False)
+    s.drop_pending(keep={"power", "heartbeat"})
+    assert s.pump() == "#O1"
+    clock.t += 1
+    assert s.pump() is None
+
+
+def test_busy_camera_does_not_starve_probe(env):
+    # камера ушла в ожидание с пульта: на всё отвечает ER2, а аварийный стоп повторяется вечно —
+    # пульс (probe_key) всё равно должен проходить, иначе программа не узнает, что камера спит
+    s, clock, send = env
+    s.probe_key = "heartbeat"
+    send.fail_with = lambda cmd: CameraError("er2", "ER2:" + cmd) if cmd != "#O" else None
+    s.emergency_stop()
+    sent = []
+    for _ in range(12):
+        s.submit("heartbeat", "#O", Priority.QUERY, only_if_changed=False)
+        sent.append(s.pump())
+        clock.t += 1
+    assert sent.count("#O") >= 3
+    assert any(c and c.startswith("#PTS") for c in sent)  # стоп не выброшен

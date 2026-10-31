@@ -126,6 +126,7 @@ class CameraSession:
             queries_only=self.observe_only,
         )
         self.scheduler.add_sent_listener(self._on_reply)
+        self.scheduler.probe_key = "heartbeat"  # пульс не голодает за повторами er2 (камера в ожидании)
         self.scheduler.start()
         self.limit_watch = LimitWatch(self._lw_query_pan_tilt, self._lw_query_zoom, lambda: None)
         self.frames.start()
@@ -360,6 +361,8 @@ class CameraSession:
         return self._image
 
     def refresh_image(self) -> None:
+        if self._power in ("standby", "switching"):
+            return  # камера в ожидании отвечает ER2 — опросим после включения
         for key, cmd in (
             ("q_gain", P.Q_GAIN), ("q_wb", P.Q_WB), ("q_ctemp", P.Q_COLOR_TEMP), ("q_iris", P.Q_IRIS),
         ):
@@ -381,6 +384,8 @@ class CameraSession:
                 if now in ("standby", "switching"):
                     with self._step_lock:
                         self._pending_steps.clear()
+                    if was not in ("standby", "switching"):
+                        self._enter_standby()
                 if now == "on" and was in ("standby", "switching"):
                     self.refresh_image()
             elif ok and (cmd == P.Q_GAIN or str(cmd).startswith("OGU:")):
@@ -485,6 +490,11 @@ class CameraSession:
         self._last_manual_gain = new
         self._upd(gain=new)
         return True
+    def _enter_standby(self) -> None:
+        """Камера ушла в ожидание (нашей кнопкой или с пульта): как ручное действие — слежение и агент
+        выключаются; очередь чистится, остаются пульс и питание (поток планировщика, вне его замка)."""
+        self._manual()
+        self.scheduler.drop_pending(keep={"heartbeat", "power"})
 
     def set_power(self, on: bool) -> None:
         if not on:
@@ -492,13 +502,14 @@ class CameraSession:
         self._submit("power", P.POWER_ON if on else P.POWER_STANDBY, only_if_changed=False, ttl=ONE_SHOT_TTL_S)
 
     def set_gain(self, code: int) -> None:
-        self._submit("gain", P.gain(code))
+        # всегда отправлять: значение могли поменять с пульта, и «то же, что в прошлый раз» уже не то
+        self._submit("gain", P.gain(code), only_if_changed=False)
 
     def set_wb(self, mode: int) -> None:
-        self._submit("wb", P.wb_mode(mode))
+        self._submit("wb", P.wb_mode(mode), only_if_changed=False)
 
     def set_color_temp(self, index: int) -> None:
-        self._submit("ctemp", P.color_temp(index))
+        self._submit("ctemp", P.color_temp(index), only_if_changed=False)
 
     # --- ручное управление --------------------------------------------
 
@@ -550,4 +561,8 @@ class CameraSession:
             self.follower.note_manual()
         if self.follower and self.follower.enabled:
             self.follower.disable("аварийный стоп")
+        if self._power in ("standby", "switching"):
+            # камера в ожидании не движется и стопы отвергает (ER2); повторы стопов вытеснили бы #O1
+            self.scheduler.drop_pending(keep={"heartbeat", "power"})
+            return
         self.scheduler.emergency_stop()
