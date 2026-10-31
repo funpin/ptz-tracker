@@ -490,6 +490,7 @@ class CameraSession:
         self._last_manual_gain = new
         self._upd(gain=new)
         return True
+
     def _enter_standby(self) -> None:
         """Камера ушла в ожидание (нашей кнопкой или с пульта): как ручное действие — слежение и агент
         выключаются; очередь чистится, остаются пульс и питание (поток планировщика, вне его замка)."""
