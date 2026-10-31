@@ -44,7 +44,8 @@ class CameraError(Exception):
     """Камера ответила ошибкой вида «er1:…» (er1 — нет такой команды, er2 — занята, er3 — вне диапазона)."""
 
     def __init__(self, code: str, body: str):
-        super().__init__(f"Камера ответила ошибкой {code}: {body}")
+        hint = " (камера занята пультом или в режиме ожидания)" if code == "er2" else ""
+        super().__init__(f"Камера ответила ошибкой {code}: {body}{hint}")
         self.code = code
         self.body = body
 
