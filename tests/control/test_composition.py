@@ -75,7 +75,7 @@ def test_back_view_anchor_from_shoulders():
     assert ears.confident
     assert abs(ears.nose[0] - frontal.nose[0]) < 1e-6
     assert abs(ears.nose[1] - frontal.nose[1]) < 0.3 * u_true
-    assert ears.u is not None and abs(ears.u / u_true - 1) < 0.3  # меряли по ушам — размер можно отдать зуму
+    assert ears.u is None  # уши со спины шумят — размер зуму не отдаём, только опорная точка
 
     # одно ухо (голова боком к камере) — тоже годится
     one_ear = measure_body(kp(None, re=(295, 98), **shoulders), box, size, None)
@@ -92,6 +92,10 @@ def test_back_view_anchor_from_shoulders():
     # нелепые уши (высоко над головой) отбрасываются как не лезущие в разумные границы от sw_u
     silly = measure_body(kp(None, le=(345, 0), re=(295, 0), **shoulders), box, size, None)
     assert silly.u is None and abs(silly.nose[1] - frontal.nose[1]) < 0.3 * u_true
+
+    # уши ниже, чем дал бы нос (U < ширины плеч) — не берём: у носа U не бывает меньше, иначе прыжок
+    low = measure_body(kp(None, le=(345, 120), re=(295, 120), **shoulders), box, size, None)
+    assert abs(low.nose[1] - plain.nose[1]) < 1e-6
 
     # last_u по-прежнему главнее
     kept = measure_body(kp(None, le=(345, 98), re=(295, 98), **shoulders), box, size, 0.1)

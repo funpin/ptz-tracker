@@ -15,7 +15,7 @@ from ptztracker.vision.types import KP_L_EAR, KP_L_SHOULDER, KP_NOSE, KP_R_EAR, 
 
 KP_MIN_CONF = 0.3
 U_PER_SHOULDER = 0.375  # у взрослого «нос→плечи» ≈ 0.375 ширины плеч (15 см / 40 см)
-EAR_U_RANGE = (0.6, 1.6)  # «уши→плечи» принимаем, если в этих долях от U по ширине плеч (иначе — шум)
+EAR_U_RANGE = (1.0, 1.6)  # «уши→плечи» в долях U по ширине плеч; не меньше 1 — как у носа (max с шириной плеч)
 
 
 @dataclass(frozen=True)
@@ -69,9 +69,11 @@ def measure_body(
         if u is None and last_u is None:
             # Спиной с самого начала: носа не было и запомнить нечего. Опорная точка должна быть та же
             # («плечи минус U»), иначе кадр прыгнет, когда нос появится: U — по ушам, а без них — по ширине плеч.
-            u = _u_from_ears(keypoints, sy, h, sw_u)
-            ref_u = u if u is not None else sw_u
-            return BodyMeasure((sx, sy - ref_u), u, True)  # размер по ширине плеч — догадка, зум по нему не ведём
+            # Размер не отдаём (u=None): уши со спины шумят (волосы, поворот головы), а один шумный кадр
+            # застрял бы в last_u и в размере у зума — зум поехал бы вслепую до упора.
+            ear_u = _u_from_ears(keypoints, sy, h, sw_u)
+            ref_u = ear_u if ear_u is not None else sw_u
+            return BodyMeasure((sx, sy - ref_u), None, True)
         ref_u = last_u if last_u is not None else u
         return BodyMeasure((sx, sy - ref_u), u, True)
     bx = (box[0] + box[2]) / 2 / w
