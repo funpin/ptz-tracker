@@ -116,6 +116,7 @@ class Follower:
         self._zoom_move_t = float("-inf")  # то же для зума
         self.polling_paused = False  # калибровка: опросы зума и положения молчат, поток живёт
         self._stop = threading.Event()
+        self._poll_now = threading.Event()  # enable(): потоку опроса спросить #GZ и #APC сразу
         scheduler.add_sent_listener(self._on_cmd_sent)
         self._thread = threading.Thread(target=self._run, name="follower", daemon=True)
         self._zthread = threading.Thread(target=self._poll_zoom, name="follower-zoom", daemon=True)
@@ -130,13 +131,10 @@ class Follower:
         r = self.analyzer.latest() if self.analyzer else None
         if r is None or r.target_id is None:
             return False
-        self._zoom_pos_t = None  # старое положение не годится как опора модели зума
-        try:  # сразу узнать зум: от него зависит таблица скоростей
-            z = self.query_zoom()
-            if z is not None:
-                self._set_zoom_pos(z)
-        except Exception as e:
-            log.debug("Запрос зума при включении не удался: %s", e)
+        # Старое положение не годится как опора модели зума. Камеру здесь не опрашиваем (enable() зовёт поток Qt):
+        # берём последнее известное (или умолчание модели), а поток опроса сразу спросит #GZ и поправит
+        self._zoom_pos_t = None
+        self._poll_now.set()
         with self._lock:
             latency = self.video_latency()
             self.controller.video_latency = latency
@@ -290,6 +288,9 @@ class Follower:
                     else GZ_POLL_STILL_S
                 do_gz = now - last_gz >= gz_every - 1e-3
                 do_apc = now - last_apc >= apc_every - 1e-3
+                if self._poll_now.is_set():
+                    self._poll_now.clear()
+                    do_gz = do_apc = True
                 if not (do_gz or do_apc):
                     continue
             z = None

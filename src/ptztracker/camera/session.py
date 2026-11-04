@@ -378,8 +378,10 @@ class CameraSession:
             if cmd in (P.Q_POWER, P.POWER_ON, P.POWER_STANDBY):
                 was = self._power
                 now = P.parse_power(reply) if ok else ("unknown" if cmd == P.Q_POWER else was)
-                if cmd == P.POWER_ON and now == "on" and was != "on":
-                    now = "switching"  # #O1 отвечает p1 сразу, а камера ещё включается (p3 ~3,5 с)
+                if cmd == P.POWER_ON and now == "on" and was in ("standby", "switching"):
+                    # #O1 отвечает p1 сразу, а камера ещё включается (p3 ~3,5 с). Только из ожидания: при «unknown»
+                    # камера обычно уже включена, а «switching» не шлёт аварийные стопы
+                    now = "switching"
                 self._power = now
                 if now in ("standby", "switching"):
                     with self._step_lock:

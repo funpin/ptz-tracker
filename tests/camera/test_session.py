@@ -156,6 +156,42 @@ def test_standby_roundtrip_blocks_motion():
         s.stop()
 
 
+def test_power_on_from_unknown_state_keeps_emergency_stop():
+    """Состояние питания неизвестно (нет ответа опроса), а камера включена: ответ p1 на #O1 не должен переводить
+    в «switching» — там аварийный стоп стопов не шлёт (и теряет MANUAL-стопы, которые только что поставил disable())."""
+    from ptztracker.camera import protocol as P
+
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.power == "on")
+        s._power = "unknown"
+        s._on_reply({"cmd": P.POWER_ON, "reply": "p1", "ok": True})
+        assert s.power == "on"
+        s.set_pan_tilt_velocity(0.5, 0)
+        time.sleep(0.3)
+        n = len([c for c in s.sim.received if c.startswith("#PTS")])
+        s.emergency_stop()
+        assert _wait(lambda: len([c for c in s.sim.received if c.startswith("#PTS")]) > n and
+                     [c for c in s.sim.received if c.startswith("#PTS")][-1] == "#PTS5050", 1.5)
+    finally:
+        s.stop()
+
+
+def test_power_on_from_standby_goes_through_switching():
+    from ptztracker.camera import protocol as P
+
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.power == "on")
+        s._power = "standby"
+        s._on_reply({"cmd": P.POWER_ON, "reply": "p1", "ok": True})
+        assert s.power == "switching"
+    finally:
+        s.stop()
+
+
 def test_power_off_runs_manual_first():
     s = CameraSession(sim_cfg(), analysis=False)
     calls = []
