@@ -70,6 +70,7 @@ from ptztracker.ui.follow_panel import FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.manual_controls import ManualControls
+from ptztracker.ui.service_cell import KINDS, ServiceCell, ServiceRow
 from ptztracker.ui.state import TrackingView, analysis_pill, atem_pill, power_view, tracking_view, video_pill
 from ptztracker.ui.theme import FS_CAPTION, SP, C
 from ptztracker.ui.widgets import StatusPill, VideoFrame, keycap_width, paint_keycap
@@ -152,6 +153,8 @@ class MainWindow(QMainWindow):
         self.grid = CameraGrid(self._make_session)
         self.cells: list[CameraCell] = [CameraCell(i) for i in range(GRID_SLOTS)]
         self.grid.selected = 0
+        self._service = {k: ServiceCell(k) for k in KINDS}  # окно владеет, клетки только показывают
+        self._service_slot: dict[str, int | None] = dict.fromkeys(KINDS)
         self._loading = True  # пока строится окно: анализ и настройки не пересчитываем на каждую клетку
         self._srcs: dict[tuple[int, str], tuple[Cell, MixerSource]] = {}  # источники смесителя клетки (кэш)
         self._speed_scale_saved: dict[int, float] = {}
@@ -625,6 +628,7 @@ class MainWindow(QMainWindow):
             self._select_effects()
         self._reallocate_analysis()
         self._refresh_cell_choices()
+        self._refresh_service_cells()
         self._save_grid()
         self._update_selected_status()
 
@@ -1095,8 +1099,50 @@ class MainWindow(QMainWindow):
 
     # --- статус -------------------------------------------------------
 
+    def service_kind(self, slot: int) -> str | None:
+        """Какая служебная клетка стоит в пустой клетке `slot` (первая пустая — position, вторая — graphs, третья — summary)."""
+        empty = [i for i, c in enumerate(self.grid.cells) if c is None]
+        return KINDS[empty.index(slot)] if slot in empty and empty.index(slot) < len(KINDS) else None
+
+    def _service_pads(self, slot: int) -> list[int]:
+        return []  # TODO(Task 10): номера геймпадов из PadRouter.pads_on(slot)
+
+    def _refresh_service_cells(self) -> None:
+        empty = [i for i, c in enumerate(self.grid.cells) if c is None]
+        want = {k: (empty[n] if n < len(empty) else None) for n, k in enumerate(KINDS)}
+        for kind, widget in self._service.items():
+            if self._service_slot[kind] != want[kind]:
+                if self._service_slot[kind] is not None:
+                    self.cells[self._service_slot[kind]].set_service(None)
+                if want[kind] is not None:
+                    self.cells[want[kind]].set_service(widget)
+                self._service_slot[kind] = want[kind]
+        if not any(w is not None for w in want.values()):
+            return
+        rows = []
+        for i, c in enumerate(self.grid.cells):
+            if c is None:
+                continue
+            s = c.session
+            r = s.analyzer.latest() if s.analyzer else None
+            rows.append(ServiceRow(i, c.cfg.name, s.ptz, s.ptz_history(), r.fps if r else None,
+                                   s.online, self._service_pads(i)))
+        for kind, widget in self._service.items():
+            if want[kind] is not None:
+                widget.update_view(rows, self.grid.selected)
+
+    def _poll_positions(self) -> None:
+        """Положение камер нужно только видимым клеткам position/graphs; poll_position лишь ставит запрос в очередь."""
+        if self._service_slot["position"] is None and self._service_slot["graphs"] is None:
+            return
+        for c in self.grid.cells:
+            if c is not None:
+                c.session.poll_position()
+
     def _update_status(self) -> None:
         self._poll_update_check()
+        self._refresh_service_cells()
+        self._poll_positions()
         for i, c in enumerate(self.grid.cells):
             cell = self.cells[i]
             if c is None:

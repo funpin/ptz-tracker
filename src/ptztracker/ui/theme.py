@@ -146,3 +146,7 @@ def apply_dark_theme(app: QApplication) -> None:
     font.setPixelSize(FS_TEXT)
     app.setFont(font)
     app.setStyleSheet(stylesheet())
+
+
+# цвет и номер клетки на виде сверху и в графиках служебных клеток
+SLOT_COLORS = (C.ACCENT, C.PVW, C.LOST, C.REMOTE)
