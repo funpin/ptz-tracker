@@ -21,22 +21,24 @@ class AgentGate:
         self.on_off_air_cleared: Callable[[], None] | None = None  # «НЕ в эфире» снят
 
     def set_allowed(self, on: bool) -> None:
-        self.control_allowed = bool(on)
+        with self._lock:
+            self.control_allowed = bool(on)
         self._changed()
 
     def set_off_air(self, on: bool) -> None:
-        was = self.not_on_air
-        self.not_on_air = bool(on)
+        with self._lock:
+            was = self.not_on_air
+            self.not_on_air = bool(on)
         self._changed()
         if was and not on and self.on_off_air_cleared:
             self.on_off_air_cleared()
 
     def revoke(self) -> None:
         """Снять оба разрешения. Снимок меняется сразу."""
-        was = self.not_on_air
-        self._lock = threading.Lock()  # проверка-и-запись флажков атомарна: revoke из потока сессии не теряется
-        self.control_allowed = False
-        self.not_on_air = False
+        with self._lock:
+            was = self.not_on_air
+            self.control_allowed = False
+            self.not_on_air = False
         self._changed()
         if was and self.on_off_air_cleared:
             self.on_off_air_cleared()
