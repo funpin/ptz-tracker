@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
@@ -39,6 +41,8 @@ class PreviewWidget(QWidget):
     """Превью последнего кадра камеры с рамками людей; клик по человеку выбирает цель."""
 
     targetClicked = Signal(int)
+
+    click_guard: Callable[[], bool] | None = None  # False — клик не выбирает человека
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -150,7 +154,11 @@ class PreviewWidget(QWidget):
         return min(hits, key=lambda t: (t.box[2] - t.box[0]) * (t.box[3] - t.box[1])) if hits else None
 
     def mousePressEvent(self, e):  # noqa: N802
-        if e.button() != Qt.LeftButton or self._analyzer is None:
+        if e.button() != Qt.LeftButton:
+            return
+        if self.click_guard is not None and not self.click_guard():
+            return
+        if self._analyzer is None:
             return
         r = self._result()
         fp = self.widget_to_frame(e.position())

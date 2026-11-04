@@ -14,6 +14,7 @@ class C:
     TEXT_DIM = "#A0A8B6"
     TEXT_FAINT = "#6C7486"
     ACCENT = "#4C8DF6"  # выбор, действие
+    SELECT = "#3B82F6"  # рамка выбранной клетки
     ON = "#3D8BFF"  # слежение ведёт
     LOST = "#F0A020"  # цель потеряна
     REMOTE = "#A78BFA"  # пульт
