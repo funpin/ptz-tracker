@@ -79,6 +79,7 @@ def test_default_zooms_cover_tele_and_flat_curves_dropped():
 
     z = default_zooms(0x73F)
     assert z[0] == 0x555 and z[-1] == 0xFFF and 0x73F in z
+    assert 0xD55 in z and 0xEA9 in z  # тело: поворот там замедлен (BACKLOG «точку 0xD55 в мастер»)
     curves = {0x555: [(60, 0.03), (70, 0.3), (80, 0.5)], 0xFFF: [(60, 0.0), (70, 0.001), (80, 0.002)]}
     assert list(drop_flat_curves(curves)) == [0x555]
 
@@ -282,6 +283,158 @@ def test_wizard_never_goes_beyond_half_frame_from_start():
         mid_z = (0x800 - 0x555) / (0xFFF - 0x555)
         mid = max(d / hfov_deg(z) for d, z in dev if abs(z - mid_z) < 0.01)
         assert wide <= 0.5 and mid <= 1.0, (wide, mid)
+    finally:
+        src.stop()
+        srv.stop()
+
+
+def test_tele_curve_extended_above_measured_codes_by_rated_shape():
+    """На теле мастер меряет коды до 75; быстрее — по форме паспортной кривой от замера, а не скорость кода 75
+    до 99 (тогда регулятор считал бы камеру в разы медленнее и раскачал её)."""
+    from ptztracker.control.calibration import extend_tele_curve
+
+    curve = [(55, 0.1), (63, 0.4), (75, 1.6)]
+    out = extend_tele_curve(curve, 0xFFF, (53, 70, 75, 80, 90))
+    assert out[:3] == curve
+    v80 = 1.6 * he42.pan_deg_s(80, 0xFFF) / he42.pan_deg_s(75, 0xFFF)
+    assert [c for c, _ in out] == [55, 63, 75, 80, 90] and abs(out[3][1] - v80) < 1e-4
+
+
+@pytest.mark.slow
+def test_wizard_measures_tilt_separately_and_returns():
+    """Наклон меряется отдельно (два кода, вверх и вниз): у симулятора наклон ×0,7 от поворота — в калибровке
+    доля ~0,7, регулятор берёт её вместо «наклон = поворот». Камера в конце на месте (±1°)."""
+    sim, srv, src, client = make(tilt_factor=0.7)
+    try:
+        sim.pan_deg, sim.tilt_deg = 3.0, -8.0
+        lo = []
+        stop = threading.Event()
+
+        def watch():
+            while not stop.is_set():
+                lo.append(abs(sim.tilt_deg + 8.0))
+                time.sleep(0.01)
+
+        threading.Thread(target=watch, daemon=True).start()
+        cal = CalibrationRunner(client.send, src, lambda m: None, zooms=[0x555], codes=(55, 63, 70, 75, 80)).run()
+        stop.set()
+        assert [c for c, _ in cal.tilt] == [63, 75]
+        for _, r in cal.tilt:
+            assert abs(r / 0.7 - 1) < 0.1, cal.tilt
+        assert abs(cal.pan_fw(70, 0x555, axis="tilt") / (0.7 * cal.pan_fw(70, 0x555)) - 1) < 0.1
+        # пробег наклона — короткий: не дальше полкадра по высоте широкого угла
+        assert max(lo) <= 0.5 * he42.HFOV_WIDE_DEG * 9 / 16, max(lo)
+        assert abs(sim.pan_deg - 3.0) <= 1.0 and abs(sim.tilt_deg + 8.0) <= 1.0
+    finally:
+        src.stop()
+        srv.stop()
+
+
+@pytest.mark.slow
+def test_full_wizard_measures_tele_in_three_minutes():
+    """Мастер по умолчанию с рабочего зума 0x800: точки тела 0xD55 и 0xEA9 меряются по #APC (коды 63/70/75 —
+    в пределах 15% от симулятора, т. е. от he42.TELE_PAN_DEG_S), наклон измерен, сведения о камере записаны;
+    весь мастер — не дольше 3 мин, камера в конце на месте (±1°) и не уходит дальше полкадра широкого угла."""
+    from ptztracker.control.calibration import hfov_at
+
+    sim, srv, src, client = make()
+    try:
+        client.send("#AXZ800")
+        time.sleep(2.0)
+        sim.pan_deg, sim.tilt_deg = 3.0, -8.0
+        dev = []
+        stop = threading.Event()
+
+        def watch():
+            while not stop.is_set():
+                dev.append(abs(sim.pan_deg - 3.0))
+                time.sleep(0.01)
+
+        threading.Thread(target=watch, daemon=True).start()
+        t0 = time.monotonic()
+        cal = CalibrationRunner(client.send, src, lambda m: None, stream_kind="sim", model="AW-HE42").run()
+        took = time.monotonic() - t0
+        stop.set()
+        assert took <= 180, took
+        assert {0xD55, 0xEA9, 0xFFF} <= set(cal.zoom_points) and cal.zoom_points == sorted(cal.pan.points)
+        for z in (0xD55, 0xEA9, 0xFFF):
+            for code in (63, 70, 75):
+                want = he42_deg_s(code, z) / hfov_at(z)
+                assert abs(cal.pan.speed(code, z) / want - 1) < 0.15, (hex(z), code, cal.pan.speed(code, z), want)
+            assert cal.pan.speed(90, z) > cal.pan.speed(75, z)  # быстрые коды — не скорость кода 75
+        assert cal.tilt and all(abs(r - 1) < 0.1 for _, r in cal.tilt), cal.tilt
+        assert (cal.model, cal.firmware, cal.stream_kind) == ("AW-HE42", None, "sim")
+        assert max(dev) <= 0.5 * he42.HFOV_WIDE_DEG, max(dev)
+        assert abs(sim.pan_deg - 3.0) <= 1.0 and abs(sim.tilt_deg + 8.0) <= 1.0
+        assert abs(sim.zoom - 0.25) < 0.01
+    finally:
+        src.stop()
+        srv.stop()
+
+
+@pytest.mark.slow
+def test_wizard_cancel_stops_returns_home_and_saves_nothing():
+    """Оператор прервал мастер посреди пробега: стоп отправлен сразу, камера вернулась на место (±1°, зум тоже),
+    калибровки нет — run бросает CalibrationCancelled."""
+    from ptztracker.control.calibration import CalibrationCancelled
+
+    sim, srv, src, client = make()
+    try:
+        sim.pan_deg, sim.tilt_deg = 3.0, -8.0
+        cancel = threading.Event()
+        sent = []
+        t_cancel = []
+
+        def on_sample(kind, data):
+            if kind == "cmd" and data["cmd"] in ("#PTS7050", "#PTS3050") and not t_cancel:
+                # пробег кода 70 на зуме FFF: отмена через 0,3 с после его начала
+                t_cancel.append(None)
+                threading.Timer(0.3, lambda: (t_cancel.__setitem__(0, time.monotonic()), cancel.set())).start()
+
+        def send(cmd):
+            sent.append((time.monotonic(), cmd))
+            return client.send(cmd)
+
+        r = CalibrationRunner(send, src, lambda m: None, zooms=[0xFFF], codes=(55, 70), cancel=cancel,
+                              on_sample=on_sample)
+        with pytest.raises(CalibrationCancelled):
+            r.run()
+        stops = [t for t, c in sent if c == "#PTS5050" and t >= t_cancel[0]]
+        # отмена видна в ближайшем опросе #APC, стоп — в следующем окне команд (темп камеры 0,15 с)
+        assert stops and stops[0] - t_cancel[0] < 0.5, (stops[:1], t_cancel)
+        assert any(c == "#Z50" for t, c in sent if t >= t_cancel[0])
+        assert abs(sim.pan_deg - 3.0) <= 1.0 and abs(sim.tilt_deg + 8.0) <= 1.0 and sim.zoom < 0.01
+    finally:
+        src.stop()
+        srv.stop()
+
+
+@pytest.mark.slow
+def test_wizard_reports_samples_and_survives_failing_observer():
+    """Наблюдатель (окно мастера) получает положение, команды, шаги и итоги; его ошибка мастер не ломает."""
+    sim, srv, src, client = make()
+    try:
+        got: dict[str, list] = {}
+
+        def on_sample(kind, data):
+            got.setdefault(kind, []).append(data)
+            raise ValueError("сбой окна")
+
+        cal = CalibrationRunner(client.send, src, lambda m: None, zooms=[0x555], codes=(63, 70), tilt_codes=(70,),
+                                on_sample=on_sample).run()
+        assert cal.tilt and cal.pan.speed(70, 0x555) > 0
+        apc = got["apc"][-1]
+        assert set(apc) == {"t", "pan", "tilt", "zoom"} and apc["zoom"] is not None
+        cmds = [d["cmd"] for d in got["cmd"]]
+        assert "#PTS7050" in cmds and "#PTS5070" in cmds and "#APC" not in cmds and "#GZ" not in cmds
+        steps = got["step"]
+        assert [d["index"] for d in steps] == list(range(steps[0]["total"])) and steps[0]["total"] == 5
+        names = {d["name"] for d in got["result"]}
+        assert {"tau", "video_latency", "dead_time", "pan", "tilt", "zoom"} <= names
+        pan = next(d for d in got["result"] if d["name"] == "pan")
+        assert pan["zoom"] == 0x555 and [c for c, _, _ in pan["codes"]] == [63, 70]
+        for _, deg, model in pan["codes"]:
+            assert abs(deg / model - 1) < 0.15  # симулятор = таблица he42
     finally:
         src.stop()
         srv.stop()

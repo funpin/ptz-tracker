@@ -65,8 +65,11 @@ class SimPtz:
         clock: Callable[[], float] = time.monotonic,
         tau: float = TAU_S,
         dead_time: float = DEAD_TIME_S,
+        # наклон ÷ поворот на одном коде; у живой HE42 — 1 (2026-10-29). Другое — проверка замера наклона мастером
+        tilt_factor: float = 1.0,
     ):
         self.speed_with_zoom = speed_with_zoom
+        self.tilt_factor = tilt_factor
         self.tau = tau
         self.dead_time = dead_time
         self._t = 0.0  # время симуляции (сумма dt), по нему отсчитывается мёртвое время
@@ -133,7 +136,7 @@ class SimPtz:
                 div = self.zoom_ratio() if self.speed_with_zoom else 1.0
                 gz = self._zoom_units()
                 tgt_p = he42_deg_s(self.pan_code, gz) / div
-                tgt_t = he42_deg_s(self.tilt_code, gz) / div
+                tgt_t = he42_deg_s(self.tilt_code, gz) * self.tilt_factor / div
                 self.pan_vel += (tgt_p - self.pan_vel) * a
                 self.tilt_vel += (tgt_t - self.tilt_vel) * a
             if self._zoom_target is not None:

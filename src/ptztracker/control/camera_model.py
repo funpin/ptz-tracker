@@ -9,6 +9,7 @@ from __future__ import annotations
 import bisect
 import math
 from dataclasses import dataclass, field
+from typing import Callable
 
 from ptztracker.camera import he42
 from ptztracker.camera import protocol as P
@@ -28,6 +29,18 @@ def _interp_curve(curve: list[tuple[int, float]], n: int) -> float:
         if c0 <= n <= c1:
             return v0 + (v1 - v0) * (n - c0) / (c1 - c0)
     return 0.0
+
+
+def _interp_held(points: list[tuple[int, float]], n: int) -> float:
+    """Значение для кода n по точкам (код, значение): линейно между ними, за крайними — крайнее."""
+    if n <= points[0][0]:
+        return points[0][1]
+    if n >= points[-1][0]:
+        return points[-1][1]
+    for (c0, v0), (c1, v1) in zip(points, points[1:]):
+        if c0 <= n <= c1:
+            return v0 + (v1 - v0) * (n - c0) / (c1 - c0)
+    return points[-1][1]
 
 
 def _code_for(speed_of, v: float, current: int, hysteresis: float) -> int:
@@ -77,8 +90,14 @@ class SpeedTable:
         v = self._speed_pos(n, zoom)
         return v if code >= 50 else -v
 
-    def code_for(self, v: float, zoom: int, current: int = 50, hysteresis: float = PT_HYSTERESIS) -> int:
-        return _code_for(lambda n: self._speed_pos(n, zoom), v, current, hysteresis)
+    def code_for(
+        self, v: float, zoom: int, current: int = 50, hysteresis: float = PT_HYSTERESIS,
+        gain: Callable[[int], float] | None = None,
+    ) -> int:
+        """Код для скорости v; gain(n) — множитель к скорости кода n (наклон по замеру мастера)."""
+        if gain is None:
+            return _code_for(lambda n: self._speed_pos(n, zoom), v, current, hysteresis)
+        return _code_for(lambda n: self._speed_pos(n, zoom) * gain(n), v, current, hysteresis)
 
     def to_json(self) -> dict:
         return {str(z): [[c, v] for c, v in curve] for z, curve in self.points.items()}
@@ -208,6 +227,14 @@ class Calibration:
     tau: float = he42.RAMP_TAU_S
     video_latency: dict[str, float] = field(default_factory=lambda: dict(he42.VIDEO_LATENCY_S))
     created: str | None = None
+    # Наклон по замеру мастера: (код, скорость наклона ÷ скорость поворота на том же коде и зуме), °/с к °/с.
+    # None — не мерялся (калибровка до 2026-11-05 и таблица без калибровки): наклон как поворот (так у HE42).
+    tilt: list[tuple[int, float]] | None = None
+    # Сведения о калибровке: модель и прошивка камеры (None — камера не сообщила), вид потока, зумы замеров.
+    model: str | None = None
+    firmware: str | None = None
+    stream_kind: str | None = None
+    zoom_points: list[int] = field(default_factory=list)
     # Поправка таблиц по ходу слежения (control.speed_adapt): камера быстрее таблицы в столько раз.
     # Таблицы не меняются; скорость камеры и код для скорости — только через методы ниже. В to_json поправки
     # нет: единственное место хранения — CameraConfig.speed_scale (настройки), в записи — каждый такт control.
@@ -215,16 +242,27 @@ class Calibration:
     tilt_scale: float = 1.0
     zoom_scale: float = 1.0
 
+    def __post_init__(self) -> None:
+        if not self.zoom_points:
+            self.zoom_points = sorted(self.pan.points)
+
     def axis_scale(self, axis: str) -> float:
         return self.tilt_scale if axis == "tilt" else self.pan_scale
 
+    def _tilt_gain(self, n: int) -> float:
+        """Наклон ÷ поворот для кода n ≥ 50 по замеру мастера (линейно, за крайними кодами — крайний)."""
+        return _interp_held(sorted(self.tilt), n) if self.tilt else 1.0
+
     def pan_fw(self, code: int, zoom: int, axis: str = "pan") -> float:
-        """Скорость камеры (fw/s, со знаком) по коду pan/tilt — таблица с поправкой оси."""
-        return self.pan.speed(code, zoom) * self.axis_scale(axis)
+        """Скорость камеры (fw/s, со знаком) по коду pan/tilt — таблица с поправкой оси; наклон — с замером
+        мастера, если он есть."""
+        v = self.pan.speed(code, zoom) * self.axis_scale(axis)
+        return v * self._tilt_gain(50 + abs(code - 50)) if axis == "tilt" else v
 
     def pan_code(self, v: float, zoom: int, current: int = 50, axis: str = "pan") -> int:
         """Код pan/tilt для скорости v (fw/s) с учётом поправки оси (с гистерезисом от current)."""
-        return self.pan.code_for(v / self.axis_scale(axis), zoom, current=current)
+        gain = self._tilt_gain if axis == "tilt" and self.tilt else None
+        return self.pan.code_for(v / self.axis_scale(axis), zoom, current=current, gain=gain)
 
     def pan_max_fw(self, zoom: int, axis: str = "pan") -> float:
         """Самая большая скорость камеры (fw/s) на этом зуме — код 99 с поправкой оси."""
@@ -262,6 +300,11 @@ class Calibration:
             "tau": self.tau,
             "video_latency": dict(self.video_latency),
             "created": self.created,
+            "tilt": [[c, r] for c, r in self.tilt] if self.tilt else None,
+            "model": self.model,
+            "firmware": self.firmware,
+            "stream_kind": self.stream_kind,
+            "zoom_points": list(self.zoom_points),
         }
 
     @classmethod
@@ -275,6 +318,12 @@ class Calibration:
             video_latency={**he42.VIDEO_LATENCY_S,
                            **{k: float(v) for k, v in (d.get("video_latency") or {}).items()}},
             created=d.get("created"),
+            # сохранённые до 2026-11-05 — без наклона и сведений: наклон как поворот, зумы — по таблице
+            tilt=[(int(c), float(r)) for c, r in d["tilt"]] if d.get("tilt") else None,
+            model=d.get("model"),
+            firmware=d.get("firmware"),
+            stream_kind=d.get("stream_kind"),
+            zoom_points=[int(z) for z in d.get("zoom_points") or []],
         )
 
 
