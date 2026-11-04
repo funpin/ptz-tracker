@@ -297,3 +297,7 @@ def test_camera_tracking_default_true(tmp_path):
     assert CameraConfig(id="a", name="A", ip="10.0.0.1").tracking is True
     cfg = _load(tmp_path, {"cameras": [{"id": "a", "name": "A", "ip": "10.0.0.1"}]})
     assert cfg.cameras[0].tracking is True
+
+
+def test_grid_duplicates_and_empty_ids_dropped(tmp_path):
+    assert _load(tmp_path, {"grid": ["a", "", "a", "b"]}).grid == ["a", None, None, "b"]

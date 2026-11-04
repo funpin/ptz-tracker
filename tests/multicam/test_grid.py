@@ -113,3 +113,92 @@ def test_close_all_bounded():
     g.close_all(timeout=1.5)
     assert time.monotonic() - t <= 1.8
     assert g.cells == [None] * 4
+
+
+class FakeSession:
+    def __init__(self, cfg, fail_stop=False, fail_start=False):
+        self.cfg, self.fail_stop, self.fail_start = cfg, fail_stop, fail_start
+        self.on_manual = None
+        self.calls = []
+
+    def start(self):
+        if self.fail_start:
+            raise OSError("нет сети")
+
+    def stop(self):
+        self.calls.append("stop")
+
+    def emergency_stop(self):
+        self.calls.append("emergency_stop")
+        if self.fail_stop:
+            raise RuntimeError("сбой")
+
+    def set_pan_tilt_velocity(self, vx, vy):
+        pass
+
+    def set_zoom_velocity(self, v):
+        pass
+
+    def set_focus_velocity(self, v):
+        pass
+
+
+def test_emergency_stop_all_survives_one_failure():
+    g = CameraGrid(lambda cfg, a: FakeSession(cfg, fail_stop=cfg.id == "s0"))
+    a, b = g.open(0, sim_cfg(0), False), g.open(1, sim_cfg(1), False)
+    for c in (a, b):
+        c.gate.set_allowed(True)
+    g.emergency_stop_all()
+    assert "emergency_stop" in b.session.calls
+    assert a.gate.control_allowed is False and b.gate.control_allowed is False
+
+
+def test_close_all_revokes_and_sends_stop_first():
+    g = CameraGrid(lambda cfg, a: FakeSession(cfg))
+    c = g.open(0, sim_cfg(0), False)
+    c.gate.set_allowed(True)
+    g.close_all()
+    assert c.gate.control_allowed is False
+    assert c.session.calls[0] == "emergency_stop"
+
+
+def test_open_start_failure_cleans_up():
+    sessions = []
+
+    def make_(cfg, a):
+        s = FakeSession(cfg, fail_start=True)
+        sessions.append(s)
+        return s
+
+    g = CameraGrid(make_)
+    with pytest.raises(OSError):
+        g.open(0, sim_cfg(0), False)
+    assert g.cells[0] is None
+    assert sessions[0].calls == ["stop"]
+
+
+def test_open_into_occupied_slot_closes_old():
+    g = CameraGrid(lambda cfg, a: FakeSession(cfg))
+    old = g.open(0, sim_cfg(0), False)
+    g.open(0, sim_cfg(1), False)
+    assert "stop" in old.session.calls
+    assert g.ids() == ["s1", None, None, None]
+
+
+def test_gate_revoke_wins_over_concurrent_set():
+    import threading
+
+    from ptztracker.multicam.agent import AgentGate
+
+    cleared = []
+    for _ in range(200):
+        gate = AgentGate()
+        gate.set_off_air(True)
+        gate.on_off_air_cleared = lambda: cleared.append(1)
+        ts = [threading.Thread(target=gate.revoke) for _ in range(4)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        assert gate.not_on_air is False
+    assert len(cleared) == 200  # ровно один раз на каждый снятый флажок

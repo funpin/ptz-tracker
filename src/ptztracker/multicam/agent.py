@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Callable
 
 
@@ -13,6 +14,7 @@ class AgentGate:
     """
 
     def __init__(self) -> None:
+        self._lock = threading.Lock()  # проверка-и-запись флажков атомарна: revoke из потока сессии не теряется
         self.control_allowed = False
         self.not_on_air = False
         self.on_change: Callable[[], None] | None = None  # флажки изменились — перерисовать
@@ -32,6 +34,7 @@ class AgentGate:
     def revoke(self) -> None:
         """Снять оба разрешения. Снимок меняется сразу."""
         was = self.not_on_air
+        self._lock = threading.Lock()  # проверка-и-запись флажков атомарна: revoke из потока сессии не теряется
         self.control_allowed = False
         self.not_on_air = False
         self._changed()

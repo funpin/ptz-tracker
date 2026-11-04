@@ -13,11 +13,22 @@
 
 **Tech Stack:** Python 3.12–3.13, PySide6, pytest-qt. Новых зависимостей нет.
 
-**Spec:** `docs/superpowers/specs/2026-10-31-multi-camera-design.md`; основа окна — `docs/superpowers/specs/2026-10-30-main-window-layout-design.md`; геймпад — `docs/superpowers/specs/2026-10-30-gamepad-dualsense-design.md` (ветка `claude/jolly-dirac-91ff96`, не в main).
+**Spec:** `docs/superpowers/specs/2026-10-31-multi-camera-design.md`; основа окна — `docs/superpowers/specs/2026-10-30-main-window-layout-design.md`; геймпад — `docs/superpowers/specs/2026-10-30-gamepad-dualsense-design.md` (уже в main).
+
+## Сведение с main (2026-11-05)
+
+Ветка геймпада уже в `main` (`gamepad/`, `ui/gamepad_bridge.py`), там же новое окно, питание/gain/баланс белого, `QUERY_MAX_WAIT_S`. Поправки к задачам ниже:
+
+- **Смеситель (Task 2) остаётся единственным.** В `main` сумма «клавиатура + геймпад» живёт в `MainWindow._apply_held` (3 оси, ±1). Task 7 заменяет её смесителем клетки (источники `keyboard`, `mouse`); Task 10 — источник `pad{n}`. `limit_watch.set_demand(...)` по-прежнему получает скорость геймпада — у сессии его камеры.
+- **Маршрутизатор (Task 3) остаётся.** В `main` один физический геймпад (`GamepadBridge`, один контроллер SDL) и «камера геймпада» = выбранная (`_pad_session`). Task 10 переписан: не «мост из другой ветки зовёт `pad_*`», а существующий `GamepadBridge` — это геймпад №1 в `PadRouter`; `_pad_session()` → сессия клетки `router.slot_of(1)`; `NextCamera` (Create) → `pad_create(1)` вместо перебора `camera_combo`; `Stop` с тачпада → стоп только камеры геймпада (спека, «Тачпад геймпада»), а не `emergency_stop()` всех; `Disconnected` → `pad_disconnected`; вибрации из `PadFeedback` → `bridge.rumble(RUMBLE_*)`; меню Options, открытое с геймпада, действует на камеру геймпада.
+- **Огоньки игрока = номер клетки** (спека 2026-10-31 заменяет `pad_number` из спеки геймпада). `CameraConfig.pad_number` в конфиге остаётся (старые файлы читаются), но на точки больше не влияет; поле «Номер на геймпаде» в диалоге камеры убрать в Task 10, `pad_number_for` — удалить, если больше не используется. Запись в DECISIONS — Task 11.
+- **Несколько физических геймпадов** (2–4) требуют своего `SdlBackend`/`GamepadThread`/моста на каждый контроллер — это новая **Task 12** (после Task 11), чтобы не держать сетку и API.
+- `poll_position` (Task 5) шлёт `Priority.QUERY` — совместимо с `QUERY_MAX_WAIT_S`, ничего не меняем.
+- Task 7: кроме перечисленного, `camera_menu` (питание, gain, баланс белого), чип геймпада и `_sync_pad_player` работают с выбранной клеткой; `camera_combo` из тулбара `main` убрать.
 
 ## Global Constraints
 
-- **Границы.** `control/`, `framing/`, `vision/`, `video/` не менять (кроме публичного чтения в `Follower`, если понадобится — Task 5). Пакет `gamepad/` здесь не создавать и SDL не трогать: геймпад приходит из своей ветки и вызывает методы `MainWindow.pad_*` (Task 11).
+- **Границы.** `control/`, `framing/`, `vision/`, `video/` не менять (кроме публичного чтения в `Follower`, если понадобится — Task 5). Пакет `gamepad/` уже в `main`; до Task 12 его не менять, SDL не трогать (см. «Сведение с main»).
 - Слотов ровно 4 (`multicam.grid.SLOTS = 4`), сетка всегда 2×2: клетки 0 1 / 2 3. Номер клетки для оператора = индекс + 1.
 - Одна камера — не больше одной клетки. В выборе клетки есть «нет».
 - `AppConfig.max_analyzed` — 1…4, по умолчанию 1; `CameraConfig.tracking` — по умолчанию `True`.
@@ -236,7 +247,7 @@
 
 **Interfaces:**
 - Consumes: `PadRouter` (Task 3), `VelocityMixer` (Task 2), `CameraGrid`.
-- Produces (их вызывает мост геймпада из ветки геймпада, в потоке Qt):
+- Produces (их вызывает `_on_pad_intents` для `GamepadBridge` = геймпад №1, в потоке Qt; см. «Сведение с main»):
   - `pad_connected() -> int`; `pad_disconnected(pad: int) -> None` (нули от `pad{n}` его камере); `pad_velocity(pad: int, pan: float, tilt: float, zoom: float, focus: float = 0.0) -> None` → `mixer.set(f"pad{pad}", ...)` его камеры; `pad_stop(pad) -> None` — стоп только его камеры: `gate.revoke()`, `mixer.clear_all()`, `session.emergency_stop()`; `pad_create(pad) -> None`; `pad_session(pad) -> CameraSession | None` (для пресетов, ириса, gain, R3 — мост зовёт методы сессии сам).
   - `on_pad_feedback: Callable[[PadFeedback], None] | None` — окно отдаёт сюда `dots`/`rumble_*`.
   - При любом `PadMove` (Create, закрытие клетки, отключение): `mixer.release(f"pad{n}")` у старой клетки; у новой — источник `pad{n}` защёлкнут до нулей (`VelocityMixer` — тот же механизм, что после `clear_all`; добавить `latch(source)`, если нужно).
@@ -260,3 +271,17 @@
 - [ ] **Step 3:** документы: ARCHITECTURE — пакет `multicam`, «выбранная клетка», путь команд геймпада; AGENTS.md — инварианты «на камеру», API `camera`; DECISIONS — `max_analyzed = 1` (причина: 13–14 к/с на одну камеру на GTX 1650, две не замерены), сложение скоростей, точки = номер клетки; BACKLOG — замер анализа на 2 камерах на площадке, нагрузка 4× H.264 1080p50, спека записи видео, подключение моста геймпада после слияния ветки геймпада; CHANGELOG `[Не выпущено]`: «До 4 камер одновременно: сетка 2×2, выбор камеры в каждой клетке…», «Esc останавливает все камеры», «Слежение можно разрешить не на всех камерах; число анализируемых камер — в меню».
 - [ ] **Step 4:** полный прогон `.venv/bin/pytest -q` (~9+ мин, в фоне) и `ruff check src tests` — зелёные.
 - [ ] **Step 5:** commit `docs: multiple cameras — architecture, invariants, changelog`.
+
+### Task 12: Несколько физических геймпадов
+
+**Files:**
+- Modify: `src/ptztracker/gamepad/device.py`, `src/ptztracker/ui/gamepad_bridge.py`, `src/ptztracker/ui/main_window.py`
+- Test: `tests/gamepad/`, `tests/ui/test_multi_camera_pads.py`
+
+**Interfaces:**
+- `SdlBackend` открывает контроллер по индексу/instance id; менеджер раз в 0,5 с ищет новые контроллеры и создаёт на каждый мост (`GamepadBridge`) с номером из `PadRouter.connect()`; отключение → `pad_disconnected(n)`. Один SDL на процесс (init в одном месте, события — одним потоком).
+- Окно держит `pads: dict[int, GamepadBridge]`; все пути Task 10 параметризованы номером геймпада.
+
+- [ ] **Step 1: Failing tests** на подставном бэкенде с двумя контроллерами: `test_two_pads_get_numbers_1_2`, `test_second_pad_drives_second_cell`, `test_unplug_one_keeps_other`, `test_dots_per_pad`.
+- [ ] **Step 2–4:** FAIL → реализовать → PASS (`tests/gamepad tests/ui`).
+- [ ] **Step 5:** commit `feat(gamepad): up to four DualSense pads`; строка в CHANGELOG.

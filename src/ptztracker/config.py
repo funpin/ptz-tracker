@@ -178,7 +178,8 @@ def _fix_record_settings(cfg: AppConfig) -> None:
 def _fix_grid(cfg: AppConfig) -> None:
     """Сетка камер: ровно 4 клетки (id или None); пустая — первая клетка из last_camera_id."""
     g = cfg.grid if isinstance(cfg.grid, list) else []
-    g = [x if isinstance(x, str) else None for x in g[:GRID_SLOTS]]
+    g = [x if isinstance(x, str) and x else None for x in g[:GRID_SLOTS]]
+    g = [x if x is None or x not in g[:i] else None for i, x in enumerate(g)]  # одна камера — одна клетка
     g += [None] * (GRID_SLOTS - len(g))
     if not any(g) and isinstance(cfg.last_camera_id, str):
         g[0] = cfg.last_camera_id

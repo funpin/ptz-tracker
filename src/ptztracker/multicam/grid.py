@@ -42,7 +42,11 @@ class CameraGrid:
         session = self._make(cfg, analysis)
         gate = AgentGate()
         session.on_manual = gate.revoke
-        session.start()
+        try:
+            session.start()
+        except Exception:
+            self._stop_one_session(session, cfg.id)
+            raise
         cell = Cell(cfg, session, VelocityMixer(session), gate)
         self.cells[slot] = cell
         return cell
@@ -60,10 +64,13 @@ class CameraGrid:
         """Остановить все сессии параллельно; ждать не дольше `timeout` в сумме."""
         cells = [c for c in self.cells if c is not None]
         self.cells = [None] * GRID_SLOTS
-        threads = []
         for c in cells:
             c.gate.revoke()
             c.mixer.clear_all()
+        for c in cells:  # стопы — в очередь сразу, до медленной остановки потоков
+            self._emergency_one(c)
+        threads = []
+        for c in cells:
             t = threading.Thread(target=self._stop_one, args=(c,), name="grid-stop", daemon=True)
             t.start()
             threads.append(t)
@@ -73,10 +80,21 @@ class CameraGrid:
 
     @staticmethod
     def _stop_one(cell: Cell) -> None:
+        CameraGrid._stop_one_session(cell.session, cell.cfg.id)
+
+    @staticmethod
+    def _stop_one_session(session: CameraSession, camera_id: str) -> None:
         try:
-            cell.session.stop()
+            session.stop()
         except Exception:
-            log.exception("Не удалось остановить камеру %s", cell.cfg.id)
+            log.exception("Не удалось остановить камеру %s", camera_id)
+
+    @staticmethod
+    def _emergency_one(cell: Cell) -> None:
+        try:
+            cell.session.emergency_stop()
+        except Exception:
+            log.exception("Аварийный стоп камеры %s не отправлен", cell.cfg.id)
 
     def slot_of(self, camera_id: str) -> int | None:
         for i, c in enumerate(self.cells):
@@ -85,12 +103,13 @@ class CameraGrid:
         return None
 
     def emergency_stop_all(self) -> None:
-        for c in self.cells:
-            if c is None:
-                continue
+        """Все камеры: сначала снять разрешения и обнулить источники, затем стопы; сбой одной не мешает другим."""
+        cells = [c for c in self.cells if c is not None]
+        for c in cells:
             c.gate.revoke()
             c.mixer.clear_all()
-            c.session.emergency_stop()
+        for c in cells:
+            self._emergency_one(c)
 
     def ids(self) -> list[str | None]:
         return [c.cfg.id if c else None for c in self.cells]
