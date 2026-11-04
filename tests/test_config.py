@@ -262,3 +262,38 @@ def test_pad_number_roundtrip_and_old_config(tmp_path):
     cfg.cameras[0].pad_number = 3
     store.save(cfg)
     assert store.load().cameras[0].pad_number == 3
+
+
+def _load(tmp_path, data):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return ConfigStore(p).load()
+
+
+def test_grid_default(tmp_path):
+    cfg = ConfigStore(tmp_path / "config.json").load()
+    assert cfg.grid == [None] * 4
+    assert cfg.max_analyzed == 1
+
+
+def test_grid_from_last_camera_id(tmp_path):
+    cfg = _load(tmp_path, {"last_camera_id": "cam-1"})
+    assert cfg.grid == ["cam-1", None, None, None]
+
+
+def test_grid_bad_shape_fixed(tmp_path):
+    assert _load(tmp_path, {"grid": ["a", 5]}).grid == ["a", None, None, None]
+    assert _load(tmp_path, {"grid": "x"}).grid == [None] * 4
+    assert _load(tmp_path, {"grid": list("abcdef")}).grid == list("abcd")
+
+
+def test_max_analyzed_clamped(tmp_path):
+    assert _load(tmp_path, {"max_analyzed": 0}).max_analyzed == 1
+    assert _load(tmp_path, {"max_analyzed": 9}).max_analyzed == 4
+    assert _load(tmp_path, {"max_analyzed": "x"}).max_analyzed == 1
+
+
+def test_camera_tracking_default_true(tmp_path):
+    assert CameraConfig(id="a", name="A", ip="10.0.0.1").tracking is True
+    cfg = _load(tmp_path, {"cameras": [{"id": "a", "name": "A", "ip": "10.0.0.1"}]})
+    assert cfg.cameras[0].tracking is True

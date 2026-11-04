@@ -29,6 +29,7 @@ STREAMS = ("auto", "mjpeg_1", "mjpeg_2", "h264_1")
 _OLD_STREAMS = {"mjpeg": "mjpeg_1", "h264_2": "h264_1"}  # прежние названия потоков в config.json
 COMPOSITION_KEYS = ("waist_center", "waist_left", "waist_right", "full", "wide")
 KEYRING_SERVICE = "PTZTracker"
+GRID_SLOTS = 4
 
 
 @dataclass
@@ -50,12 +51,15 @@ class CameraConfig:
     effort: float = 0.5  # 0 — мягко, 1 — резко
     atem_input: int = 0  # вход ATEM (1…), 0 — не задан
     pad_number: int | None = None  # огоньки «номер игрока» на геймпаде (1…4); None — по имени или месту в списке
+    tracking: bool = True  # камеру можно вести слежением (иначе только ручное управление)
 
 
 @dataclass
 class AppConfig:
     cameras: list[CameraConfig] = field(default_factory=list)
     last_camera_id: str | None = None
+    grid: list = field(default_factory=lambda: [None] * GRID_SLOTS)  # id камер в клетках сетки 2×2
+    max_analyzed: int = 1  # сколько камер одновременно анализируются нейросетью (1…4)
     sim_scene_path: str | None = None
     # чёрный ящик (recorder): последние record_buffer_s секунд в памяти, F9 сохраняет их в zip
     record_enabled: bool = True
@@ -141,6 +145,8 @@ def _camera_from(d) -> CameraConfig | None:
         c.composition = "waist_center"
     if not isinstance(c.effort, (int, float)):
         c.effort = 0.5
+    if not isinstance(c.tracking, bool):
+        c.tracking = True
     c.effort = min(1.0, max(0.0, float(c.effort)))
     if isinstance(c.rtsp_url, str):
         c.rtsp_url = with_mjpeg_framerate(c.rtsp_url)
@@ -167,6 +173,20 @@ def _fix_record_settings(cfg: AppConfig) -> None:
     cfg.record_buffer_s = int(min(RECORD_BUFFER_MAX_S, max(RECORD_BUFFER_MIN_S, b)))
     if not isinstance(cfg.record_dir, str):
         cfg.record_dir = d.record_dir
+
+
+def _fix_grid(cfg: AppConfig) -> None:
+    """Сетка камер: ровно 4 клетки (id или None); пустая — первая клетка из last_camera_id."""
+    g = cfg.grid if isinstance(cfg.grid, list) else []
+    g = [x if isinstance(x, str) else None for x in g[:GRID_SLOTS]]
+    g += [None] * (GRID_SLOTS - len(g))
+    if not any(g) and isinstance(cfg.last_camera_id, str):
+        g[0] = cfg.last_camera_id
+    cfg.grid = g
+    m = cfg.max_analyzed
+    if isinstance(m, bool) or not isinstance(m, int):
+        m = 1
+    cfg.max_analyzed = min(GRID_SLOTS, max(1, m))
 
 
 def _fix_api_settings(cfg: AppConfig) -> None:
@@ -230,6 +250,7 @@ class ConfigStore:
             cfg.cameras = default_config().cameras
         _fix_record_settings(cfg)
         _fix_api_settings(cfg)
+        _fix_grid(cfg)
         _fix_update_settings(cfg)
         return cfg
 
