@@ -182,7 +182,7 @@
   - Клавиатура и мышь — через `grid.cells[sel].mixer.source("keyboard" | "mouse")`; `controls.bind(mixer.source("mouse"))`. Смена выбранной клетки: `release_all_held()` у прежней (источники keyboard/mouse прежней → `release`), затем пересчёт анализа.
   - `emergency_stop()` — `grid.emergency_stop_all()` + отпустить клавиши. Кнопка «СТОП КАМЕРЫ» — то же.
   - `_on_follow_requested(want=True)`: сначала `tracking_refusal(...)`; не `None` → `follow_panel.show_hint(текст)`, слежение не включается.
-  - Пересчёт анализа `_reallocate_analysis()` — после выбора клетки, смены камеры в клетке, TRACK вкл/выкл, смены лимита: `allocate_analysis` → `session.set_analysis(...)` для каждой; затем перепривязать `cell.preview.set_analyzer/set_follow`.
+  - Пересчёт анализа `_reallocate_analysis()` — после выбора клетки, смены камеры в клетке, TRACK вкл/выкл, смены лимита: `allocate_analysis` → `session.set_analysis(...)` для каждой; затем перепривязать `cell.preview.set_analyzer/set_follow` и `follower.on_change` (после `set_analysis(False)` у сессии `analyzer`/`follower` = None, а превью держит старые — ревью Task 5).
   - `CameraDialog`: галочка «Слежение доступно (нейросеть на этой камере)» → `CameraConfig.tracking`. Меню ☰: подменю «Анализировать камер одновременно» 1–4 (радио) → `AppConfig.max_analyzed`, сохранить.
   - Удаление камеры, стоящей в клетке, — сначала клетка «нет»; изменение такой камеры — клетка открывается заново.
   - `closeEvent` — `grid.close_all()`.
