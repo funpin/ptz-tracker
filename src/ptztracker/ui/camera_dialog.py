@@ -22,6 +22,8 @@ from ptztracker.camera.protocol import Q_MODEL, CameraError, parse_model
 from ptztracker.config import CameraConfig, is_valid_ip
 from ptztracker.tally import MAX_ATEM_INPUT, atem_input_of
 
+_SIM_NAME = "Тренировка"  # имя, которое диалог подставляет симулятору
+
 
 class _Signals(QObject):
     done = Signal(str)
@@ -131,7 +133,9 @@ class CameraDialog(QDialog):
         self.test_button.setVisible(not sim)
         self.test_result.setVisible(not sim)
         if sim and not self.name_edit.text().strip():
-            self.name_edit.setText("Тренировка")
+            self.name_edit.setText(_SIM_NAME)
+        elif not sim and self.name_edit.text() == _SIM_NAME:
+            self.name_edit.clear()  # подставленное имя симулятора настоящей камере не подходит
         self._validate()
 
     def _valid(self) -> bool:

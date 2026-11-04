@@ -405,7 +405,9 @@ class MainWindow(QMainWindow):
                 label = c.name if "симулятор" in c.name.lower() else f"{c.name} (симулятор)"
             self.camera_combo.addItem(label, c.id)
         idx = self.camera_combo.findData(select_id) if select_id else -1
-        self.camera_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        if idx < 0:  # нет выбора или он устарел: на эфир не стартуем с симулятором — берём первую настоящую камеру
+            idx = next((i for i, c in enumerate(self._cameras()) if c.kind != "sim"), 0)
+        self.camera_combo.setCurrentIndex(idx)
         self.camera_combo.blockSignals(False)
         self._on_combo()
 
@@ -647,7 +649,7 @@ class MainWindow(QMainWindow):
         if cam is None:
             return
         cam.composition = key
-        if cam.kind != "sim":
+        if self._is_stored(cam):
             self._save()
         if f := self._follower():
             f.set_composition(COMPOSITIONS[key])
@@ -657,7 +659,7 @@ class MainWindow(QMainWindow):
         if cam is None:
             return
         cam.effort = x
-        if cam.kind != "sim":
+        if self._is_stored(cam):
             self._save()
         if f := self._follower():
             f.set_effort(EffortProfile.at(x))
@@ -738,10 +740,11 @@ class MainWindow(QMainWindow):
             return CalibrationRunner(s.client.send, s.frames, progress, stream_kind=kind)
 
         def saved(calib: dict) -> None:
+            if cam.kind == "sim":  # симулятору калибровка не нужна: в настройки не пишем
+                return
             cam.calibration = calib
             cam.speed_scale = None  # новая таблица скоростей: прежняя поправка к ней не относится
-            if cam.kind != "sim":
-                self._save()
+            self._save()
 
         CalibrationDialog(factory, saved, parent=self).exec()
         if cam.calibration is not None:
@@ -943,8 +946,8 @@ class MainWindow(QMainWindow):
         f = s.follower
         if f is None or f.polling_paused or time.monotonic() - self._speed_scale_saved_t < SPEED_SCALE_SAVE_S:
             return  # идёт калибровка: её итог сбросит поправку
-        cam = next((c for c in self.cfg.cameras if c.id == s.cfg.id), None)  # симулятор в настройки не пишем
-        if cam is None:
+        cam = next((c for c in self.cfg.cameras if c.id == s.cfg.id), None)
+        if cam is None or cam.kind == "sim":  # симулятору поправка скорости не нужна, в настройки её не пишем
             return
         scale: dict = {k: round(v, 3) for k, v in f.speed_scale.items()}
         old = cam.speed_scale if isinstance(cam.speed_scale, dict) else {}
