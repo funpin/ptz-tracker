@@ -570,6 +570,9 @@ class MainWindow(QMainWindow):
         self._open_cell(slot, cam)
 
     def _open_cell(self, slot: int, cam: CameraConfig | None, analysis: bool | None = None) -> None:
+        other = self.grid.slot_of(cam.id) if cam is not None else None
+        if other is not None and other != slot:  # до разборки клетки: отказ оставляет её как была
+            raise ValueError(f"камера {cam.id} уже открыта в клетке {other + 1}")
         self.agent_panel.revoke()  # смена камеры: агент теряет управление
         selected = slot == self.grid.selected
         if selected:

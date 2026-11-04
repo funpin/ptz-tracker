@@ -101,7 +101,7 @@ def test_none_closes_session_with_stop(qtbot, tmp_path):
     qtbot.wait(300)
     w.set_cell_camera(1, None)
     assert w.grid.cells[1] is None
-    assert [c for c in sim.received if c.startswith("#PTS")][-1] == "#PTS5050"
+    qtbot.waitUntil(lambda: [c for c in sim.received if c.startswith("#PTS")][-1] == "#PTS5050", timeout=2000)
     assert not w.cells[1].preview.has_frame()
     w.close()
 

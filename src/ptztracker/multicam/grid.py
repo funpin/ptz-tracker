@@ -58,7 +58,8 @@ class CameraGrid:
         cell.gate.revoke()
         cell.mixer.clear_all()
         self.cells[slot] = None
-        cell.session.stop()
+        self._emergency_one(cell)  # стоп — в очередь сразу; остановка потоков — в фоне, окно не ждёт сеть
+        threading.Thread(target=self._stop_one, args=(cell,), name="grid-close", daemon=True).start()
 
     def close_all(self, timeout: float = 1.5) -> None:
         """Остановить все сессии параллельно; ждать не дольше `timeout` в сумме."""

@@ -63,7 +63,7 @@ def test_close_sends_stop(grid):
     assert wait_for(lambda: any(x != "#PTS5050" for x in pts(c)))
     grid.close(0)
     assert grid.cells[0] is None
-    assert [x for x in sim.received if x.startswith("#PTS")][-1] == "#PTS5050"
+    assert wait_for(lambda: [x for x in sim.received if x.startswith("#PTS")][-1] == "#PTS5050")
 
 
 def test_emergency_stop_all(grid):
@@ -202,3 +202,11 @@ def test_gate_revoke_wins_over_concurrent_set():
             t.join()
         assert gate.not_on_air is False
     assert len(cleared) == 200  # ровно один раз на каждый снятый флажок
+
+
+def test_close_dead_camera_does_not_block():
+    g = CameraGrid(make)
+    g.open(0, CameraConfig(id="bad", name="Нет", ip="10.255.255.1"), True)
+    t = time.monotonic()
+    g.close(0)
+    assert time.monotonic() - t < 0.1
