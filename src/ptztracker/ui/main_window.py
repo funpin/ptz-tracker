@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from pathlib import Path
@@ -10,8 +11,8 @@ from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QPainter
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
-    QComboBox,
     QDialog,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -30,7 +31,7 @@ from PySide6.QtWidgets import (
 from ptztracker import __version__
 from ptztracker.api.backend import start_window_api
 from ptztracker.camera.session import CameraSession
-from ptztracker.config import AppConfig, CameraConfig, ConfigStore, get_password, set_password
+from ptztracker.config import GRID_SLOTS, AppConfig, CameraConfig, ConfigStore, get_password, set_password
 from ptztracker.control.camera_model import DEFAULT_TABLE_ID
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
@@ -55,20 +56,23 @@ from ptztracker.gamepad.intents import (
     ToggleFollow,
     Zoom,
 )
+from ptztracker.multicam.analysis import CellState, allocate_analysis, tracking_refusal
+from ptztracker.multicam.grid import CameraGrid, Cell
+from ptztracker.multicam.velocity import MixerSource
 from ptztracker.tally import atem_input_of
 from ptztracker.tally.atem import AtemTally
 from ptztracker.ui.agent_panel import AgentPanel
 from ptztracker.ui.atem_dialog import AtemDialog
+from ptztracker.ui.camera_cell import CameraCell
 from ptztracker.ui.camera_dialog import CameraDialog
 from ptztracker.ui.camera_menu import CameraMenu
 from ptztracker.ui.follow_panel import FollowPanel
-from ptztracker.ui.gamepad_bridge import GamepadBridge, pad_number_for
+from ptztracker.ui.gamepad_bridge import GamepadBridge
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.manual_controls import ManualControls
-from ptztracker.ui.preview import PreviewWidget
 from ptztracker.ui.state import TrackingView, analysis_pill, atem_pill, power_view, tracking_view, video_pill
 from ptztracker.ui.theme import FS_CAPTION, SP, C
-from ptztracker.ui.widgets import PowerOverlay, StatusPill, VideoFrame, keycap_width, paint_keycap
+from ptztracker.ui.widgets import StatusPill, VideoFrame, keycap_width, paint_keycap
 from ptztracker.updates import CHECK_INTERVAL_S, RELEASE_PAGE, UpdateChecker, UpdateInfo, is_newer
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
 
@@ -77,7 +81,14 @@ log = logging.getLogger(__name__)
 SPEED_SCALE_SAVE_S = 60.0  # поправку скорости от слежения пишем в настройки не чаще раза в минуту
 SPEED_SCALE_SAVE_DIFF = 0.01  # меньшее изменение поправки не сохраняем
 
-SIM_CAMERA = CameraConfig(id="sim", name="Симулятор", ip="sim", kind="sim")
+SIM_CAMERA = CameraConfig(id="sim", name="Симулятор", ip="sim", kind="sim")  # образец для sim1…sim4
+
+
+def sim_cameras() -> list[CameraConfig]:
+    """Четыре виртуальные камеры для --sim: sim1…sim4, «Симулятор 1…4»."""
+    return [dataclasses.replace(SIM_CAMERA, id=f"sim{i}", name=f"Симулятор {i}") for i in range(1, GRID_SLOTS + 1)]
+
+
 KEY_PAN_SPEED = 0.4
 KEY_ZOOM_SPEED = 0.5
 SIDE_WIDTH = 372
@@ -123,7 +134,7 @@ def _keycap_label(text: str) -> QWidget:
 
 
 class MainWindow(QMainWindow):
-    _saveFinished = Signal(object)  # Future записи; приходит из рабочего потока, обрабатывается в Qt-потоке
+    _saveFinished = Signal(object)  # (пачка, Future записи); приходит из рабочего потока, обрабатывается в Qt-потоке
 
     def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None, atem_port: int = 9910,
                  checker_factory: Callable[[str], UpdateChecker] | None = UpdateChecker, gamepad_backend=None):
@@ -137,7 +148,16 @@ class MainWindow(QMainWindow):
         self._checker_factory = None if use_sim and checker_factory is UpdateChecker else checker_factory
         self._checker: UpdateChecker | None = None
         self._update_info: UpdateInfo | None = None
-        self.session: CameraSession | None = None
+        self._sim_cams = sim_cameras() if use_sim else []
+        self.grid = CameraGrid(self._make_session)
+        self.cells: list[CameraCell] = [CameraCell(i) for i in range(GRID_SLOTS)]
+        self.grid.selected = 0
+        self._loading = True  # пока строится окно: анализ и настройки не пересчитываем на каждую клетку
+        self._srcs: dict[tuple[int, str], tuple[Cell, MixerSource]] = {}  # источники смесителя клетки (кэш)
+        self._speed_scale_saved: dict[int, float] = {}
+        self._tag_shown: dict[int, TrackingView | None] = {}
+        self._tracking_set: frozenset[int] = frozenset()
+        self._cell_dialogs: dict[int, QDialog] = {}
         self._held: set[int] = set()
         self._atem_port = atem_port
         self.atem: AtemTally | None = None
@@ -152,10 +172,6 @@ class MainWindow(QMainWindow):
         self._pad_applied = (0.0, 0.0, 0.0)  # скорость геймпада в последней отправке
         self._last_waist = "waist_center"  # куда вернуться в пояс по R1 из «Роста»
 
-        self.preview = PreviewWidget()
-        self.video_frame = VideoFrame(self.preview)
-        self.camera_combo = QComboBox()
-        self.camera_combo.setMinimumContentsLength(14)
         self.controls = ManualControls()
         self.follow_panel = FollowPanel()
 
@@ -201,7 +217,6 @@ class MainWindow(QMainWindow):
         tl = QHBoxLayout(self._top)
         tl.setContentsMargins(SP[1], SP[0], SP[1], SP[0])
         tl.setSpacing(SP[0])
-        tl.addWidget(self.camera_combo)
         tl.addWidget(self.cameras_btn)
         tl.addStretch(1)
         for w in (self.video_pill, self.analysis_pill, self.atem_pill, self.blackbox_btn, self.pad_chip,
@@ -213,27 +228,9 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(self._top)
         self.addToolBar(Qt.TopToolBarArea, self.toolbar)
 
-        # цель — поверх видео сверху слева: «Цель: …», сбросить, скелет
-        self.target_label = QLabel("Цель: не выбрана — кликните по человеку на видео")
-        self.reset_target_btn = StatusPill("user-x", "", "neutral")
-        self.reset_target_btn.set("", "neutral", "Сбросить цель")
-        self.skeleton_check = StatusPill("skeleton", "", "neutral")
-        self.skeleton_check.set("", "neutral", "Показать скелет (точки тела)")
-        self.skeleton_check.setCheckable(True)
-        target_bar = QWidget()
-        target_bar.setStyleSheet(f"background: {C.SURFACE}; border-radius: 6px;")
-        trow = QHBoxLayout(target_bar)
-        trow.setContentsMargins(SP[1], SP[0], SP[0], SP[0])
-        trow.setSpacing(SP[0])
-        trow.addWidget(self.target_label)
-        trow.addWidget(self.reset_target_btn)
-        trow.addWidget(self.skeleton_check)
-        self.video_frame.add_overlay(target_bar, "top-left")
-        self.power_overlay = PowerOverlay()
-        self.power_overlay.powerOnRequested.connect(self._power_on)
-        self.video_frame.add_overlay(self.power_overlay, "fill")
+        for c in self.cells:
+            c.preview.setMinimumSize(240, 135)  # четыре превью в одном окне
         self.camera_menu = CameraMenu(lambda: self.session, self.controls)
-        self.video_frame.add_overlay(self.camera_menu, "center")
         self.camera_menu.openChanged.connect(self._on_menu_changed)
 
         side = QWidget()
@@ -251,8 +248,8 @@ class MainWindow(QMainWindow):
         QVBoxLayout(self.agent_window).addWidget(self.agent_panel)
         self.agent_panel.allow_check.toggled.connect(self.agent_badge.setVisible)
         self.agent_badge.clicked.connect(self._show_agent_window)
-        # пояснение слежения — поверх видео внизу слева
-        self.video_frame.add_overlay(self.follow_panel.status_label, "bottom-left")
+        # пояснение слежения и меню камеры — поверх видео выбранной клетки (переносятся при выборе)
+        self._overlay_host: VideoFrame | None = None
 
         # боковая панель прокручивается — окно помещается и на небольших экранах
         side_scroll = self.side_scroll = QScrollArea()
@@ -274,9 +271,23 @@ class MainWindow(QMainWindow):
         stop_row.addWidget(self.controls.stop_btn)
         cl.addLayout(stop_row)
 
+        grid_host = self.grid_host = QWidget()
+        gl = QGridLayout(grid_host)
+        gl.setContentsMargins(0, 0, 0, 0)
+        gl.setSpacing(SP[0])
+        for i, c in enumerate(self.cells):
+            gl.addWidget(c, i // 2, i % 2)
+            gl.setRowStretch(i // 2, 1)
+            gl.setColumnStretch(i % 2, 1)
+            c.selectRequested.connect(self.select_slot)
+            c.cameraChosen.connect(self._on_cell_chosen)
+            c.power_overlay.powerOnRequested.connect(lambda s=i: self._power_on(s))
+            c.reset_target_btn.clicked.connect(lambda _=False, s=i: self._reset_target(s))
+            c.skeleton_check.toggled.connect(lambda on, cell=c: self._on_skeleton(on, cell))
+            c.preview.targetClicked.connect(lambda _id: self._update_status())
         central = QWidget()
         hl = QHBoxLayout(central)
-        hl.addWidget(self.video_frame, 1)
+        hl.addWidget(grid_host, 1)
         hl.addWidget(side_col)
         self.setCentralWidget(central)
 
@@ -328,6 +339,19 @@ class MainWindow(QMainWindow):
         self.check_updates_action.setChecked(self.cfg.check_updates)
         menu.addAction(self.check_updates_action)
         self.check_updates_action.toggled.connect(self._on_check_updates_toggled)
+        menu.addSeparator()
+        analyze_menu = menu.addMenu("Анализировать камер одновременно")
+        self.max_analyzed_group = QActionGroup(self)
+        self.max_analyzed_group.setExclusive(True)
+        self.max_analyzed_actions: list[QAction] = []
+        for n in range(1, GRID_SLOTS + 1):
+            act = analyze_menu.addAction(str(n))
+            act.setCheckable(True)
+            act.setData(n)
+            act.setChecked(n == self.cfg.max_analyzed)
+            self.max_analyzed_group.addAction(act)
+            self.max_analyzed_actions.append(act)
+        self.max_analyzed_group.triggered.connect(lambda act: self._on_max_analyzed(act.data()))
         self.update_action = menu.addAction("", self._open_release_page)
         self.update_action.setVisible(False)
         self._saveFinished.connect(self._on_save_finished)
@@ -337,10 +361,6 @@ class MainWindow(QMainWindow):
         self._hide_folder_timer.timeout.connect(self.show_folder_btn.hide)
         self.show_folder_btn.clicked.connect(self._show_saved_folder)
 
-        self.camera_combo.currentIndexChanged.connect(self._on_combo)
-        self.reset_target_btn.clicked.connect(self._reset_target)
-        self.skeleton_check.toggled.connect(self._on_skeleton)
-        self.preview.targetClicked.connect(lambda _id: self._update_status())
         self.follow_panel.followRequested.connect(self._on_follow_requested)
         self.follow_panel.calibrateRequested.connect(self._run_calibration)
         self.controls.stopRequested.connect(self.emergency_stop)
@@ -362,48 +382,126 @@ class MainWindow(QMainWindow):
 
         QApplication.instance().installEventFilter(self)
         self._restart_atem()
-        self._fill_combo(select_id="sim" if use_sim else self.cfg.last_camera_id)
+        self._initial_grid()
         self._api = start_window_api(self)
         QTimer.singleShot(3000, self._start_update_check)
 
-    # --- список камер -------------------------------------------------
+    # --- выбранная клетка ----------------------------------------------
+
+    @property
+    def selected_cell(self) -> Cell | None:
+        sel = self.grid.selected
+        return self.grid.cells[sel] if sel is not None else None
+
+    @property
+    def _cell(self) -> CameraCell:
+        return self.cells[self.grid.selected or 0]
+
+    @property
+    def session(self) -> CameraSession | None:
+        c = self.selected_cell
+        return c.session if c else None
+
+    @property
+    def preview(self):
+        return self._cell.preview
+
+    @property
+    def video_frame(self) -> VideoFrame:
+        return self._cell.video_frame
+
+    @property
+    def power_overlay(self):
+        return self._cell.power_overlay
+
+    @property
+    def target_label(self) -> QLabel:
+        return self._cell.target_label
+
+    @property
+    def reset_target_btn(self) -> StatusPill:
+        return self._cell.reset_target_btn
+
+    @property
+    def skeleton_check(self) -> StatusPill:
+        return self._cell.skeleton_check
+
+    def _make_session(self, cfg: CameraConfig, analysis: bool) -> CameraSession:
+        return CameraSession(cfg, scene_path=self.cfg.sim_scene_path, app_cfg=self.cfg, analysis=analysis)
+
+    # --- список камер и клетки ------------------------------------------
 
     def _cameras(self) -> list[CameraConfig]:
-        return self.cfg.cameras + ([SIM_CAMERA] if self.use_sim else [])
-
-    def _fill_combo(self, select_id: str | None) -> None:
-        self.camera_combo.blockSignals(True)
-        self.camera_combo.clear()
-        for c in self._cameras():
-            label = c.name if c.kind == "sim" else f"{c.name} · {c.ip}"
-            self.camera_combo.addItem(label, c.id)
-        idx = self.camera_combo.findData(select_id) if select_id else -1
-        self.camera_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self.camera_combo.blockSignals(False)
-        self._on_combo()
+        return self.cfg.cameras + self._sim_cams
 
     def _current_cfg(self) -> CameraConfig | None:
-        cid = self.camera_combo.currentData()
-        return next((c for c in self._cameras() if c.id == cid), None)
+        c = self.selected_cell
+        return c.cfg if c else None
 
-    def _on_combo(self, *_):
-        self._activate(self._current_cfg())
+    def _states(self) -> list[CellState | None]:
+        return [
+            CellState(c.cfg.name, c.cfg.tracking, bool(c.session.follower and c.session.follower.enabled))
+            if c else None
+            for c in self.grid.cells
+        ]
 
-    def _activate(self, cam: CameraConfig | None) -> None:
-        self.agent_panel.revoke()  # смена камеры: агент теряет управление
-        self.camera_menu.close_menu()  # до остановки сессии: ручной фокус получает ноль
-        # геймпад: старой камере — нули; новая поедет, только когда стики вернутся в центр
+    def _refresh_cell_choices(self) -> None:
+        """В списке клетки — камеры, не стоящие в других клетках (одна камера — одна клетка)."""
+        for i, cell in enumerate(self.cells):
+            items = [
+                (c.id, c.name if c.kind == "sim" else f"{c.name} · {c.ip}")
+                for c in self._cameras() if self.grid.slot_of(c.id) in (None, i)
+            ]
+            cur = self.grid.cells[i]
+            cell.set_choices(items, cur.cfg.id if cur else None)
+
+    def _initial_grid(self) -> None:
+        by_id = {c.id: c for c in self._cameras()}
+        ids = ["sim1", "sim2", None, None] if self.use_sim else list(self.cfg.grid)
+        if not any(i in by_id for i in ids) and self.cfg.cameras and not self.use_sim:
+            ids[0] = self.cfg.cameras[0].id  # как раньше: без выбора открывается первая камера
+        ids = [i if i in by_id else None for i in ids]
+        occupied = [i for i, cid in enumerate(ids) if cid]
+        want = self.cfg.last_camera_id if not self.use_sim else None
+        sel = next((i for i, cid in enumerate(ids) if cid and cid == want), occupied[0] if occupied else 0)
+        self.grid.selected = sel
+        states = [CellState(by_id[c].name, by_id[c].tracking, False) if c else None for c in ids]
+        alloc = allocate_analysis(states, sel, self.cfg.max_analyzed)
+        for slot, cid in enumerate(ids):
+            if cid:
+                self._open_cell(slot, by_id[cid], analysis=slot in alloc)
+        self._loading = False
+        self._reallocate_analysis()
+        self._select_effects()
+        self._refresh_cell_choices()
+        self._update_selected_status()
+
+    def select_slot(self, slot: int) -> None:
+        """Выбрать клетку: клавиатура, мышь, геймпад и правая панель теперь относятся к ней."""
+        if not 0 <= slot < GRID_SLOTS or slot == self.grid.selected:
+            return
+        self.agent_panel.revoke()  # разрешения агенту относились к прежней камере
+        self.camera_menu.close_menu()  # до переноса: ручной фокус получает ноль
         self._pad_stop_motion()
         self.pad.cancel_holds()
         self.release_all_held()
-        self._speed_scale_saved_t = float("-inf")  # «раз в минуту» — для каждой камеры заново
-        if self.session:
-            self.session.stop()
-            self.session = None
-        self.preview.set_source(None)
-        self.preview.set_analyzer(None)
-        self.preview.set_follow(None)
-        self.controls.bind(None)
+        old = self.selected_cell
+        if old is not None:
+            old.mixer.release("keyboard")
+            old.mixer.release("mouse")
+        self.grid.selected = slot
+        self._select_effects()
+        self._reallocate_analysis()
+        self._save_grid()
+        self._update_selected_status()
+
+    def _select_effects(self) -> None:
+        """Всё, что зависит от выбранной клетки: рамка, правая панель, управление, оверлеи, огоньки геймпада."""
+        sel = self.grid.selected
+        for i, cell in enumerate(self.cells):
+            cell.set_selected(i == sel)
+        self._move_overlays(self._cell.video_frame)
+        cam, cell = self._current_cfg(), self.selected_cell
         real = cam is not None and cam.kind != "sim"
         self.edit_action.setEnabled(real)
         self.del_action.setEnabled(real)
@@ -411,41 +509,173 @@ class MainWindow(QMainWindow):
         for act in self.stream_actions.actions():
             act.setChecked(act.data() == want)
             act.setEnabled(real)
-        if cam is None:
-            self._sync_pad_player()
-            return
-        self.session = CameraSession(cam, scene_path=self.cfg.sim_scene_path, app_cfg=self.cfg)
-        self.session.start()
-        self.session.on_manual = self.agent_panel.revoke
-        if self.session.follower:
-            self.session.follower.on_change = self._on_follow_change  # поток слежения
-        if self.session.limit_watch:
-            self.session.limit_watch.set_on_limit(self.pad.notify_limit)  # поток LimitWatch → сигнал моста
-        self._sync_pad_player()
-        self.preview.set_source(self.session.frames)
-        self.preview.set_analyzer(self.session.analyzer)
-        self.preview.set_follow(self.session.follower)
-        self.preview.camera_name = cam.name
-        self.follow_panel.set_composition(cam.composition)
-        if cam.composition.startswith("waist"):
-            self._last_waist = cam.composition
-        self.follow_panel.set_effort(cam.effort)
-        self.follow_panel.set_calibrated(cam.calibration is not None)
+        self.controls.bind(self._source(cell, "mouse") if cell else None)
+        if cam is not None:
+            self.follow_panel.set_composition(cam.composition)
+            if cam.composition.startswith("waist"):
+                self._last_waist = cam.composition
+            self.follow_panel.set_effort(cam.effort)
+            self.follow_panel.set_calibrated(cam.calibration is not None)
         self.follow_panel.set_state(False, None)
+        self.follow_panel.status_label.hide()
         self._view_shown = None
-        self.controls.bind(self.session)
-        if cam.kind != "sim":
-            self.cfg.last_camera_id = cam.id
-            self._save()
+        self._tally_shown = None
+        self._sync_pad_player()
+
+    def _move_overlays(self, frame: VideoFrame) -> None:
+        if self._overlay_host is frame:
+            return
+        for w, corner in ((self.follow_panel.status_label, "bottom-left"), (self.camera_menu, "center")):
+            hidden = w.isHidden()
+            if self._overlay_host is not None:
+                self._overlay_host.remove_overlay(w)
+            frame.add_overlay(w, corner)
+            w.setVisible(not hidden)
+        self._overlay_host = frame
+
+    def _source(self, cell: Cell, name: str) -> MixerSource:
+        """Источник смесителя клетки (один объект на клетку и имя: он помнит свои оси)."""
+        slot = self.grid.cells.index(cell)
+        key = (slot, name)
+        got = self._srcs.get(key)
+        if got is None or got[0] is not cell:
+            got = (cell, cell.mixer.source(name))
+            self._srcs[key] = got
+        return got[1]
+
+    def _on_cell_chosen(self, slot: int, camera_id) -> None:
+        """Оператор выбрал камеру в списке клетки."""
+        if slot != self.grid.selected:
+            self.select_slot(slot)
+        try:
+            self.set_cell_camera(slot, camera_id)
+        except ValueError as e:
+            log.warning("%s", e)
+            self._refresh_cell_choices()
+
+    def set_cell_camera(self, slot: int, camera_id: str | None) -> None:
+        """Открыть камеру в клетке (или закрыть клетку, если `camera_id` — None).
+
+        Камера, уже стоящая в другой клетке, — ValueError, клетка остаётся как была."""
+        if not 0 <= slot < GRID_SLOTS:
+            raise ValueError(f"нет клетки {slot}")
+        cam = None
+        if camera_id is not None:
+            cam = next((c for c in self._cameras() if c.id == camera_id), None)
+            if cam is None:
+                raise ValueError(f"нет камеры {camera_id}")
+            other = self.grid.slot_of(camera_id)
+            if other is not None and other != slot:
+                raise ValueError(f"камера {camera_id} уже открыта в клетке {other + 1}")
+        self._open_cell(slot, cam)
+
+    def _open_cell(self, slot: int, cam: CameraConfig | None, analysis: bool | None = None) -> None:
+        self.agent_panel.revoke()  # смена камеры: агент теряет управление
+        selected = slot == self.grid.selected
+        if selected:
+            self.camera_menu.close_menu()  # до остановки сессии: ручной фокус получает ноль
+            # геймпад: старой камере — нули; новая поедет, только когда стики вернутся в центр
+            self._pad_stop_motion()
+            self.pad.cancel_holds()
+            self.release_all_held()
+        d = self._cell_dialogs.pop(slot, None)
+        if d is not None:
+            d.reject()  # диалог относился к закрываемой камере
+        self._speed_scale_saved.pop(slot, None)  # «раз в минуту» — для каждой камеры заново
+        self._srcs = {k: v for k, v in self._srcs.items() if k[0] != slot}
+        cell = self.cells[slot]
+        cell.preview.set_source(None)
+        cell.preview.set_analyzer(None)
+        cell.preview.set_follow(None)
+        self._tag_shown.pop(slot, None)
+        self._view_shown = None if selected else self._view_shown
+        if cam is None:
+            self.grid.close(slot)
+            cell.video_frame.tracking_tag.hide()
+            cell.video_frame.set_tally(None)
+        else:
+            if analysis is None:
+                states = self._states()
+                states[slot] = CellState(cam.name, cam.tracking, False)
+                analysis = slot in allocate_analysis(states, self.grid.selected, self.cfg.max_analyzed)
+            try:
+                opened = self.grid.open(slot, cam, analysis)
+            except ValueError:
+                raise
+            except Exception as e:
+                log.exception("Не удалось открыть камеру %s", cam.name)
+                self.statusBar().showMessage(f"Не удалось открыть камеру {cam.name}: {e}", 8000)
+                opened = None
+            if opened is not None:
+                s = opened.session
+                s.on_manual = lambda g=opened.gate: (g.revoke(), self.agent_panel.revoke())
+                if s.limit_watch and selected:
+                    s.limit_watch.set_on_limit(self.pad.notify_limit)  # поток LimitWatch → сигнал моста
+                cell.preview.set_source(s.frames)
+                cell.preview.camera_name = cam.name
+                if s.follower:
+                    s.follower.on_change = self._follow_cb(s)  # поток слежения
+        if self._loading:
+            return
+        self._tally_shown = None
+        if selected:
+            self._select_effects()
+        self._reallocate_analysis()
+        self._refresh_cell_choices()
+        self._save_grid()
+        self._update_selected_status()
+
+    def _save_grid(self) -> None:
+        """Сетка и последняя выбранная камера — в настройки (в --sim ничего не пишем)."""
+        if self.use_sim or self._loading:
+            return
+        self.cfg.grid = self.grid.ids()
+        c = self.selected_cell
+        if c is not None:
+            self.cfg.last_camera_id = c.cfg.id
+        self._save()
+
+    def _reallocate_analysis(self) -> None:
+        """Нейросеть — слежущим, затем выбранной и остальным по порядку, пока не кончился лимит."""
+        if self._loading:
+            return
+        alloc = allocate_analysis(self._states(), self.grid.selected, self.cfg.max_analyzed)
+        for i, c in enumerate(self.grid.cells):
+            if c is not None:
+                c.session.set_analysis(i in alloc)
+        for i, c in enumerate(self.grid.cells):  # анализатор и слежение могли смениться — перепривязать
+            if c is None:
+                continue
+            self.cells[i].preview.set_analyzer(c.session.analyzer)
+            self.cells[i].preview.set_follow(c.session.follower)
+            if c.session.follower:
+                c.session.follower.on_change = self._follow_cb(c.session)
+        self._pad_limit_binding()
+
+    def _pad_limit_binding(self) -> None:
+        ps = self._pad_session()
+        for c in self.grid.cells:
+            lw = c.session.limit_watch if c else None
+            if lw is not None:
+                lw.set_on_limit(self.pad.notify_limit if c.session is ps else (lambda: None))
+
+    def _on_max_analyzed(self, n: int) -> None:
+        self.cfg.max_analyzed = int(n)
+        self._save()
+        self._reallocate_analysis()
+        self._update_selected_status()
 
     # --- слежение -----------------------------------------------------
 
-    def _on_follow_change(self, on: bool, reason: str | None) -> None:
-        """Follower.on_change (из любого потока): раскачка/аварийный стоп снимают агента; вибрация геймпада."""
-        try:
-            self.agent_panel.on_follow_change(on, reason)
-        finally:
-            self.pad.notify_follow(on, reason)
+    def _follow_cb(self, session: CameraSession) -> Callable[[bool, str | None], None]:
+        def on_change(on: bool, reason: str | None) -> None:
+            """Follower.on_change (из любого потока): раскачка/аварийный стоп снимают агента; вибрация геймпада."""
+            try:
+                self.agent_panel.on_follow_change(on, reason)
+            finally:
+                if session is self._pad_session():
+                    self.pad.notify_follow(on, reason)
+        return on_change
 
     def _follower(self):
         return self.session.follower if self.session else None
@@ -456,6 +686,13 @@ class MainWindow(QMainWindow):
                 self.agent_panel.revoke()
             if self.on_operator_follow:
                 self.on_operator_follow(want)
+        if want and self.selected_cell is not None:
+            refusal = tracking_refusal(self._states(), self.grid.selected, self.cfg.max_analyzed)
+            if refusal is not None:
+                self.follow_panel.set_state(False, None)
+                self.follow_panel.show_hint(refusal)
+                self._view_shown = self._current_view()  # подсказка остаётся, пока вид не изменится сам
+                return
         f = self._follower()
         if f is None:
             self.follow_panel.set_state(False, "распознавание недоступно")
@@ -544,9 +781,11 @@ class MainWindow(QMainWindow):
         f = self._follower()
         self._on_follow_requested(not (f and f.enabled))
 
-    def _current_view(self) -> TrackingView:
-        f = self._follower()
-        a = self.session.analyzer if self.session else None
+    def _current_view(self, cell: Cell | None = None) -> TrackingView:
+        cell = cell if cell is not None else self.selected_cell
+        s = cell.session if cell else None
+        f = s.follower if s else None
+        a = s.analyzer if s else None
         r = a.latest() if a else None
         return tracking_view(
             bool(f and f.enabled),
@@ -558,11 +797,22 @@ class MainWindow(QMainWindow):
 
     def _sync_follow(self) -> None:
         """Состояние слежения меняется и из других потоков (ручное управление, сбой анализа) — показать."""
+        ts = frozenset(
+            i for i, c in enumerate(self.grid.cells) if c and c.session.follower and c.session.follower.enabled
+        )
+        if ts != self._tracking_set:
+            self._tracking_set = ts
+            self._reallocate_analysis()  # слежение кончилось — место анализа свободно
+        for i, c in enumerate(self.grid.cells):
+            v = self._current_view(c) if c else None
+            if v != self._tag_shown.get(i):
+                self._tag_shown[i] = v
+                if v is not None:
+                    self.cells[i].video_frame.set_tracking_tag(v.tag, v.color)
         v = self._current_view()
         if v != self._view_shown:
             self._view_shown = v
             self.follow_panel.set_view(v)
-            self.video_frame.set_tracking_tag(v.tag, v.color)
 
     def _restart_atem(self) -> None:
         """Остановить старый клиент ATEM и создать новый из cfg.atem_ip (пусто — Tally выключен)."""
@@ -584,18 +834,21 @@ class MainWindow(QMainWindow):
         self._restart_atem()
 
     def _sync_tally(self) -> None:
-        """Tally из снимка клиента (сеть не ждём): рамка видео и чип, обновляются только при изменении."""
+        """Tally из снимка клиента (сеть не ждём): рамка каждой клетки и чип выбранной, обновляются только при изменении."""
         configured = self.atem is not None
         snap = self.atem.snapshot() if self.atem else None
         online = bool(snap and snap.online)
-        cam = self._current_cfg()
-        inp = atem_input_of(cam) if cam else 0
-        state = snap.state(inp) if snap and inp else None
-        known = bool(snap and inp and snap.known(inp))
-        key = (configured, online, inp, state, known)
+        per = []
+        for c in self.grid.cells:
+            inp = atem_input_of(c.cfg) if c else 0
+            per.append((inp, snap.state(inp) if snap and inp else None, bool(snap and inp and snap.known(inp))))
+        key = (configured, online, tuple(per), self.grid.selected)
         if key == self._tally_shown:
             return
         self._tally_shown = key
+        for cell, (_inp, state, _known) in zip(self.cells, per):
+            cell.video_frame.set_tally(state if online else None)
+        inp, state, known = per[self.grid.selected or 0]
         pill = atem_pill(configured, online, inp, state, known=known)
         if pill is None:
             self.atem_pill.hide()
@@ -603,7 +856,6 @@ class MainWindow(QMainWindow):
             self.atem_pill.set(*pill)
             self.atem_pill.show()
         self._fit_top_bar()
-        self.video_frame.set_tally(state if online else None)
 
     @staticmethod
     def _caption(text: str) -> QLabel:
@@ -634,14 +886,16 @@ class MainWindow(QMainWindow):
         if f := self._follower():
             f.set_effort(EffortProfile.at(x))
 
-    def _reset_target(self) -> None:
-        if self.session and self.session.analyzer:
-            self.session.analyzer.clear_target()
+    def _reset_target(self, slot: int | None = None) -> None:
+        c = self.grid.cells[self.grid.selected if slot is None else slot]
+        if c and c.session.analyzer:
+            c.session.analyzer.clear_target()
         self._update_status()
 
-    def _on_skeleton(self, on: bool) -> None:
-        self.preview.show_skeleton = on
-        self.preview.update()
+    def _on_skeleton(self, on: bool, cell: CameraCell | None = None) -> None:
+        cell = cell or self._cell
+        cell.preview.show_skeleton = on
+        cell.preview.update()
 
     def _on_stream_changed(self, key: str) -> None:
         cam = self._current_cfg()
@@ -649,7 +903,7 @@ class MainWindow(QMainWindow):
             return
         cam.stream = key
         self._save()
-        self._activate(cam)
+        self._open_cell(self.grid.selected, cam)
 
     def _save(self) -> None:
         try:
@@ -665,7 +919,11 @@ class MainWindow(QMainWindow):
             set_password(cam.id, d.password())
             self.cfg.cameras.append(cam)
             self._save()
-            self._fill_combo(cam.id)
+            slot = self.grid.selected
+            if self.grid.cells[slot] is not None:  # занятую клетку не трогаем, если есть свободная
+                slot = next((i for i, c in enumerate(self.grid.cells) if c is None), slot)
+            self.select_slot(slot)
+            self._open_cell(slot, cam)
 
     def _edit_camera(self) -> None:
         cur = self._current_cfg()
@@ -677,8 +935,11 @@ class MainWindow(QMainWindow):
             set_password(cam.id, d.password())
             self.cfg.cameras = [cam if c.id == cam.id else c for c in self.cfg.cameras]
             self._save()
-            self._fill_combo(cam.id)
-            self._sync_pad_player()  # мог измениться номер на геймпаде
+            slot = self.grid.slot_of(cam.id)
+            if slot is not None:
+                self._open_cell(slot, cam)  # клетка открывается заново с новыми настройками
+            else:
+                self._refresh_cell_choices()
 
     def _delete_camera(self) -> None:
         cur = self._current_cfg()
@@ -686,18 +947,23 @@ class MainWindow(QMainWindow):
             return
         if QMessageBox.question(self, "Удалить камеру", f"Удалить «{cur.name}» из списка?") != QMessageBox.Yes:
             return
+        slot = self.grid.slot_of(cur.id)
+        if slot is not None:
+            self._open_cell(slot, None)  # сначала клетка «нет»
         self.cfg.cameras = [c for c in self.cfg.cameras if c.id != cur.id]
         set_password(cur.id, None)
         self._save()
-        self._fill_combo(None)
+        self._refresh_cell_choices()
+        self._save_grid()
 
     def _run_calibration(self) -> None:
         from ptztracker.control.calibration import CalibrationRunner
         from ptztracker.ui.calibration_dialog import CalibrationDialog
 
-        cam, s = self._current_cfg(), self.session
-        if cam is None or s is None:
+        slot, cell = self.grid.selected, self.selected_cell  # камера захвачена при открытии диалога
+        if cell is None:
             return
+        cam, s = cell.cfg, cell.session
         if s.follower:
             s.follower.disable("калибровка")
         kind = s.stream_kind()
@@ -712,47 +978,81 @@ class MainWindow(QMainWindow):
             if cam.kind != "sim":
                 self._save()
 
-        CalibrationDialog(factory, saved, parent=self).exec()
+        dlg = CalibrationDialog(factory, saved, parent=self)
+        dlg.setWindowTitle(f"{dlg.windowTitle()} — {cam.name}")
+        self._cell_dialogs[slot] = dlg
+        try:
+            dlg.exec()
+        finally:
+            if self._cell_dialogs.get(slot) is dlg:
+                del self._cell_dialogs[slot]
+        if self.grid.cells[slot] is not cell:
+            return  # клетку закрыли или сменили камеру, пока шла калибровка
         if cam.calibration is not None:
-            self._activate(cam)  # слежение подхватит новую калибровку
+            self._open_cell(slot, cam)  # слежение подхватит новую калибровку
         else:
             s.resume_after_calibration()
 
     def _run_diagnostics(self) -> None:
         from ptztracker.ui.diagnostics_dialog import DiagnosticsDialog
 
+        slot = self.grid.selected
         cam = self._current_cfg()
         if not cam or cam.kind == "sim":
             QMessageBox.information(self, "Диагностика", "Выберите реальную камеру из списка.")
             return
         # на время диагностики программа не управляет камерой
-        self._activate(None)
+        self._open_cell(slot, None)
         password = get_password(cam.id) if cam.username else None
-        DiagnosticsDialog(cam.ip, cam.username, password, parent=self).exec()
-        self._activate(cam)
+        dlg = DiagnosticsDialog(cam.ip, cam.username, password, parent=self)
+        dlg.setWindowTitle(f"{dlg.windowTitle()} — {cam.name}")
+        dlg.exec()
+        if self.grid.cells[slot] is None and self.grid.slot_of(cam.id) is None:
+            self._open_cell(slot, cam)
 
     # --- запись (чёрный ящик) ------------------------------------------
 
     def save_moment(self, reason: str = "F9"):
-        if self.session is None:
+        """F9: сохранить момент у каждой открытой камеры. Возвращает запись выбранной (или первой открытой)."""
+        cells = [c for c in self.grid.cells if c is not None]
+        if not cells:
             self.statusBar().showMessage("Нечего сохранять: камера не выбрана.", 5000)
             return None
         self.statusBar().showMessage("Сохраняю запись…")
-        fut = self.session.save_moment(reason)
-        fut.add_done_callback(self._saveFinished.emit)  # рабочий поток → сигнал → Qt-поток
-        return fut
+        batch = {"left": len(cells), "paths": [], "errors": []}
+        chosen = None
+        for c in cells:
+            fut = c.session.save_moment(reason)
+            if chosen is None or c is self.selected_cell:
+                chosen = fut
+            fut.add_done_callback(lambda f, b=batch: self._saveFinished.emit((b, f)))  # рабочий поток → сигнал
+        return chosen
 
-    def _on_save_finished(self, fut) -> None:
+    def _on_save_finished(self, item) -> None:
+        batch, fut = item
+        batch["left"] -= 1
         try:
-            path = fut.result()
+            batch["paths"].append(Path(fut.result()))
         except Exception as e:
             log.warning("Запись не сохранена: %s", e)
-            self.statusBar().showMessage(f"Запись не сохранена: {e}", 10000)
+            batch["errors"].append(e)
+        if batch["left"] > 0:
             return
-        self._saved_path = Path(path)
-        self.statusBar().showMessage(f"Запись сохранена: {self._saved_path.name}", 10000)
-        self.show_folder_btn.show()
-        self._hide_folder_timer.start(10000)
+        paths, errors = batch["paths"], batch["errors"]
+        if len(paths) + len(errors) == 1:
+            if errors:
+                self.statusBar().showMessage(f"Запись не сохранена: {errors[0]}", 10000)
+            else:
+                self.statusBar().showMessage(f"Запись сохранена: {paths[0].name}", 10000)
+        elif paths:
+            bad = f", не удалось: {len(errors)}" if errors else ""
+            self.statusBar().showMessage(f"Записей сохранено: {len(paths)}{bad}", 10000)
+        else:
+            self.statusBar().showMessage(f"Записи не сохранены: {errors[0]}", 10000)
+        if paths:  # после showMessage: оно прячет временные виджеты строки состояния
+            self._saved_path = paths[-1]
+            self.show_folder_btn.show()
+            self._hide_folder_timer.start(10000)
 
     def _show_saved_folder(self) -> None:
         if self._saved_path is not None:
@@ -794,9 +1094,23 @@ class MainWindow(QMainWindow):
 
     def _update_status(self) -> None:
         self._poll_update_check()
+        for i, c in enumerate(self.grid.cells):
+            cell = self.cells[i]
+            if c is None:
+                cell.power_overlay.set_view("on", "")
+                self._update_target_label(cell, None)
+                continue
+            s = c.session
+            cell.power_overlay.set_view(power_view(s.power, s.online), s.cfg.name)
+            self._remember_rtsp_url(s)
+            self._remember_speed_scale(s, i)
+            self._update_target_label(cell, s)
+        self._update_selected_status()
+
+    def _update_selected_status(self) -> None:
+        """Значки верхней строки и правая панель — для выбранной клетки."""
         s = self.session
         cam = self._current_cfg()
-        self.power_overlay.set_view(power_view(s.power, s.online) if s else "on", s.cfg.name if s else "")
         self.power_action.setText("Включить камеру" if s and s.power == "standby"
                                   else "Перевести камеру в режим ожидания…")
         self.power_action.setEnabled(s is not None)
@@ -806,8 +1120,6 @@ class MainWindow(QMainWindow):
             self.blackbox_btn.set("", "off", "Чёрный ящик: камера не выбрана")
             self._fit_top_bar()
             return
-        self._remember_rtsp_url(s)
-        self._remember_speed_scale(s)
         stream = STREAM_CHOICES.get(cam.stream if cam else "auto", "Авто")
         st = s.frames.stats()
         text, kind, tip = video_pill(st, stream)
@@ -828,19 +1140,26 @@ class MainWindow(QMainWindow):
         a = s.analyzer
         r = a.latest() if a else None
         if a is None:
-            self.analysis_pill.set("", "off", "Анализ выключен")
+            why = ("Без анализа: слежение на этой камере выключено в настройках" if not s.cfg.tracking
+                   else "Без анализа: место анализа занято другой камерой")
+            self.analysis_pill.set("", "off", why)
         else:
             self.analysis_pill.set(*analysis_pill(a.error, r.fps if r else None, r.infer_ms if r else None,
                                                   r.device if r else None))
+
+    @staticmethod
+    def _update_target_label(cell: CameraCell, s: CameraSession | None) -> None:
+        a = s.analyzer if s else None
+        r = a.latest() if a else None
         if r is None or r.target_id is None:
-            self.target_label.setText("Цель: не выбрана — кликните по человеку на видео")
-            self.target_label.setStyleSheet("")
+            cell.target_label.setText("Цель: не выбрана — кликните по человеку на видео")
+            cell.target_label.setStyleSheet("")
         elif r.target_state == "tracking":
-            self.target_label.setText(f"Цель: №{r.target_id} — веду")
-            self.target_label.setStyleSheet(f"color: {C.ON}; font-weight: bold;")
+            cell.target_label.setText(f"Цель: №{r.target_id} — веду")
+            cell.target_label.setStyleSheet(f"color: {C.ON}; font-weight: bold;")
         else:
-            self.target_label.setText(f"Цель: №{r.target_id} — потеряна")
-            self.target_label.setStyleSheet(f"color: {C.LOST}; font-weight: bold;")
+            cell.target_label.setText(f"Цель: №{r.target_id} — потеряна")
+            cell.target_label.setStyleSheet(f"color: {C.LOST}; font-weight: bold;")
 
     def _fit_top_bar(self) -> None:
         """Узкое окно: сначала теряют текст «Видео», затем «Анализ», затем ATEM; камера и TRACK — никогда."""
@@ -880,9 +1199,10 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(self, "Режим ожидания", q) == QMessageBox.Yes:
             s.set_power(False)
 
-    def _power_on(self) -> None:
-        if self.session:
-            self.session.set_power(True)
+    def _power_on(self, slot: int | None = None) -> None:
+        c = self.grid.cells[self.grid.selected if slot is None else slot]
+        if c:
+            c.session.set_power(True)
             self._update_status()
 
     def _show_agent_window(self) -> None:
@@ -906,11 +1226,11 @@ class MainWindow(QMainWindow):
             self._save()
             self.statusBar().showMessage(f"Найден адрес видео: {url}", 8000)
 
-    def _remember_speed_scale(self, s: CameraSession) -> None:
+    def _remember_speed_scale(self, s: CameraSession, slot: int) -> None:
         """Поправку скорости, найденную слежением, — в настройки камеры (не чаще раза в SPEED_SCALE_SAVE_S).
         Поток слежения настройки не пишет: только читает поправку отсюда, из потока Qt."""
         f = s.follower
-        if f is None or f.polling_paused or time.monotonic() - self._speed_scale_saved_t < SPEED_SCALE_SAVE_S:
+        if f is None or f.polling_paused or time.monotonic() - self._speed_scale_saved.get(slot, float('-inf')) < SPEED_SCALE_SAVE_S:
             return  # идёт калибровка: её итог сбросит поправку
         cam = next((c for c in self.cfg.cameras if c.id == s.cfg.id), None)  # симулятор в настройки не пишем
         if cam is None:
@@ -924,7 +1244,7 @@ class MainWindow(QMainWindow):
         ):
             return
         cam.speed_scale = scale
-        self._speed_scale_saved_t = time.monotonic()
+        self._speed_scale_saved[slot] = time.monotonic()
         self._save()
         log.info("Поправка скорости камеры %s сохранена: %s", cam.name, scale)
 
@@ -982,12 +1302,11 @@ class MainWindow(QMainWindow):
 
     def emergency_stop(self) -> None:
         """Общий аварийный стоп (Esc и кнопка «Стоп»): снять разрешение агенту, отпустить клавиши,
-        выключить слежение, остановить камеру."""
+        выключить слежение и остановить все камеры."""
         self.agent_panel.revoke()
         self._pad_stop_motion()  # стоп обнуляет и геймпад: снова поедет после возврата стика в центр
         self.release_all_held()
-        if self.session:
-            self.session.emergency_stop()
+        self.grid.emergency_stop_all()
         self.camera_menu.close_menu()  # сначала стоп, потом закрытие
 
     def _menu_key(self, key: int, press: bool) -> None:
@@ -1009,32 +1328,33 @@ class MainWindow(QMainWindow):
         self._sync_pad()
 
     def _apply_held(self) -> None:
-        """Скорость в сессию: сумма клавиатуры и геймпада с ограничением ±1 по каждой оси."""
+        """Скорость в смеситель выбранной клетки: клавиатура и геймпад — отдельные источники, сумма ±1 по оси."""
         h = self._held
         kv = (KEY_PAN_SPEED * ((Qt.Key_Right in h) - (Qt.Key_Left in h)),
               KEY_PAN_SPEED * ((Qt.Key_Up in h) - (Qt.Key_Down in h)),
               KEY_ZOOM_SPEED * (bool(h & _ZOOM_IN_KEYS) - bool(h & _ZOOM_OUT_KEYS)))
         pv = self.pad.velocity()
         self._pad_applied = pv
-        ks, ps = self.session, self._pad_session()
-        if ks is not None and ks is ps:
-            self._send_velocity(ks, tuple(_clamp1(a + b) for a, b in zip(kv, pv)))
-            return
-        if ks is not None:
-            self._send_velocity(ks, kv)
-        if ps is not None:
-            self._send_velocity(ps, pv)
+        kc, pc = self.selected_cell, self._pad_cell()
+        if kc is not None:
+            self._send_velocity(self._source(kc, "keyboard"), kv)
+        if pc is not None:
+            self._send_velocity(self._source(pc, "pad1"), pv)
 
     @staticmethod
-    def _send_velocity(s: CameraSession, v: tuple[float, float, float]) -> None:
+    def _send_velocity(s, v: tuple[float, float, float]) -> None:
         s.set_pan_tilt_velocity(v[0], v[1])
         s.set_zoom_velocity(v[2])
 
     # --- геймпад ------------------------------------------------------
 
+    def _pad_cell(self) -> Cell | None:
+        """Клетка, которой управляет геймпад. Единственное место выбора камеры для геймпада."""
+        return self.selected_cell
+
     def _pad_session(self) -> CameraSession | None:
-        """Сессия, которой управляет геймпад. Единственное место выбора камеры для геймпада."""
-        return self.session
+        c = self._pad_cell()
+        return c.session if c else None
 
     def _on_pad_intents(self, intents: list) -> None:
         """Намерения геймпада (поток Qt): те же пути, что клавиатура и кнопки окна."""
@@ -1103,21 +1423,25 @@ class MainWindow(QMainWindow):
             s.push_focus()
 
     def _pad_next_camera(self) -> None:
-        """Create (коротко): следующая камера списка по кругу, как выбор в списке; одна камера — «некуда»."""
-        n = self.camera_combo.count()
-        if n < 2:
+        """Create (коротко): следующая открытая клетка по кругу; открыта одна — «некуда»."""
+        opened = [i for i, c in enumerate(self.grid.cells) if c is not None]
+        if len(opened) < 2:
             self.pad.rumble(RUMBLE_NOWHERE)
             return
-        self.camera_combo.setCurrentIndex((self.camera_combo.currentIndex() + 1) % n)  # → _on_combo → _activate
-        self.pad.rumble(RUMBLE_NOWHERE)  # подтверждение; огоньки номера уже обновил _activate
+        cur = self.grid.selected
+        nxt = next((i for i in opened if i > cur), opened[0])
+        self.select_slot(nxt)
+        self.pad.rumble(RUMBLE_NOWHERE)  # подтверждение; огоньки номера уже обновил select_slot
 
     def _pad_stop_motion(self) -> None:
         """Геймпад больше ничего не держит: нули, автомат заперт до центра, опрос упора стоит."""
         self.pad.reset_motion()
         self._pad_applied = (0.0, 0.0, 0.0)
-        s = self._pad_session()
-        if s is not None and s.limit_watch:
-            s.limit_watch.set_demand(0.0, 0.0, 0.0)
+        c = self._pad_cell()
+        if c is not None:
+            c.mixer.release("pad1")
+            if c.session.limit_watch:
+                c.session.limit_watch.set_demand(0.0, 0.0, 0.0)
 
     def _pad_composition(self, d: int) -> None:
         """Только крупность: пояс ↔ рост ↔ общий. L1 (−1) — шире, R1 (+1) — ближе; за краем — «некуда».
@@ -1145,8 +1469,7 @@ class MainWindow(QMainWindow):
             self.pad_chip.hide()
             self._fit_top_bar()
             return
-        s = self._pad_session()
-        num = pad_number_for(s.cfg, self._cameras()) if s is not None else None
+        num = self._pad_slot_number()
         parts = [str(num)] if num is not None else []
         pct, kind = self.pad.battery_percent, "ok"
         if pct is not None:
@@ -1159,16 +1482,20 @@ class MainWindow(QMainWindow):
                 if pct <= 20:
                     kind = "warn"
         name = (self.pad.info or {}).get("name") or "Геймпад"
-        tip = f"{name}: огоньки на геймпаде показывают номер камеры" + (f"\nЗаряд {pct}%" if pct is not None else "")
+        tip = f"{name}: огоньки на геймпаде показывают номер клетки камеры" + (f"\nЗаряд {pct}%" if pct is not None else "")
         self.pad_chip.set(" · ".join(parts), kind, tip)
         self.pad_chip.show()
         self._fit_top_bar()
 
     def _sync_pad_player(self) -> None:
-        """Огоньки игрока = номер камеры геймпада; без камеры — погасить."""
-        s = self._pad_session()
-        self.pad.set_player(pad_number_for(s.cfg, self._cameras()) if s is not None else None)
+        """Огоньки игрока = номер клетки камеры геймпада; без камеры — погасить."""
+        self.pad.set_player(self._pad_slot_number())
+        self._pad_limit_binding()
         self._update_pad_chip()
+
+    def _pad_slot_number(self) -> int | None:
+        c = self._pad_cell()
+        return self.grid.cells.index(c) + 1 if c is not None else None
 
     def _sync_pad(self) -> None:
         """Цвет полосы из снимков (сеть не ждём); мост шлёт его, только если цвет изменился."""
@@ -1214,8 +1541,8 @@ class MainWindow(QMainWindow):
         self.pad.stop(timeout=0.1)  # до остановки сессии; Qt не ждёт SDL: зависший поток доделает выход сам
         self._pad_stop_motion()
         self.release_all_held()
-        if self.session:
-            self.session.stop()
-            self.session = None
+        for d in list(self._cell_dialogs.values()):
+            d.reject()
+        self.grid.close_all()
         self._save()
         super().closeEvent(e)

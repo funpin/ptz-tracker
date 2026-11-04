@@ -88,7 +88,7 @@ def test_narrow_window_keeps_everything(qtbot, tmp_path):
     w._update_status()
     assert w._top.sizeHint().width() <= w.width()
     assert w.video_pill.text() != "" and w.analysis_pill.text() != ""
-    assert w.camera_combo.isVisible() and w.track_btn.text() in ("TRACK OFF", "TRACK ON")
+    assert w.cameras_btn.isVisible() and w.track_btn.text() in ("TRACK OFF", "TRACK ON")
     w.close()
 
 
@@ -96,7 +96,7 @@ def test_compacts_when_bar_too_wide(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     qtbot.waitUntil(lambda: w.analysis_pill.kind() == "ok", timeout=8000)
     w._update_status()
-    w.camera_combo.setMinimumWidth(w.width() - 300)  # крупный шрифт Windows / длинное имя камеры
+    w.cameras_btn.setMinimumWidth(w.width() - 300)  # крупный шрифт Windows / длинное имя камеры
     w._fit_top_bar()
     assert w.video_pill.text() == ""
     assert w.track_btn.text() in ("TRACK OFF", "TRACK ON")

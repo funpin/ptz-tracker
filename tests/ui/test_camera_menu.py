@@ -197,7 +197,7 @@ def test_menu_lightbar_follows_open(qtbot, tmp_path):
 def test_menu_closes_on_camera_switch_and_stop(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)
     w.camera_menu.open()
-    w._activate(w._current_cfg())
+    w.set_cell_camera(w.grid.selected, w._current_cfg().id)
     assert not w.camera_menu.is_open
     w.camera_menu.open()
     w.emergency_stop()

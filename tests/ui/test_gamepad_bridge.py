@@ -231,7 +231,7 @@ def test_camera_switch_requires_recenter(qtbot, tmp_path):
     old = w.session.sim
     b.pad = stick(1.0)
     wait_right(qtbot, old)
-    w._activate(w._current_cfg())
+    w.set_cell_camera(w.grid.selected, w._current_cfg().id)
     assert pts(old)[-1] == "#PTS5050"
     sim = w.session.sim
     b.pad = stick(0.95)  # стик всё ещё держат — новая камера не едет
@@ -422,11 +422,12 @@ def test_no_pygame_window_works(qtbot, tmp_path):
     w.close()
 
 
-def test_player_lights_follow_camera_number(qtbot, tmp_path):
-    cams = [CameraConfig(id="a", name="KZ_PTZ_2", ip="10.0.0.12"), CameraConfig(id="b", name="Сцена", ip="10.0.0.13")]
-    w, b = make(qtbot, tmp_path, cameras=cams)
+def test_player_lights_follow_cell_number(qtbot, tmp_path):
+    w, b = make(qtbot, tmp_path)
     qtbot.waitUntil(lambda: bool(b.of("player")), timeout=1000)
-    assert b.of("player")[-1] == (3,)  # «Симулятор» без цифр — третий в списке
+    assert b.of("player")[-1] == (1,)  # огоньки = номер клетки выбранной камеры
+    w.select_slot(1)
+    qtbot.waitUntil(lambda: b.of("player")[-1] == (2,), timeout=1000)
     w.close()
 
 
@@ -441,26 +442,19 @@ def test_pad_number_for(name, pad, idx, want):
 
 
 def test_create_short_selects_next_camera_wraps(qtbot, tmp_path):
-    cams = [CameraConfig(id="a", name="KZ_PTZ_1", ip="10.0.0.12"), CameraConfig(id="b", name="KZ_PTZ_2", ip="10.0.0.13")]
-    w, b = make(qtbot, tmp_path, cameras=cams)
-    seen = []
-    w._activate = lambda cam: seen.append(cam.id)
-    assert w.camera_combo.currentData() == "sim"
+    w, b = make(qtbot, tmp_path)  # в --sim открыты клетки 1 и 2
+    assert w.grid.selected == 0
     press(qtbot, b, "create")
-    qtbot.waitUntil(lambda: seen == ["a"], timeout=2000)
-    assert w.camera_combo.currentData() == "a"
+    qtbot.waitUntil(lambda: w.grid.selected == 1, timeout=2000)
     press(qtbot, b, "create")
-    qtbot.waitUntil(lambda: seen == ["a", "b"], timeout=2000)
+    qtbot.waitUntil(lambda: w.grid.selected == 0, timeout=2000)
     qtbot.waitUntil(lambda: b.of("rumble").count(RUMBLE_NOWHERE[0]) == 2, timeout=1000)  # подтверждение
     w.close()
 
 
 def test_create_single_camera_nowhere(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)
-    w.camera_combo.blockSignals(True)
-    w.camera_combo.removeItem(0)  # остаётся один «Симулятор» (в конфиге по умолчанию есть ещё камера)
-    w.camera_combo.blockSignals(False)
-    assert w.camera_combo.count() == 1
+    w.set_cell_camera(1, None)  # остаётся одна открытая клетка
     session = w.session
     press(qtbot, b, "create")
     qtbot.waitUntil(lambda: b.of("rumble") == [RUMBLE_NOWHERE[0]], timeout=1000)

@@ -65,3 +65,16 @@ def test_edit_preserves_other_fields(qtbot):
     assert r.name == "Б" and r.id == "c"
     assert (r.calibration, r.speed_scale, r.composition, r.effort, r.stream) == (
         {"k": 1}, {"pan": 1.2}, "full", 0.9, "mjpeg_2")
+
+
+def test_tracking_checkbox(qtbot):
+    d = CameraDialog(CameraConfig(id="cam-7", name="А", ip="10.0.0.7"))
+    qtbot.addWidget(d)
+    assert d.tracking_check.isChecked()  # по умолчанию слежение доступно
+    d.tracking_check.setChecked(False)
+    assert d.result_config().tracking is False
+    n = CameraDialog()
+    qtbot.addWidget(n)
+    n.name_edit.setText("Б")
+    n.ip_edit.setText("10.0.0.8")
+    assert n.result_config().tracking is True

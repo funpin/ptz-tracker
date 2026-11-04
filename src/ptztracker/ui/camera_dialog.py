@@ -5,6 +5,7 @@ import uuid
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -78,6 +79,9 @@ class CameraDialog(QDialog):
                                  "иначе место в списке")
         self.pad_spin.setValue((cfg.pad_number or 0) if cfg else 0)
 
+        self.tracking_check = QCheckBox("Слежение доступно (нейросеть на этой камере)")
+        self.tracking_check.setChecked(cfg.tracking if cfg else True)
+
         form = QFormLayout()
         form.addRow("Название", self.name_edit)
         form.addRow("IP-адрес", self.ip_edit)
@@ -87,6 +91,7 @@ class CameraDialog(QDialog):
         form.addRow("Мин. интервал команд", self.interval_spin)
         form.addRow("Вход ATEM", self.atem_spin)
         form.addRow("Номер на геймпаде", self.pad_spin)
+        form.addRow("", self.tracking_check)
 
         self.test_button = QPushButton("Проверить связь")
         self.test_result = QLabel("")
@@ -138,6 +143,7 @@ class CameraDialog(QDialog):
             min_interval=self.interval_spin.value() / 1000,
             atem_input=self.atem_spin.value(),
             pad_number=self.pad_spin.value() or None,
+            tracking=self.tracking_check.isChecked(),
         )
         if self._cfg is not None:  # калибровка, поправка скорости, композиция, усилие, поток сохраняются
             return dataclasses.replace(self._cfg, **fields)

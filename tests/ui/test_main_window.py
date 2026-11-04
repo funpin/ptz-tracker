@@ -101,7 +101,8 @@ def make_rec(qtbot, tmp_path):
     w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
     qtbot.addWidget(w)
     w.cfg.record_dir = str(tmp_path / "rec")
-    w._activate(w._current_cfg())  # новый сеанс подхватывает настройки записи
+    w.set_cell_camera(1, None)  # одна открытая камера: одна запись на F9
+    w.set_cell_camera(w.grid.selected, w._current_cfg().id)  # новый сеанс подхватывает настройки записи
     w.show()
     return w
 
@@ -123,7 +124,7 @@ def test_f9_saves_without_disabling_follow(qtbot, tmp_path):
 
 def test_f9_without_camera_shows_message(qtbot, tmp_path):
     w = make_rec(qtbot, tmp_path)
-    w._activate(None)
+    w.set_cell_camera(w.grid.selected, None)
     w.save_moment_action.trigger()
     assert "камер" in w.statusBar().currentMessage()
     w.close()
@@ -133,7 +134,8 @@ def test_f9_with_recording_off_shows_message(qtbot, tmp_path):
     w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
     qtbot.addWidget(w)
     w.cfg.record_enabled = False
-    w._activate(w._current_cfg())
+    w.set_cell_camera(1, None)  # одна открытая камера
+    w.set_cell_camera(w.grid.selected, w._current_cfg().id)
     w.save_moment_action.trigger()
     qtbot.waitUntil(lambda: "Запись выключена" in w.statusBar().currentMessage(), timeout=3000)
     w._update_status()
@@ -196,6 +198,12 @@ def test_calibration_silences_polling_and_resumes(qtbot, tmp_path, monkeypatch):
     class FakeDialog:
         def __init__(self, factory, on_saved, parent=None):
             self.factory = factory
+
+        def windowTitle(self):  # noqa: N802
+            return "Калибровка"
+
+        def setWindowTitle(self, _t):  # noqa: N802
+            pass
 
         def exec(self):
             self.factory(lambda m: None)  # как рабочий поток мастера
@@ -284,7 +292,7 @@ def test_manual_joystick_revokes_agent_control(qtbot, tmp_path):
 def test_camera_switch_revokes_agent_control(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     allow_agent(w)
-    w._activate(w._current_cfg())
+    w.set_cell_camera(w.grid.selected, w._current_cfg().id)
     assert agent_revoked(w)
     w.close()
 
@@ -365,7 +373,7 @@ def test_speed_scale_saved_at_most_once_a_minute(qtbot, tmp_path):
     calib.pan_scale = 1.6
     w._update_status()
     assert store.load().cameras[0].speed_scale["pan"] == 1.4  # минута не прошла
-    w._speed_scale_saved_t -= 61
+    w._speed_scale_saved[0] -= 61
     w._update_status()
     assert store.load().cameras[0].speed_scale["pan"] == 1.6
     w.close()
@@ -380,6 +388,12 @@ def test_new_calibration_resets_speed_scale(qtbot, tmp_path, monkeypatch):
     class FakeDialog:
         def __init__(self, factory, on_saved, parent=None):
             self.on_saved = on_saved
+
+        def windowTitle(self):  # noqa: N802
+            return "Калибровка"
+
+        def setWindowTitle(self, _t):  # noqa: N802
+            pass
 
         def exec(self):
             self.on_saved(default_calibration().to_json())
@@ -400,7 +414,7 @@ def test_new_calibration_resets_speed_scale(qtbot, tmp_path, monkeypatch):
 
 def test_camera_switch_resets_speed_scale_timer(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
-    w._speed_scale_saved_t = 123.0
-    w._activate(w._current_cfg())
-    assert w._speed_scale_saved_t == float("-inf")
+    w._speed_scale_saved[0] = 123.0
+    w.set_cell_camera(w.grid.selected, w._current_cfg().id)
+    assert 0 not in w._speed_scale_saved  # «раз в минуту» — для камеры заново
     w.close()

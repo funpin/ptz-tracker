@@ -158,7 +158,7 @@ def make_window(qtbot, tmp_path):
     w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
     qtbot.addWidget(w)
     w.cfg.record_dir = str(tmp_path / "rec")
-    w._activate(w._current_cfg())
+    w.set_cell_camera(w.grid.selected, w._current_cfg().id)
     w.show()
     assert w._api is not None
     return w, w._api.port, w.cfg.api_token
@@ -182,7 +182,7 @@ def test_status_has_no_password(qtbot, tmp_path):
     assert code == 200
     assert PASSWORD.encode() not in raw and tok.encode() not in raw
     data = json.loads(raw)
-    assert data["camera"]["id"] == "sim" and "rtsp_url" not in data["camera"]
+    assert data["camera"]["id"] == "sim1" and "rtsp_url" not in data["camera"]
     assert "admin:***@" in data["video"]["error"]
     assert data["agent"] == {"control_allowed": False, "not_on_air": False}
     w.close()

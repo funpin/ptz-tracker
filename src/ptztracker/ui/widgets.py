@@ -327,6 +327,10 @@ class VideoFrame(QFrame):
         self._overlays.append((w, corner))
         self._place_tags()
 
+    def remove_overlay(self, w: QWidget) -> None:
+        """Снять виджет с этой рамки (чтобы перенести его на другую)."""
+        self._overlays = [(x, c) for x, c in self._overlays if x is not w]
+
     def _make_tag(self) -> QLabel:
         t = QLabel(self)
         t.setAttribute(Qt.WA_TransparentForMouseEvents)
