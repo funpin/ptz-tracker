@@ -422,8 +422,8 @@ def test_no_pygame_window_works(qtbot, tmp_path):
 
 def test_player_lights_follow_cell_number(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)
-    qtbot.waitUntil(lambda: bool(b.of("player")), timeout=1000)
-    assert b.of("player")[-1] == (1,)  # огоньки = номер клетки камеры геймпада
+    # огоньки = номер клетки камеры геймпада (до подключения мост может прислать «погасить» — ждём последнее)
+    qtbot.waitUntil(lambda: bool(b.of("player")) and b.of("player")[-1] == (1,), timeout=1000)
     w.select_slot(1)  # выбор клетки геймпад не переводит
     qtbot.wait(150)
     assert b.of("player")[-1] == (1,)
