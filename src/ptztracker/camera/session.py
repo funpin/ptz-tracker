@@ -115,6 +115,7 @@ class CameraSession:
         self._ptz_hist: deque[PtzPosition] = deque()
         self._zoom_x: float | None = None
         self._ptz_poll_t = -1e9
+        self._apc_t = -1e9  # последний ответ #APC: свежий — опрос не нужен (#GZ не в счёт)
 
     # --- жизненный цикл ------------------------------------------------
 
@@ -170,7 +171,7 @@ class CameraSession:
         if on == self.analysis:
             return
         self.analysis = on
-        if self.frames is None:  # ещё не запущена: start() учтёт флаг
+        if self.frames is None or self._hb_stop.is_set():  # не запущена (start() учтёт флаг) или остановлена
             return
         if on:
             self._start_analysis()
@@ -435,8 +436,7 @@ class CameraSession:
         if self.scheduler is None or self._quiet or self._power in ("standby", "switching"):
             return
         now = time.monotonic()
-        last = self._ptz.t if self._ptz is not None else -1e9
-        if now - max(last, self._ptz_poll_t) < PTZ_POLL_MIN_S:
+        if now - max(self._apc_t, self._ptz_poll_t) < PTZ_POLL_MIN_S:
             return
         self._ptz_poll_t = now
         self.scheduler.submit("q_apc", P.Q_PAN_TILT, Priority.QUERY, only_if_changed=False)
@@ -451,8 +451,9 @@ class CameraSession:
                 self._add_ptz(dataclasses.replace(p, t=time.monotonic(), zoom_x=self._zoom_x))
             return
         pan, tilt = P.parse_pan_tilt(reply)
+        self._apc_t = time.monotonic()
         self._add_ptz(PtzPosition(
-            time.monotonic(),
+            self._apc_t,
             (pan - he42.APC_CENTER) * he42.APC_DEG_PER_UNIT,
             (tilt - he42.APC_CENTER) * he42.APC_DEG_PER_UNIT,
             self._zoom_x,

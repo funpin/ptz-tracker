@@ -453,9 +453,14 @@ def test_analysis_on_off_at_runtime():
         f = s.follower
         s.set_analysis(True)  # повтор — ничего
         assert s.follower is f
+        assert _wait(lambda: len(s.analyzer.latest().tracks) > 0)
+        tr = s.analyzer.latest().tracks[0]
+        s.analyzer.select_at((tr.box[0] + tr.box[2]) / 2, (tr.box[1] + tr.box[3]) / 2)
+        assert _wait(lambda: s.analyzer.latest().target_state == "tracking")
+        assert f.enable() is True
         s.set_analysis(False)
         assert s.analyzer is None and s.follower is None
-        assert f.enabled is False
+        assert f.enabled is False and f.last_reason == "анализ отдан другой камере"
     finally:
         s.stop()
 
@@ -523,3 +528,49 @@ def test_poll_position_rate_limited():
         assert sum(1 for c in s.sim.received if c == "#APC") == n
     finally:
         s.stop()
+
+
+def test_set_analysis_after_stop_does_nothing():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    s.stop()
+    s.set_analysis(True)
+    assert s.analyzer is None and s.follower is None
+
+
+def test_poll_position_silent_in_standby():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        s._power = "standby"
+        s.poll_position()
+        time.sleep(0.3)
+        assert "#APC" not in list(s.sim.received)
+    finally:
+        s.stop()
+
+
+def test_bad_ptz_reply_ignored():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s._on_reply({"cmd": "#APC", "reply": "мусор", "ok": True})
+    s._on_reply({"cmd": "#APC", "reply": "er2", "ok": False})
+    assert s.ptz is None
+
+
+def test_zoom_reply_does_not_suppress_pan_tilt_poll():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s._on_reply({"cmd": "#APC", "reply": "aPC80008000", "ok": True})
+    s._apc_t = time.monotonic() - 1.0  # #APC давно
+    s._ptz_poll_t = -1e9
+    s._on_reply({"cmd": "#GZ", "reply": "gz800", "ok": True})
+
+    class Sch:
+        sent = []
+
+        def submit(self, key, cmd, *a, **k):
+            self.sent.append(cmd)
+
+    s.scheduler = Sch()
+    s._power = "on"
+    s.poll_position()
+    assert "#APC" in Sch.sent
