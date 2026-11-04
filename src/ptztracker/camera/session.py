@@ -11,11 +11,13 @@ import logging
 import platform
 import threading
 import time
+from collections import deque
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Callable
 
 from ptztracker import __version__
+from ptztracker.camera import he42
 from ptztracker.camera import protocol as P
 from ptztracker.camera.client import CameraClient
 from ptztracker.camera.limit_watch import LimitWatch
@@ -40,6 +42,18 @@ SIM_VIDEO_LATENCY_S = 0.15  # как MJPEG у живой камеры
 UNCALIBRATED_SAFETY = 1.3
 STEP_CACHE_S = 1.0  # столько живёт значение ириса/gain для шага без повторного опроса
 PENDING_STEP_TTL_S = 2.0  # шаг, ждущий ответа камеры, устаревает
+PTZ_HISTORY_S = 30.0  # история положения для служебной клетки «графики»
+PTZ_POLL_MIN_S = 0.4  # опрос положения не чаще: свежий ответ (любого источника) — не спрашиваем
+
+
+@dataclasses.dataclass(frozen=True)
+class PtzPosition:
+    """Положение камеры по последним ответам #APC/#GZ; zoom_x — None, пока #GZ не пришёл."""
+
+    t: float
+    pan_deg: float
+    tilt_deg: float
+    zoom_x: float | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -95,6 +109,12 @@ class CameraSession:
         self._step_lock = threading.RLock()
         self._img_t: dict[str, float] = {}
         self._gain_auto_logged = False
+        # положение P/T/Z из ответов #APC/#GZ (любого источника: опрос окна, Follower, LimitWatch)
+        self._ptz_lock = threading.Lock()
+        self._ptz: PtzPosition | None = None
+        self._ptz_hist: deque[PtzPosition] = deque()
+        self._zoom_x: float | None = None
+        self._ptz_poll_t = -1e9
 
     # --- жизненный цикл ------------------------------------------------
 
@@ -131,15 +151,38 @@ class CameraSession:
         self.limit_watch = LimitWatch(self._lw_query_pan_tilt, self._lw_query_zoom, lambda: None)
         self.frames.start()
         if self.analysis:
-            from ptztracker.vision.analyzer import Analyzer
-
-            self.analyzer = Analyzer(self.frames, self._detector_factory(), recorder=self.recorder)
-            self.analyzer.start()
-            self._start_follower()
+            self._start_analysis()
         self._hb_stop.clear()
         self._hb_thread = threading.Thread(target=self._heartbeat, name="cam-heartbeat", daemon=True)
         self._hb_thread.start()
         self.refresh_image()
+
+    def _start_analysis(self) -> None:
+        from ptztracker.vision.analyzer import Analyzer
+
+        self.analyzer = Analyzer(self.frames, self._detector_factory(), recorder=self.recorder)
+        self.analyzer.start()
+        self._start_follower()
+
+    def set_analysis(self, on: bool) -> None:
+        """Включить/выключить нейросеть на ходу (поток Qt). Выключение сначала гасит слежение — до остановки."""
+        on = bool(on)
+        if on == self.analysis:
+            return
+        self.analysis = on
+        if self.frames is None:  # ещё не запущена: start() учтёт флаг
+            return
+        if on:
+            self._start_analysis()
+            return
+        f, a = self.follower, self.analyzer
+        if f is not None:
+            if f.enabled:
+                f.disable("анализ отдан другой камере")
+            f.stop()
+        if a is not None:
+            a.stop(timeout=0.2)
+        self.analyzer = self.follower = None
 
     def _lw_query_pan_tilt(self):
         if self._quiet or not self.scheduler:
@@ -368,10 +411,60 @@ class CameraSession:
         ):
             self.scheduler.submit(key, cmd, Priority.QUERY, only_if_changed=False)
 
+    # --- положение камеры ---------------------------------------------
+
+    @property
+    def ptz(self) -> PtzPosition | None:
+        return self._ptz
+
+    def ptz_history(self, seconds: float = PTZ_HISTORY_S) -> list[PtzPosition]:
+        since = time.monotonic() - seconds
+        with self._ptz_lock:
+            return [p for p in self._ptz_hist if p.t >= since]
+
+    def _add_ptz(self, p: PtzPosition) -> None:
+        with self._ptz_lock:
+            self._ptz = p
+            self._ptz_hist.append(p)
+            old = p.t - PTZ_HISTORY_S
+            while self._ptz_hist and self._ptz_hist[0].t < old:
+                self._ptz_hist.popleft()
+
+    def poll_position(self) -> None:
+        """Спросить #APC/#GZ (очередь QUERY), если свежего ответа нет; в ожидании камера ответит ER2 — не шлём."""
+        if self.scheduler is None or self._quiet or self._power in ("standby", "switching"):
+            return
+        now = time.monotonic()
+        last = self._ptz.t if self._ptz is not None else -1e9
+        if now - max(last, self._ptz_poll_t) < PTZ_POLL_MIN_S:
+            return
+        self._ptz_poll_t = now
+        self.scheduler.submit("q_apc", P.Q_PAN_TILT, Priority.QUERY, only_if_changed=False)
+        self.scheduler.submit("q_gz", P.Q_ZOOM, Priority.QUERY, only_if_changed=False)
+
+    def _on_ptz_reply(self, cmd: str, reply: str) -> None:
+        if cmd == P.Q_ZOOM:
+            frac = (P.parse_zoom(reply) - P.LENS_MIN) / (P.LENS_MAX - P.LENS_MIN)
+            self._zoom_x = he42.ZOOM_RATIO ** min(1.0, max(0.0, frac))
+            p = self._ptz
+            if p is not None:
+                self._add_ptz(dataclasses.replace(p, t=time.monotonic(), zoom_x=self._zoom_x))
+            return
+        pan, tilt = P.parse_pan_tilt(reply)
+        self._add_ptz(PtzPosition(
+            time.monotonic(),
+            (pan - he42.APC_CENTER) * he42.APC_DEG_PER_UNIT,
+            (tilt - he42.APC_CENTER) * he42.APC_DEG_PER_UNIT,
+            self._zoom_x,
+        ))
+
     def _on_reply(self, info: dict) -> None:
-        """Слушатель планировщика (его поток): разбор питания и изображения. Не бросает исключений."""
+        """Слушатель планировщика (его поток): разбор питания, изображения, положения. Не бросает исключений."""
         cmd, reply, ok = info.get("cmd"), str(info.get("reply") or ""), info.get("ok")
         try:
+            if ok and cmd in (P.Q_PAN_TILT, P.Q_ZOOM):
+                self._on_ptz_reply(cmd, reply)
+                return
             if not ok and cmd in (P.Q_IRIS, P.Q_GAIN):
                 with self._step_lock:
                     self._pending_steps.pop("iris" if cmd == P.Q_IRIS else "gain", None)

@@ -429,3 +429,97 @@ def test_gain_resent_after_remote_change():
         assert _wait(lambda: s.sim.gain_code == 0x0B, 1.0)
     finally:
         s.stop()
+
+
+# --- Task 5 (несколько камер): анализ на ходу и положение P/T/Z ---------------------------------
+
+def _wait(cond, t=3.0):
+    end = time.monotonic() + t
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.05)
+    return cond()
+
+
+def test_analysis_on_off_at_runtime():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert s.analyzer is None and s.follower is None
+        s.set_analysis(True)
+        assert _wait(lambda: s.analyzer.latest() is not None)
+        assert s.follower is not None
+        f = s.follower
+        s.set_analysis(True)  # повтор — ничего
+        assert s.follower is f
+        s.set_analysis(False)
+        assert s.analyzer is None and s.follower is None
+        assert f.enabled is False
+    finally:
+        s.stop()
+
+
+def test_disable_analysis_turns_tracking_off_first():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        s.set_analysis(True)
+        calls = []
+
+        class Spy:
+            enabled = True
+
+            def disable(self, reason):
+                calls.append(("disable", reason))
+
+            def stop(self):
+                calls.append(("stop",))
+
+        real = s.follower
+        s.follower = Spy()
+        s.set_analysis(False)
+        real.stop()
+        assert [c[0] for c in calls] == ["disable", "stop"]
+    finally:
+        s.stop()
+
+
+def test_ptz_from_poll():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        s.sim.pan_deg = 10.0
+        s.sim.tilt_deg = -5.0
+        s.poll_position()
+        assert _wait(lambda: s.ptz is not None and abs(s.ptz.pan_deg - 10.0) < 0.5)
+        assert abs(s.ptz.tilt_deg + 5.0) < 0.5
+        assert _wait(lambda: s.ptz.zoom_x is not None)
+        assert 1.0 <= s.ptz.zoom_x <= 20.0
+    finally:
+        s.stop()
+
+
+def test_ptz_history_trimmed():
+    from ptztracker.camera.session import PtzPosition
+
+    s = CameraSession(sim_cfg(), analysis=False)
+    now = time.monotonic()
+    for dt in (40.0, 20.0, 1.0):
+        s._add_ptz(PtzPosition(now - dt, 0.0, 0.0, 1.0))
+    assert [round(now - p.t) for p in s.ptz_history()] == [20, 1]
+    assert [round(now - p.t) for p in s.ptz_history(5.0)] == [1]
+
+
+def test_poll_position_rate_limited():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        s.poll_position()
+        assert _wait(lambda: s.ptz is not None)
+        n = sum(1 for c in s.sim.received if c == "#APC")
+        s.poll_position()
+        time.sleep(0.3)
+        assert sum(1 for c in s.sim.received if c == "#APC") == n
+    finally:
+        s.stop()
