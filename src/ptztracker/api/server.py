@@ -38,15 +38,16 @@ class ApiError(Exception):
 
 
 class Backend(Protocol):
-    def status(self) -> dict: ...
+    # `camera` (id камеры или номер клетки) передаётся только если он указан в запросе
+    def status(self, camera: str | None = None) -> dict: ...
 
-    def events(self, since: float, limit: int) -> dict: ...
+    def events(self, since: float, limit: int, camera: str | None = None) -> dict: ...
 
-    def frame_jpeg(self) -> bytes | None: ...
+    def frame_jpeg(self, camera: str | None = None) -> bytes | None: ...
 
     def save_moment(self) -> dict: ...
 
-    def control(self, name: str, body: dict) -> dict: ...
+    def control(self, name: str, body: dict, camera: str | None = None) -> dict: ...
 
 
 # --- передача действий в поток Qt -----------------------------------------
@@ -148,22 +149,24 @@ class _Handler(BaseHTTPRequestHandler):
             name = url.path.strip("/")
             body = self._body() if method == "POST" else {}
             b = self.server.backend
+            q = parse_qs(url.query)
+            cam = _camera(q.get("camera", [None])[0], body.get("camera"))
+            kw = {} if cam is None else {"camera": cam}
             if method == "GET" and name == "status":
-                self._json(200, b.status())
+                self._json(200, b.status(**kw))
             elif method == "GET" and name == "events":
-                q = parse_qs(url.query)
                 since = _number(q.get("since", ["-inf"])[0], "since")
                 limit = int(min(2000, max(1, _number(q.get("limit", ["500"])[0], "limit"))))
-                self._json(200, b.events(since, limit))
+                self._json(200, b.events(since, limit, **kw))
             elif method == "GET" and name == "frame.jpg":
-                jpeg = b.frame_jpeg()
+                jpeg = b.frame_jpeg(**kw)
                 if jpeg is None:
                     raise ApiError(503, "Кадра пока нет.")
                 self._send(200, "image/jpeg", jpeg)
             elif method == "POST" and name == "moment":
                 self._json(200, b.save_moment())
             elif method == "POST" and name in CONTROL_ENDPOINTS:
-                self._json(200, b.control(name, body))
+                self._json(200, b.control(name, body, **kw))
             elif name in ("status", "events", "frame.jpg", "moment", *CONTROL_ENDPOINTS):
                 raise ApiError(405, f"Метод {method} для /{name} не поддерживается.")
             else:
@@ -215,6 +218,16 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(payload)
+
+
+def _camera(query: str | None, body: Any) -> str | None:
+    """Параметр `camera`: в query или в теле (query главнее); id камеры или номер клетки."""
+    v = query if query is not None else body
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, (str, int)) or not str(v).strip():
+        raise ApiError(400, "camera: нужен id камеры или номер клетки.")
+    return str(v).strip()
 
 
 def _number(s: str, what: str) -> float:

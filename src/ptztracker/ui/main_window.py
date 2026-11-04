@@ -61,7 +61,7 @@ from ptztracker.multicam.grid import CameraGrid, Cell
 from ptztracker.multicam.velocity import MixerSource
 from ptztracker.tally import atem_input_of
 from ptztracker.tally.atem import AtemTally
-from ptztracker.ui.agent_panel import AgentPanel
+from ptztracker.ui.agent_panel import AgentPanel, revokes_agent
 from ptztracker.ui.atem_dialog import AtemDialog
 from ptztracker.ui.camera_cell import CameraCell
 from ptztracker.ui.camera_dialog import CameraDialog
@@ -249,7 +249,8 @@ class MainWindow(QMainWindow):
         self.agent_window.setWindowTitle("Агент")
         self.agent_window.setModal(False)
         QVBoxLayout(self.agent_window).addWidget(self.agent_panel)
-        self.agent_panel.allow_check.toggled.connect(self.agent_badge.setVisible)
+        self.agent_panel.attach(self.grid)
+        self.agent_panel.anyAllowedChanged.connect(self.agent_badge.setVisible)  # хоть у одной камеры
         self.agent_badge.clicked.connect(self._show_agent_window)
         # пояснение слежения и меню камеры — поверх видео выбранной клетки (переносятся при выборе)
         self._overlay_host: VideoFrame | None = None
@@ -483,7 +484,6 @@ class MainWindow(QMainWindow):
         """Выбрать клетку: клавиатура, мышь, геймпад и правая панель теперь относятся к ней."""
         if not 0 <= slot < GRID_SLOTS or slot == self.grid.selected:
             return
-        self.agent_panel.revoke()  # разрешения агенту относились к прежней камере
         self.camera_menu.close_menu()  # до переноса: ручной фокус получает ноль
         self._pad_stop_motion()
         self.pad.cancel_holds()
@@ -576,7 +576,6 @@ class MainWindow(QMainWindow):
         other = self.grid.slot_of(cam.id) if cam is not None else None
         if other is not None and other != slot:  # до разборки клетки: отказ оставляет её как была
             raise ValueError(f"камера {cam.id} уже открыта в клетке {other + 1}")
-        self.agent_panel.revoke()  # смена камеры: агент теряет управление
         selected = slot == self.grid.selected
         if selected:
             self.camera_menu.close_menu()  # до остановки сессии: ручной фокус получает ноль
@@ -614,13 +613,13 @@ class MainWindow(QMainWindow):
                 opened = None
             if opened is not None:
                 s = opened.session
-                s.on_manual = lambda g=opened.gate: (g.revoke(), self.agent_panel.revoke())
                 if s.limit_watch and selected:
                     s.limit_watch.set_on_limit(self.pad.notify_limit)  # поток LimitWatch → сигнал моста
                 cell.preview.set_source(s.frames)
                 cell.preview.camera_name = cam.name
                 if s.follower:
                     s.follower.on_change = self._follow_cb(s)  # поток слежения
+        self.agent_panel.refresh()  # строки панели «Агент»; смена камеры сняла флажки прежней (её шлюз закрыт)
         if self._loading:
             return
         self._tally_shown = None
@@ -678,7 +677,10 @@ class MainWindow(QMainWindow):
         def on_change(on: bool, reason: str | None) -> None:
             """Follower.on_change (из любого потока): раскачка/аварийный стоп снимают агента; вибрация геймпада."""
             try:
-                self.agent_panel.on_follow_change(on, reason)
+                if revokes_agent(on, reason):  # раскачка или аварийный стоп — разрешения этой камеры
+                    cell = next((c for c in self.grid.cells if c is not None and c.session is session), None)
+                    if cell is not None:
+                        cell.gate.revoke()
             finally:
                 if session is self._pad_session():
                     self.pad.notify_follow(on, reason)
@@ -721,18 +723,51 @@ class MainWindow(QMainWindow):
 
     # --- для API агента (вызывать в потоке Qt) ---------------------------
 
-    def request_follow(self, on: bool) -> bool:
-        """Включить/выключить слежение тем же путём, что пробел. Возвращает, включено ли оно теперь."""
-        self._on_follow_requested(on, by_agent=True)
-        f = self._follower()
-        return bool(f and f.enabled)
+    def request_follow(self, on: bool, slot: int | None = None) -> bool:
+        """Включить/выключить слежение тем же путём, что пробел. Возвращает, включено ли оно теперь.
 
-    def apply_composition(self, key: str) -> None:
-        self._on_composition(key)
+        `slot` — клетка не выбранной камеры: там панель не меняется, проверки лимита те же."""
+        if slot is None or slot == self.grid.selected:
+            self._on_follow_requested(on, by_agent=True)
+            f = self._follower()
+            return bool(f and f.enabled)
+        c = self.grid.cells[slot]
+        f = c.session.follower if c else None
+        if f is None:
+            return False
+        if not on:
+            f.disable("выключено агентом")
+        elif tracking_refusal(self._states(), slot, self.cfg.max_analyzed) is None:
+            f.enable()
+        self._sync_follow()
+        return f.enabled
 
-    def apply_effort(self, x: float) -> None:
-        self.follow_panel.set_effort(x)
-        self._on_effort(x)
+    def apply_composition(self, key: str, slot: int | None = None) -> None:
+        if slot is None or slot == self.grid.selected:
+            self._on_composition(key)
+            return
+        c = self.grid.cells[slot]
+        if c is None:
+            return
+        c.cfg.composition = key
+        if c.cfg.kind != "sim":
+            self._save()
+        if c.session.follower:
+            c.session.follower.set_composition(COMPOSITIONS[key])
+
+    def apply_effort(self, x: float, slot: int | None = None) -> None:
+        if slot is None or slot == self.grid.selected:
+            self.follow_panel.set_effort(x)
+            self._on_effort(x)
+            return
+        c = self.grid.cells[slot]
+        if c is None:
+            return
+        c.cfg.effort = x
+        if c.cfg.kind != "sim":
+            self._save()
+        if c.session.follower:
+            c.session.follower.set_effort(EffortProfile.at(x))
 
     def refresh_status(self) -> None:
         self._update_status()
@@ -1353,7 +1388,7 @@ class MainWindow(QMainWindow):
     def emergency_stop(self) -> None:
         """Общий аварийный стоп (Esc и кнопка «Стоп»): снять разрешение агенту, отпустить клавиши,
         выключить слежение и остановить все камеры."""
-        self.agent_panel.revoke()
+        self.agent_panel.revoke_all()
         self._pad_stop_motion()  # стоп обнуляет и геймпад: снова поедет после возврата стика в центр
         self.release_all_held()
         self.grid.emergency_stop_all()

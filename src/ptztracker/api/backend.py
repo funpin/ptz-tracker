@@ -33,29 +33,58 @@ class WindowBackend:
     def __init__(self, window: MainWindow, invoker: QtInvoker):
         self.w = window
         self.invoker = invoker
-        # слежение, которое включил агент (объект Follower); None — включал оператор или выключено
-        self._agent_follower = None
+        # слежение, которое включил агент: шлюз камеры → объект Follower; нет записи — включал оператор или выключено
+        self._agent_followers: dict = {}
         window.on_operator_follow = self._on_operator_follow
         window.agent_panel.offAirCleared.connect(self._on_off_air_cleared)
 
+    # --- выбор камеры (только чтение) -------------------------------------
+
+    def _slot(self, camera: str | None) -> int | None:
+        """Клетка (с нуля) по параметру `camera`: id камеры или номер клетки «1»…«4»; без параметра — выбранная.
+        Такой камеры нет — 404, и ничего не отправлено."""
+        grid = self.w.grid
+        if camera is None:
+            return grid.selected
+        cells = list(grid.cells)
+        for i, c in enumerate(cells):
+            if c is not None and c.cfg.id == camera:
+                return i
+        if camera.isdigit() and 1 <= int(camera) <= len(cells) and cells[int(camera) - 1] is not None:
+            return int(camera) - 1
+        raise ApiError(404, f"Нет такой камеры в сетке: {camera}")
+
+    def _cell(self, camera: str | None):
+        slot = self._slot(camera)
+        return self.w.grid.cells[slot] if slot is not None else None
+
     # --- чтение (поток сервера) ------------------------------------------
 
-    def status(self) -> dict:
-        s = self.w.session  # одна ссылка: окно может сменить сессию в это время
-        panel = self.w.agent_panel
-        out: dict = {
-            "now": time.monotonic(),
-            "agent": {"control_allowed": panel.control_allowed, "not_on_air": panel.not_on_air},
-            "camera": None,
-        }
-        if s is None:
-            return out
+    @staticmethod
+    def _agent_flags(cell) -> dict:
+        g = cell.gate if cell else None
+        return {"control_allowed": bool(g and g.control_allowed), "not_on_air": bool(g and g.not_on_air)}
+
+    def status(self, camera: str | None = None) -> dict:
+        cell = self._cell(camera)  # одна ссылка: окно может сменить клетку в это время
+        out: dict = {"now": time.monotonic(), "agent": self._agent_flags(cell), "camera": None}
+        if cell is not None:
+            out.update(self._cell_fields(cell))
+        out["cameras"] = [
+            {"slot": i + 1, **self._cell_fields(c), "agent": self._agent_flags(c)}
+            for i, c in enumerate(list(self.w.grid.cells)) if c is not None
+        ]
+        return redact_meta(out)  # на всякий случай: адреса в тексте ошибок — без пароля
+
+    @staticmethod
+    def _cell_fields(cell) -> dict:
+        s = cell.session
         c = s.cfg
         f, a = s.follower, s.analyzer
         r = a.latest() if a else None
         st = s.frames.stats() if s.frames else None
         fo = f.output if f else None
-        out.update({
+        return {
             # без логина, пароля и адресов видео: только то, что нужно агенту
             "camera": {"id": c.id, "name": c.name, "ip": c.ip, "kind": c.kind, "stream": c.stream,
                        "calibrated": c.calibration is not None},
@@ -83,17 +112,17 @@ class WindowBackend:
             "composition": c.composition,
             "effort": c.effort,
             "recording": bool(s.recorder.active),
-        })
-        return redact_meta(out)  # на всякий случай: адреса в тексте ошибок — без пароля
+        }
 
-    def events(self, since: float, limit: int) -> dict:
-        s = self.w.session
-        rec = s.recorder if s else None
+    def events(self, since: float, limit: int, camera: str | None = None) -> dict:
+        cell = self._cell(camera)
+        rec = cell.session.recorder if cell else None
         recent = getattr(rec, "recent_events", None)
         return {"now": time.monotonic(), "events": recent(since, limit) if recent else []}
 
-    def frame_jpeg(self) -> bytes | None:
-        s = self.w.session
+    def frame_jpeg(self, camera: str | None = None) -> bytes | None:
+        cell = self._cell(camera)
+        s = cell.session if cell else None
         fr = s.frames.latest() if s and s.frames else None
         if fr is None:
             return None
@@ -113,7 +142,7 @@ class WindowBackend:
         except Exception as e:
             raise ApiError(409, f"Запись не сохранена: {e}") from e
 
-    def control(self, name: str, body: dict) -> dict:
+    def control(self, name: str, body: dict, camera: str | None = None) -> dict:
         act = {
             "follow": self._follow_args,
             "target": self._target_args,
@@ -121,32 +150,37 @@ class WindowBackend:
             "effort": self._effort_args,
             "calibrate": lambda b: (self._calibrate, ()),
         }[name]
+        slot = self._slot(camera)  # нет такой камеры — 404 до разбора тела и до любой команды
+        cell = self.w.grid.cells[slot] if slot is not None else None
         fn, args = act(body)  # разбор тела — здесь, в потоке сервера
         # всё, что может двинуть камеру, — только с флажком «НЕ в эфире»; выключить слежение (стоп) можно всегда
         moves = not (name == "follow" and args == (False,))
-        return self.invoker.call(lambda: self._gated(fn, args, need_off_air=moves))
+        return self.invoker.call(lambda: self._gated(cell, fn, args, need_off_air=moves))
 
-    def _gated(self, fn, args, need_off_air: bool) -> dict:
-        """Поток Qt: проверка разрешений оператора прямо перед действием."""
+    def _gated(self, cell, fn, args, need_off_air: bool) -> dict:
+        """Поток Qt: проверка разрешений оператора ЭТОЙ камеры прямо перед действием."""
         from PySide6.QtWidgets import QApplication
 
-        panel = self.w.agent_panel
-        if not panel.control_allowed:
+        if cell is None:
+            raise ApiError(409, "Камера не выбрана или распознавание недоступно.")
+        gate = cell.gate
+        if not gate.control_allowed:
             raise ApiError(403, "Оператор не разрешил управление агенту (флажок в окне программы).")
-        if need_off_air and not panel.not_on_air:
+        if need_off_air and not gate.not_on_air:
             raise ApiError(403, "Оператор не отметил «Камера НЕ в эфире»: "
                                 "агент может только выключить слежение.")
-        s = self.w.session
-        if s is None or s.follower is None:
+        if cell not in self.w.grid.cells:
+            raise ApiError(409, "Камеру закрыли или заменили, пока шёл запрос.")
+        if cell.session.follower is None:
             raise ApiError(409, "Камера не выбрана или распознавание недоступно.")
-        if s.follower.polling_paused:
+        if cell.session.follower.polling_paused:
             raise ApiError(409, "Идёт калибровка камеры.")
         if QApplication.activeModalWidget() is not None:
             raise ApiError(409, "В программе открыто окно (диалог) — дождитесь, пока оператор его закроет.")
         menu = getattr(self.w, "camera_menu", None)
-        if menu is not None and menu.is_open:
+        if menu is not None and menu.is_open and cell is self.w.selected_cell:
             raise ApiError(409, "В программе открыто меню камеры — дождитесь, пока оператор его закроет.")
-        return fn(*args)
+        return fn(cell, *args)
 
     def _follow_args(self, b: dict):
         on = b.get("on")
@@ -154,11 +188,13 @@ class WindowBackend:
             raise ApiError(400, 'Нужно {"on": true} или {"on": false}.')
         return self._follow, (on,)
 
-    def _follow(self, on: bool) -> dict:
-        following = self.w.request_follow(on)  # тот же путь, что пробел и кнопка: все проверки те же
-        s = self.w.session
+    def _follow(self, cell, on: bool) -> dict:
+        slot = self.w.grid.cells.index(cell)
+        selected = cell is self.w.selected_cell
+        following = self.w.request_follow(on) if selected else self.w.request_follow(on, slot)  # тот же путь, что пробел и кнопка: все проверки те же
+        s = cell.session
         f = s.follower
-        if on and following and not self.w.agent_panel.control_allowed:
+        if on and following and not cell.gate.control_allowed:
             # раскачка или аварийный стоп сняли разрешение, пока включалось слежение (поток слежения)
             f.disable("разрешение агенту снято")
             raise ApiError(403, "Разрешение агенту снято, пока включалось слежение.")
@@ -169,19 +205,21 @@ class WindowBackend:
             why = f" Последняя причина: {f.last_reason}." if f.last_reason else ""
             raise ApiError(409, f"Слежение не включилось.{why}")
         if on:
-            self._agent_follower = f
+            self._agent_followers[cell.gate] = f
         return {"following": f.enabled, "reason": f.last_reason}
 
     # --- оператор забирает слежение (поток Qt) ------------------------------
 
     def _on_operator_follow(self, _on: bool) -> None:
-        self._agent_follower = None  # пробел или кнопка оператора: слежение теперь его
+        c = self.w.selected_cell
+        if c is not None:
+            self._agent_followers.pop(c.gate, None)  # пробел или кнопка оператора: слежение теперь его
 
-    def _on_off_air_cleared(self) -> None:
-        """Снят «Камера НЕ в эфире»: слежение, включённое агентом, выключается сразу."""
-        f, self._agent_follower = self._agent_follower, None
-        s = self.w.session
-        if f is not None and s is not None and s.follower is f and f.enabled:
+    def _on_off_air_cleared(self, gate) -> None:
+        """Снят «Камера НЕ в эфире» у камеры: слежение, включённое агентом на ней, выключается сразу."""
+        f = self._agent_followers.pop(gate, None)
+        cell = next((c for c in self.w.grid.cells if c is not None and c.gate is gate), None)
+        if f is not None and cell is not None and cell.session.follower is f and f.enabled:
             f.disable("камера в эфире — агент не ведёт")
 
     def _target_args(self, b: dict):
@@ -190,8 +228,8 @@ class WindowBackend:
             raise ApiError(400, 'Нужно {"x": число, "y": число} — пиксели кадра анализа.')
         return self._target, (float(x), float(y))
 
-    def _target(self, x: float, y: float) -> dict:
-        a = self.w.session.analyzer
+    def _target(self, cell, x: float, y: float) -> dict:
+        a = cell.session.analyzer
         tid = a.select_at(x, y)
         self.w.refresh_status()
         if tid is None:
@@ -204,8 +242,8 @@ class WindowBackend:
             raise ApiError(400, f"Нужно {{\"key\": ...}}, одно из: {', '.join(COMPOSITIONS)}.")
         return self._composition, (key,)
 
-    def _composition(self, key: str) -> dict:
-        self.w.apply_composition(key)
+    def _composition(self, cell, key: str) -> dict:
+        self.w.apply_composition(key, self.w.grid.cells.index(cell))
         return {"composition": key}
 
     def _effort_args(self, b: dict):
@@ -214,11 +252,11 @@ class WindowBackend:
             raise ApiError(400, 'Нужно {"value": число от 0 (мягко) до 1 (резко)}.')
         return self._effort, (float(v),)
 
-    def _effort(self, v: float) -> dict:
-        self.w.apply_effort(v)
+    def _effort(self, cell, v: float) -> dict:
+        self.w.apply_effort(v, self.w.grid.cells.index(cell))
         return {"effort": v}
 
-    def _calibrate(self) -> dict:
+    def _calibrate(self, cell) -> dict:
         # Мастер калибровки — модальное окно (exec), и камеру в нём двигает оператор своим флажком
         # «НЕ в эфире» и кнопкой «Начать». Запуск exec() из API вложил бы цикл событий в обработку
         # запроса, поэтому API не открывает мастер, а просит оператора.

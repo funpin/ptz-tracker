@@ -346,3 +346,134 @@ def test_close_stops_api(qtbot, tmp_path):
     w.close()
     with pytest.raises(OSError):
         socket.create_connection((HOST, port), timeout=1).close()
+
+
+# --- несколько камер: флажки и параметр camera ---------------------------------
+
+
+def analyze_both(w):
+    w.cfg.max_analyzed = 2
+    w._reallocate_analysis()
+    assert all(c.session.follower for c in w.grid.cells[:2])
+
+
+def allow_cell(w, slot, off_air=True):
+    g = w.grid.cells[slot].gate
+    g.set_allowed(True)
+    g.set_off_air(off_air)
+
+
+def test_status_lists_cameras(qtbot, tmp_path):
+    w, port, tok = make_window(qtbot, tmp_path)
+    allow_cell(w, 1)
+    code, raw = call(port, "/status", token=tok)
+    data = json.loads(raw)
+    assert code == 200 and len(data["cameras"]) == 2
+    assert [c["slot"] for c in data["cameras"]] == [1, 2]
+    assert [c["camera"]["id"] for c in data["cameras"]] == ["sim1", "sim2"]
+    assert data["cameras"][0]["agent"] == {"control_allowed": False, "not_on_air": False}
+    assert data["cameras"][1]["agent"] == {"control_allowed": True, "not_on_air": True}
+    assert data["camera"]["id"] == "sim1" and data["agent"] == data["cameras"][0]["agent"]
+    assert PASSWORD.encode() not in raw and tok.encode() not in raw and b"rtsp_url" not in raw
+    w.close()
+
+
+def test_camera_param_by_slot_and_id(qtbot, tmp_path):
+    w, port, tok = make_window(qtbot, tmp_path)
+    analyze_both(w)
+    allow_cell(w, 1)
+    for q in ("2", "sim2"):
+        data = json.loads(call(port, f"/status?camera={q}", token=tok)[1])
+        assert data["camera"]["id"] == "sim2" and data["agent"]["control_allowed"], q
+    assert json.loads(call(port, "/status?camera=1", token=tok)[1])["camera"]["id"] == "sim1"
+    qtbot.waitUntil(lambda: w.cells[1].preview.has_frame(), timeout=3000)
+    assert call(port, "/frame.jpg?camera=2", token=tok)[0] == 200
+    # в теле POST — тот же параметр
+    code, data = call_bg(qtbot, port, "/composition", token=tok, body={"key": "full", "camera": "sim2"})
+    assert code == 200 and w.grid.cells[1].cfg.composition == "full"
+    assert w.grid.cells[0].cfg.composition != "full"
+    w.close()
+
+
+def test_unknown_camera_404(qtbot, tmp_path):
+    w, port, tok = make_window(qtbot, tmp_path)
+    analyze_both(w)
+    allow_cell(w, 0)
+    allow_cell(w, 1)
+    def moves():  # опросы камеры (Q…) идут сами; считаем только команды движения
+        return [[x for x in c.session.sim.received if x.startswith('#') and x != '#O'] for c in w.grid.cells[:2]]
+
+    sent = moves()
+    for bad in ("nope", "3", "9", "0"):
+        code, raw = call(port, f"/status?camera={bad}", token=tok)
+        assert code == 404 and "Нет такой камеры в сетке" in json.loads(raw)["error"], bad
+        assert call(port, f"/frame.jpg?camera={bad}", token=tok)[0] == 404
+        code, data = call_bg(qtbot, port, f"/follow?camera={bad}", token=tok, body={"on": True})
+        assert code == 404 and "Нет такой камеры" in data["error"]
+        code, data = call_bg(qtbot, port, "/effort", token=tok, body={"value": 0.5, "camera": bad})
+        assert code == 404
+    assert moves() == sent
+    assert not any(c.session.follower.enabled for c in w.grid.cells[:2])
+    w.close()
+
+
+def test_flags_per_camera(qtbot, tmp_path):
+    """Флажки у камеры A; оператор двигает камеру B — у A остались; агент на B без флажков — 403."""
+    w, port, tok = make_window(qtbot, tmp_path)
+    analyze_both(w)
+    allow_cell(w, 0)
+    w.select_slot(1)  # выбор клетки флажков не трогает
+    assert w.grid.cells[0].gate.control_allowed
+    allow_cell(w, 1)
+    w.controls._on_joystick(0.5, 0.0)  # ручное действие на камере 2
+    w.controls.release_all()
+    assert not w.grid.cells[1].gate.control_allowed and not w.grid.cells[1].gate.not_on_air
+    assert w.grid.cells[0].gate.control_allowed and w.grid.cells[0].gate.not_on_air
+    code, data = call_bg(qtbot, port, "/follow?camera=2", token=tok, body={"on": True})
+    assert code == 403 and not w.grid.cells[1].session.follower.enabled
+    code, data = call_bg(qtbot, port, "/follow", token=tok, body={"on": True, "camera": 2})
+    assert code == 403
+    # у камеры 1 флажки стоят: её управление доходит дальше проверки разрешений (цели нет — 409)
+    code, data = call_bg(qtbot, port, "/follow?camera=sim1", token=tok, body={"on": True})
+    assert code == 409 and "цель" in data["error"]
+    w.close()
+
+
+def test_no_param_is_selected(qtbot, tmp_path):
+    w, port, tok = make_window(qtbot, tmp_path)
+    analyze_both(w)
+    allow_cell(w, 1)
+    assert call_bg(qtbot, port, "/effort", token=tok, body={"value": 0.4})[0] == 403  # выбрана камера 1: у неё флажков нет
+    w.select_slot(1)
+    assert json.loads(call(port, "/status", token=tok)[1])["camera"]["id"] == "sim2"
+    assert call_bg(qtbot, port, "/effort", token=tok, body={"value": 0.4})[0] == 200
+    assert w.grid.cells[1].cfg.effort == 0.4 and w.grid.cells[0].cfg.effort != 0.4
+    w.close()
+
+
+def test_escape_revokes_all(qtbot, tmp_path):
+    w, port, tok = make_window(qtbot, tmp_path)
+    allow_cell(w, 0)
+    allow_cell(w, 1)
+    w.emergency_stop()
+    for c in w.grid.cells[:2]:
+        assert not c.gate.control_allowed and not c.gate.not_on_air
+    data = json.loads(call(port, "/status", token=tok)[1])
+    assert all(not c["agent"]["control_allowed"] for c in data["cameras"])
+    assert call_bg(qtbot, port, "/effort?camera=2", token=tok, body={"value": 0.4})[0] == 403
+    w.close()
+
+
+def test_off_air_untick_on_other_camera_stops_only_that_agent_follow(qtbot, tmp_path):
+    w, port, tok = make_window(qtbot, tmp_path)
+    analyze_both(w)
+    allow_cell(w, 0)
+    allow_cell(w, 1)
+    c0, c1 = w.grid.cells[0], w.grid.cells[1]
+    for c in (c0, c1):
+        c.session.follower.enabled = True
+    w._api.backend._agent_followers[c0.gate] = c0.session.follower
+    w._api.backend._agent_followers[c1.gate] = c1.session.follower
+    c1.gate.set_off_air(False)
+    assert c0.session.follower.enabled and not c1.session.follower.enabled
+    w.close()
