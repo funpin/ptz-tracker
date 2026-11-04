@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from pathlib import Path
@@ -234,6 +235,14 @@ class MainWindow(QMainWindow):
         self.video_frame.add_overlay(self.power_overlay, "fill")
         self.camera_menu = CameraMenu(lambda: self.session, self.controls)
         self.video_frame.add_overlay(self.camera_menu, "center")
+        # виртуальную камеру нельзя принять за живую: метка поверх видео, пока выбран симулятор
+        self.sim_badge = QLabel("СИМУЛЯТОР")
+        self.sim_badge.setStyleSheet(
+            f"background: {C.REMOTE}; color: {C.BG}; border-radius: 6px; padding: 4px 12px;"
+            f" font-size: {FS_CAPTION}px; font-weight: 700;")
+        self.sim_badge.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.video_frame.add_overlay(self.sim_badge, "top-center")
+        self.sim_badge.hide()
         self.camera_menu.openChanged.connect(self._on_menu_changed)
 
         side = QWidget()
@@ -308,6 +317,7 @@ class MainWindow(QMainWindow):
         self.atem_action = menu.addAction("ATEM…", self._edit_atem)
         self.agent_action = menu.addAction("Агент…", self._show_agent_window)
         self.power_action = menu.addAction("Перевести камеру в режим ожидания…", self._power_menu)
+        self.sim_action = menu.addAction("Симулятор (для тренировки)", self._open_sim_camera)
         menu.addSeparator()
         self.save_moment_action = QAction("Сохранить момент (F9)", self)  # не ручное управление: слежение не трогаем
         self.save_moment_action.triggered.connect(lambda: self.save_moment())
@@ -369,13 +379,30 @@ class MainWindow(QMainWindow):
     # --- список камер -------------------------------------------------
 
     def _cameras(self) -> list[CameraConfig]:
-        return self.cfg.cameras + ([SIM_CAMERA] if self.use_sim else [])
+        # --sim добавляет временную камеру; если «Симулятор» уже в настройках с тем же id, второй не нужно
+        extra = [SIM_CAMERA] if self.use_sim and all(c.id != SIM_CAMERA.id for c in self.cfg.cameras) else []
+        return self.cfg.cameras + extra
+
+    def _is_stored(self, cam: CameraConfig | None) -> bool:
+        """Камера записана в настройки (её можно изменить и удалить); временный --sim — нет."""
+        return cam is not None and any(c.id == cam.id for c in self.cfg.cameras)
+
+    def _open_sim_camera(self) -> None:
+        """☰ → «Симулятор (для тренировки)»: добавить виртуальную камеру (один раз) и открыть её."""
+        sim = next((c for c in self.cfg.cameras if c.kind == "sim"), None)
+        if sim is None:
+            sim = dataclasses.replace(SIM_CAMERA, name="Тренировка")
+            self.cfg.cameras.append(sim)
+            self._save()
+        self._fill_combo(sim.id)
 
     def _fill_combo(self, select_id: str | None) -> None:
         self.camera_combo.blockSignals(True)
         self.camera_combo.clear()
         for c in self._cameras():
-            label = c.name if c.kind == "sim" else f"{c.name} · {c.ip}"
+            label = f"{c.name} · {c.ip}"
+            if c.kind == "sim":  # «Симулятор» в названии и так всё говорит: «(симулятор)» не дублируем
+                label = c.name if "симулятор" in c.name.lower() else f"{c.name} (симулятор)"
             self.camera_combo.addItem(label, c.id)
         idx = self.camera_combo.findData(select_id) if select_id else -1
         self.camera_combo.setCurrentIndex(idx if idx >= 0 else 0)
@@ -405,8 +432,9 @@ class MainWindow(QMainWindow):
         self.preview.set_follow(None)
         self.controls.bind(None)
         real = cam is not None and cam.kind != "sim"
-        self.edit_action.setEnabled(real)
-        self.del_action.setEnabled(real)
+        self.edit_action.setEnabled(self._is_stored(cam))
+        self.del_action.setEnabled(self._is_stored(cam))
+        self.sim_badge.setVisible(cam is not None and cam.kind == "sim")
         want = cam.stream if cam else "auto"
         for act in self.stream_actions.actions():
             act.setChecked(act.data() == want)
@@ -662,19 +690,21 @@ class MainWindow(QMainWindow):
         d = CameraDialog(parent=self)
         if d.exec():
             cam = d.result_config()
-            set_password(cam.id, d.password())
+            if cam.kind != "sim":
+                set_password(cam.id, d.password())
             self.cfg.cameras.append(cam)
             self._save()
             self._fill_combo(cam.id)
 
     def _edit_camera(self) -> None:
         cur = self._current_cfg()
-        if not cur or cur.kind == "sim":
+        if not self._is_stored(cur):
             return
         d = CameraDialog(cur, get_password(cur.id) if cur.username else None, parent=self)
         if d.exec():
             cam = d.result_config()
-            set_password(cam.id, d.password())
+            if cam.kind != "sim":
+                set_password(cam.id, d.password())
             self.cfg.cameras = [cam if c.id == cam.id else c for c in self.cfg.cameras]
             self._save()
             self._fill_combo(cam.id)
@@ -682,12 +712,13 @@ class MainWindow(QMainWindow):
 
     def _delete_camera(self) -> None:
         cur = self._current_cfg()
-        if not cur or cur.kind == "sim":
+        if not self._is_stored(cur):
             return
         if QMessageBox.question(self, "Удалить камеру", f"Удалить «{cur.name}» из списка?") != QMessageBox.Yes:
             return
         self.cfg.cameras = [c for c in self.cfg.cameras if c.id != cur.id]
-        set_password(cur.id, None)
+        if cur.kind != "sim":
+            set_password(cur.id, None)
         self._save()
         self._fill_combo(None)
 
