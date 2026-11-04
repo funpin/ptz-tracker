@@ -42,7 +42,8 @@ class CameraCell(QFrame):
         self.skeleton_check.set("", "neutral", "Показать скелет (точки тела)")
         self.skeleton_check.setCheckable(True)
         target_bar = QWidget()
-        target_bar.setStyleSheet(f"background: {C.SURFACE}; border-radius: 6px;")
+        target_bar.setObjectName("targetBar")
+        target_bar.setStyleSheet(f"QWidget#targetBar {{ background: {C.SURFACE}; border-radius: 6px; }}")
         trow = QHBoxLayout(target_bar)
         trow.setContentsMargins(SP[1], SP[0], SP[0], SP[0])
         trow.setSpacing(SP[0])
@@ -119,6 +120,7 @@ class CameraCell(QFrame):
         if self._service is not None:
             self._stack.removeWidget(self._service)
             self._service.hide()
+            self._service.setParent(None)  # служебным виджетом владеет окно: может отдать его другой клетке
             self._service = None
         if widget is None:
             self._stack.setCurrentWidget(self.video_frame)

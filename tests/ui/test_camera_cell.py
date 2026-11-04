@@ -44,6 +44,25 @@ def test_click_unselected_only_selects(qtbot):
     assert got == [0]
     c.set_selected(True)
     assert c.preview.click_guard() is True
+    qtbot.mouseClick(c.preview, Qt.LeftButton, pos=QPoint(5, 5))
+    qtbot.mouseClick(c.preview, Qt.RightButton, pos=QPoint(5, 5))
+    assert got == [0]
+
+
+def test_right_click_unselected_does_not_select(qtbot):
+    c = make(qtbot)
+    got = []
+    c.selectRequested.connect(got.append)
+    qtbot.mouseClick(c.preview, Qt.RightButton, pos=QPoint(5, 5))
+    assert got == []
+
+
+def test_set_choices_twice_and_unknown_current(qtbot):
+    c = make(qtbot)
+    c.set_choices(ITEMS, "cam-a")
+    c.set_choices(ITEMS[:1], "zzz")
+    assert c.combo.count() == 2
+    assert c.combo.currentData() is None
 
 
 def test_pads_badges(qtbot):
@@ -64,3 +83,13 @@ def test_service_shown_without_camera(qtbot):
     c.set_service(None)
     assert c.video_frame.isVisible() and not svc.isVisible()
     assert c.number_label.text().startswith("1")
+
+
+def test_service_replaced_and_none_without_service(qtbot):
+    c = make(qtbot)
+    c.set_service(None)
+    assert c.video_frame.isVisible()
+    a, b = StatusPill("gamepad"), StatusPill("gamepad")
+    c.set_service(a)
+    c.set_service(b)
+    assert b.isVisible() and a.parent() is None
