@@ -42,6 +42,7 @@ class WindowBackend:
 
     def _slot(self, camera: str | None) -> int | None:
         """Клетка (с нуля) по параметру `camera`: id камеры или номер клетки «1»…«4»; без параметра — выбранная.
+        Сначала ищется id, потом номер клетки: камера с id «2» в клетке 1 найдётся по «2» раньше клетки 2.
         Такой камеры нет — 404, и ничего не отправлено."""
         grid = self.w.grid
         if camera is None:
@@ -50,7 +51,7 @@ class WindowBackend:
         for i, c in enumerate(cells):
             if c is not None and c.cfg.id == camera:
                 return i
-        if camera.isdigit() and 1 <= int(camera) <= len(cells) and cells[int(camera) - 1] is not None:
+        if camera.isascii() and camera.isdecimal() and 1 <= int(camera) <= len(cells) and cells[int(camera) - 1] is not None:
             return int(camera) - 1
         raise ApiError(404, f"Нет такой камеры в сетке: {camera}")
 
@@ -131,8 +132,10 @@ class WindowBackend:
 
     # --- действия (выполняются в потоке Qt) -------------------------------
 
-    def save_moment(self) -> dict:
-        fut = self.invoker.call(lambda: self.w.save_moment("agent"))
+    def save_moment(self, camera: str | None = None) -> dict:
+        """Как F9: сохраняет все открытые камеры; в ответе — запись указанной (или выбранной)."""
+        slot = self._slot(camera) if camera is not None else None  # нет такой камеры — 404 до сохранения
+        fut = self.invoker.call(lambda: self.w.save_moment("agent", slot))
         if fut is None:
             raise ApiError(409, "Нечего сохранять: камера не выбрана.")
         try:

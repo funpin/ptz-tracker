@@ -477,3 +477,13 @@ def test_off_air_untick_on_other_camera_stops_only_that_agent_follow(qtbot, tmp_
     c1.gate.set_off_air(False)
     assert c0.session.follower.enabled and not c1.session.follower.enabled
     w.close()
+
+
+def test_camera_param_odd_digits_404_and_moment_per_camera(qtbot, tmp_path):
+    w, port, tok = make_window(qtbot, tmp_path)
+    assert call(port, "/status?camera=%C2%B2", token=tok)[0] == 404  # «²» — не номер клетки
+    code, _ = call_bg(qtbot, port, "/moment?camera=zz", token=tok, body={})
+    assert code == 404
+    code, data = call_bg(qtbot, port, "/moment", token=tok, body={"camera": "2"})
+    assert code == 200 and data["path"].endswith(".zip")
+    w.close()

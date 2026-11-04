@@ -1054,8 +1054,9 @@ class MainWindow(QMainWindow):
 
     # --- запись (чёрный ящик) ------------------------------------------
 
-    def save_moment(self, reason: str = "F9"):
-        """F9: сохранить момент у каждой открытой камеры. Возвращает запись выбранной (или первой открытой)."""
+    def save_moment(self, reason: str = "F9", slot: int | None = None):
+        """F9: сохранить момент у каждой открытой камеры. Возвращает запись клетки `slot` (по умолчанию —
+        выбранной или первой открытой)."""
         cells = [c for c in self.grid.cells if c is not None]
         if not cells:
             self.statusBar().showMessage("Нечего сохранять: камера не выбрана.", 5000)
@@ -1063,9 +1064,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Сохраняю запись…")
         batch = {"left": len(cells), "paths": [], "errors": []}
         chosen = None
+        want = self.grid.cells[slot] if slot is not None else self.selected_cell
         for c in cells:
             fut = c.session.save_moment(reason)
-            if chosen is None or c is self.selected_cell:
+            if chosen is None or c is want:
                 chosen = fut
             fut.add_done_callback(lambda f, b=batch: self._saveFinished.emit((b, f)))  # рабочий поток → сигнал
         return chosen

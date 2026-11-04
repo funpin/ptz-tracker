@@ -45,7 +45,7 @@ class Backend(Protocol):
 
     def frame_jpeg(self, camera: str | None = None) -> bytes | None: ...
 
-    def save_moment(self) -> dict: ...
+    def save_moment(self, camera: str | None = None) -> dict: ...
 
     def control(self, name: str, body: dict, camera: str | None = None) -> dict: ...
 
@@ -164,7 +164,7 @@ class _Handler(BaseHTTPRequestHandler):
                     raise ApiError(503, "Кадра пока нет.")
                 self._send(200, "image/jpeg", jpeg)
             elif method == "POST" and name == "moment":
-                self._json(200, b.save_moment())
+                self._json(200, b.save_moment(**kw))
             elif method == "POST" and name in CONTROL_ENDPOINTS:
                 self._json(200, b.control(name, body, **kw))
             elif name in ("status", "events", "frame.jpg", "moment", *CONTROL_ENDPOINTS):
