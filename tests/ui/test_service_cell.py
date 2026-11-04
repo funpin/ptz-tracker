@@ -64,3 +64,17 @@ def test_no_polling_when_four_cameras(qtbot, tmp_path):
     w._update_status()
     assert calls
     w.close()
+
+
+def _placed(w):
+    return {k: next((i for i, c in enumerate(w.cells) if c._service is wid), None) for k, wid in w._service.items()}
+
+
+def test_service_widgets_move_when_empties_shift(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w.set_cell_camera(0, None)  # пустые [0, 2, 3]
+    assert _placed(w) == {"position": 0, "graphs": 2, "summary": 3}
+    w.set_cell_camera(0, "sim1")  # пустые сдвигаются вперёд: [2, 3]
+    assert _placed(w) == {"position": 2, "graphs": 3, "summary": None}
+    assert w._service["position"].isVisible() and w._service["graphs"].isVisible()
+    w.close()

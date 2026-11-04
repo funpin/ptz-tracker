@@ -1110,13 +1110,14 @@ class MainWindow(QMainWindow):
     def _refresh_service_cells(self) -> None:
         empty = [i for i, c in enumerate(self.grid.cells) if c is None]
         want = {k: (empty[n] if n < len(empty) else None) for n, k in enumerate(KINDS)}
-        for kind, widget in self._service.items():
-            if self._service_slot[kind] != want[kind]:
-                if self._service_slot[kind] is not None:
-                    self.cells[self._service_slot[kind]].set_service(None)
-                if want[kind] is not None:
-                    self.cells[want[kind]].set_service(widget)
-                self._service_slot[kind] = want[kind]
+        moved = [k for k in self._service if self._service_slot[k] != want[k]]
+        for kind in moved:  # два прохода: снять все переезжающие, потом поставить — иначе соседний снимет новый
+            if self._service_slot[kind] is not None:
+                self.cells[self._service_slot[kind]].set_service(None)
+        for kind in moved:
+            if want[kind] is not None:
+                self.cells[want[kind]].set_service(self._service[kind])
+            self._service_slot[kind] = want[kind]
         if not any(w is not None for w in want.values()):
             return
         rows = []
