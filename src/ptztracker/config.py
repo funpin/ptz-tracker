@@ -50,7 +50,7 @@ class CameraConfig:
     composition: str = "waist_center"  # control.composition.COMPOSITIONS
     effort: float = 0.5  # 0 — мягко, 1 — резко
     atem_input: int = 0  # вход ATEM (1…), 0 — не задан
-    pad_number: int | None = None  # огоньки «номер игрока» на геймпаде (1…4); None — по имени или месту в списке
+    pad_number: int | None = None  # устарело: точки на геймпаде = номер клетки; читается из старых конфигов
     tracking: bool = True  # камеру можно вести слежением (иначе только ручное управление)
 
 

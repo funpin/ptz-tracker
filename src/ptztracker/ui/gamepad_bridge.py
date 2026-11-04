@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import threading
 import time
 from collections.abc import Callable
@@ -29,21 +28,6 @@ from ptztracker.gamepad.intents import PanTilt, Zoom
 from ptztracker.gamepad.mapping import Mapper
 
 log = logging.getLogger(__name__)
-
-
-def pad_number_for(cam, cameras: list) -> int:
-    """Номер камеры для огоньков игрока: pad_number, иначе цифры в конце имени («KZ_PTZ_2» → 2),
-    иначе место в списке (с 1). Всегда 1…4."""
-    n = getattr(cam, "pad_number", None)
-    if not isinstance(n, int) or isinstance(n, bool):
-        n = None
-    if n is None:
-        m = re.search(r"(\d+)\s*$", getattr(cam, "name", "") or "")
-        n = int(m.group(1)) if m else None
-    if n is None:
-        ids = [c.id for c in cameras]
-        n = ids.index(cam.id) + 1 if cam.id in ids else 1
-    return max(1, min(4, n))
 
 
 class _LockedMapper:

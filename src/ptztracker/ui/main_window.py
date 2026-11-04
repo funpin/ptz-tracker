@@ -36,7 +36,7 @@ from ptztracker.control.camera_model import DEFAULT_TABLE_ID
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
 from ptztracker.gamepad.device import SdlBackend
-from ptztracker.gamepad.feedback import RUMBLE_NOWHERE, RUMBLE_PRESET_STORED, PadStatus
+from ptztracker.gamepad.feedback import RUMBLE_NOWHERE, RUMBLE_PRESET_STORED, RUMBLE_TAKEN, PadStatus
 from ptztracker.gamepad.intents import (
     Composition,
     Disconnected,
@@ -58,6 +58,7 @@ from ptztracker.gamepad.intents import (
 )
 from ptztracker.multicam.analysis import CellState, allocate_analysis, tracking_refusal
 from ptztracker.multicam.grid import CameraGrid, Cell
+from ptztracker.multicam.pads import PadFeedback, PadMove, PadRouter
 from ptztracker.multicam.velocity import MixerSource
 from ptztracker.tally import atem_input_of
 from ptztracker.tally.atem import AtemTally
@@ -157,6 +158,12 @@ class MainWindow(QMainWindow):
         self._service_slot: dict[str, int | None] = dict.fromkeys(KINDS)
         self._loading = True  # пока строится окно: анализ и настройки не пересчитываем на каждую клетку
         self._srcs: dict[tuple[int, str], tuple[Cell, MixerSource]] = {}  # источники смесителя клетки (кэш)
+        self.pad_router = PadRouter()  # какой геймпад ведёт какую клетку
+        self.on_pad_feedback: Callable[[PadFeedback], None] | None = None  # точки/вибрация для геймпада n (и тесты)
+        self._bridge_pad: int | None = None  # номер в маршрутизаторе у физического геймпада (моста)
+        self._pad_vel: dict[int, tuple[float, float, float]] = {}  # что геймпад n держит физически
+        self._menu_by_pad = False  # меню Options открыто с геймпада — действует на его камеру
+        self._menu_host: VideoFrame | None = None
         self._speed_scale_saved: dict[int, float] = {}
         self._tag_shown: dict[int, TrackingView | None] = {}
         self._tracking_set: frozenset[int] = frozenset()
@@ -169,10 +176,8 @@ class MainWindow(QMainWindow):
         self.pad = GamepadBridge(gamepad_backend if gamepad_backend is not None else make_pad_backend(),
                                  menu_open=self._menu_is_open, parent=self)
         self.pad.intents.connect(self._on_pad_intents)
-        self.pad.connectionChanged.connect(lambda _info: self._sync_pad_player())
-        self.pad.connectionChanged.connect(lambda _info: self._update_pad_chip())
+        self.pad.connectionChanged.connect(self._on_pad_connection)
         self.pad.batteryChanged.connect(self._update_pad_chip)
-        self._pad_applied = (0.0, 0.0, 0.0)  # скорость геймпада в последней отправке
         self._last_waist = "waist_center"  # куда вернуться в пояс по R1 из «Роста»
 
         self.controls = ManualControls()
@@ -233,7 +238,7 @@ class MainWindow(QMainWindow):
 
         for c in self.cells:
             c.preview.setMinimumSize(240, 135)  # четыре превью в одном окне
-        self.camera_menu = CameraMenu(lambda: self.session, self.controls)
+        self.camera_menu = CameraMenu(self._menu_session, self.controls)
         self.camera_menu.openChanged.connect(self._on_menu_changed)
 
         side = QWidget()
@@ -475,6 +480,7 @@ class MainWindow(QMainWindow):
             if cid:
                 self._open_cell(slot, by_id[cid], analysis=slot in alloc)
         self._loading = False
+        self._pad_sync_slots()
         self._reallocate_analysis()
         self._select_effects()
         self._refresh_cell_choices()
@@ -485,9 +491,7 @@ class MainWindow(QMainWindow):
         if not 0 <= slot < GRID_SLOTS or slot == self.grid.selected:
             return
         self.camera_menu.close_menu()  # до переноса: ручной фокус получает ноль
-        self._pad_stop_motion()
-        self.pad.cancel_holds()
-        self.release_all_held()
+        self.release_all_held()  # геймпад ведёт свою камеру и выбором клетки не трогается
         old = self.selected_cell
         if old is not None:
             old.mixer.release("keyboard")
@@ -528,13 +532,37 @@ class MainWindow(QMainWindow):
     def _move_overlays(self, frame: VideoFrame) -> None:
         if self._overlay_host is frame:
             return
-        for w, corner in ((self.follow_panel.status_label, "bottom-left"), (self.camera_menu, "center")):
-            hidden = w.isHidden()
-            if self._overlay_host is not None:
-                self._overlay_host.remove_overlay(w)
-            frame.add_overlay(w, corner)
-            w.setVisible(not hidden)
+        w = self.follow_panel.status_label
+        hidden = w.isHidden()
+        if self._overlay_host is not None:
+            self._overlay_host.remove_overlay(w)
+        frame.add_overlay(w, "bottom-left")
+        w.setVisible(not hidden)
         self._overlay_host = frame
+        if not self._menu_by_pad:
+            self._menu_to(frame)
+
+    def _menu_to(self, frame: VideoFrame) -> None:
+        if self._menu_host is frame:
+            return
+        m = self.camera_menu
+        hidden = m.isHidden()
+        if self._menu_host is not None:
+            self._menu_host.remove_overlay(m)
+        frame.add_overlay(m, "center")
+        m.setVisible(not hidden)
+        self._menu_host = frame
+
+    def _menu_slot(self) -> int | None:
+        """Клетка, на которую действует меню Options: камера геймпада, если меню открыли с него."""
+        if self._menu_by_pad:
+            return self.pad_router.slot_of(self._bridge_pad) if self._bridge_pad is not None else None
+        return self.grid.selected
+
+    def _menu_session(self) -> CameraSession | None:
+        slot = self._menu_slot()
+        c = self.grid.cells[slot] if slot is not None else None
+        return c.session if c else None
 
     def _source(self, cell: Cell, name: str) -> MixerSource:
         """Источник смесителя клетки (один объект на клетку и имя: он помнит свои оси)."""
@@ -577,11 +605,9 @@ class MainWindow(QMainWindow):
         if other is not None and other != slot:  # до разборки клетки: отказ оставляет её как была
             raise ValueError(f"камера {cam.id} уже открыта в клетке {other + 1}")
         selected = slot == self.grid.selected
-        if selected:
+        if self.camera_menu.is_open and self._menu_slot() == slot:
             self.camera_menu.close_menu()  # до остановки сессии: ручной фокус получает ноль
-            # геймпад: старой камере — нули; новая поедет, только когда стики вернутся в центр
-            self._pad_stop_motion()
-            self.pad.cancel_holds()
+        if selected:
             self.release_all_held()
         d = self._cell_dialogs.pop(slot, None)
         if d is not None:
@@ -613,12 +639,13 @@ class MainWindow(QMainWindow):
                 opened = None
             if opened is not None:
                 s = opened.session
-                if s.limit_watch and selected:
-                    s.limit_watch.set_on_limit(self.pad.notify_limit)  # поток LimitWatch → сигнал моста
+                for p in self.pad_router.pads_on(slot):  # камеру в клетке сменили: новая поедет после центра стика
+                    self._pad_hold_on_new(p, opened)
                 cell.preview.set_source(s.frames)
                 cell.preview.camera_name = cam.name
                 if s.follower:
                     s.follower.on_change = self._follow_cb(s)  # поток слежения
+        self._pad_sync_slots()  # закрытая клетка переводит её геймпады по правилу Create
         self.agent_panel.refresh()  # строки панели «Агент»; смена камеры сняла флажки прежней (её шлюз закрыт)
         if self._loading:
             return
@@ -1142,7 +1169,7 @@ class MainWindow(QMainWindow):
         return KINDS[empty.index(slot)] if slot in empty and empty.index(slot) < len(KINDS) else None
 
     def _service_pads(self, slot: int) -> list[int]:
-        return []  # TODO(Task 10): номера геймпадов из PadRouter.pads_on(slot)
+        return self.pad_router.pads_on(slot)
 
     def _refresh_service_cells(self) -> None:
         empty = [i for i, c in enumerate(self.grid.cells) if c is None]
@@ -1411,22 +1438,25 @@ class MainWindow(QMainWindow):
         return bool(m and m.is_open)
 
     def _on_menu_changed(self, _open: bool) -> None:
+        if not _open and self._menu_by_pad:
+            self._menu_by_pad = False
+            sel = self.selected_cell
+            if sel is not None:
+                self._menu_to(self.cells[self.grid.selected].video_frame)
         self.pad.cancel_holds()
         self._sync_pad()
 
     def _apply_held(self) -> None:
-        """Скорость в смеситель выбранной клетки: клавиатура и геймпад — отдельные источники, сумма ±1 по оси."""
+        """Клавиатура — в смеситель выбранной клетки, геймпад — в смеситель его клетки; сумма источников ±1 по оси."""
         h = self._held
         kv = (KEY_PAN_SPEED * ((Qt.Key_Right in h) - (Qt.Key_Left in h)),
               KEY_PAN_SPEED * ((Qt.Key_Up in h) - (Qt.Key_Down in h)),
               KEY_ZOOM_SPEED * (bool(h & _ZOOM_IN_KEYS) - bool(h & _ZOOM_OUT_KEYS)))
-        pv = self.pad.velocity()
-        self._pad_applied = pv
-        kc, pc = self.selected_cell, self._pad_cell()
+        kc = self.selected_cell
         if kc is not None:
             self._send_velocity(self._source(kc, "keyboard"), kv)
-        if pc is not None:
-            self._send_velocity(self._source(pc, "pad1"), pv)
+        if self._bridge_pad is not None:
+            self.pad_velocity(self._bridge_pad, *self.pad.velocity())
 
     @staticmethod
     def _send_velocity(s, v: tuple[float, float, float]) -> None:
@@ -1436,12 +1466,135 @@ class MainWindow(QMainWindow):
     # --- геймпад ------------------------------------------------------
 
     def _pad_cell(self) -> Cell | None:
-        """Клетка, которой управляет геймпад. Единственное место выбора камеры для геймпада."""
-        return self.selected_cell
+        """Клетка, которой управляет физический геймпад (№ в маршрутизаторе). Единственное место выбора камеры для него."""
+        return self._cell_of_pad(self._bridge_pad)
+
+    def _cell_of_pad(self, pad: int | None) -> Cell | None:
+        slot = self.pad_router.slot_of(pad) if pad is not None else None
+        return self.grid.cells[slot] if slot is not None else None
 
     def _pad_session(self) -> CameraSession | None:
         c = self._pad_cell()
         return c.session if c else None
+
+    # --- точки входа геймпадов (поток Qt); мост зовёт их для геймпада № _bridge_pad ---
+
+    def pad_connected(self, bridge: bool = False) -> int:
+        """Геймпад подключился: берёт первую свободную камеру. Возвращает его номер 1–4.
+
+        `bridge` — это физический геймпад окна (мост): его вибрация и огоньки идут через `self.pad`."""
+        pad, moves, fb = self.pad_router.connect()
+        if bridge:
+            self._bridge_pad = pad  # до обработки движений: _pad_moved/_pad_feedback отличают «свой» геймпад
+        self._pad_apply(moves, fb)
+        self._refresh_service_cells()
+        return pad
+
+    def pad_disconnected(self, pad: int) -> None:
+        """Геймпад отключился: его камере — нули от его источника."""
+        self._pad_apply(self.pad_router.disconnect(pad), [])
+        self._pad_vel.pop(pad, None)
+        if pad == self._bridge_pad:
+            self._bridge_pad = None
+        self._refresh_service_cells()
+
+    def pad_velocity(self, pad: int, pan: float, tilt: float, zoom: float, focus: float = 0.0) -> None:
+        """Скорость геймпада — в смеситель его камеры. Нет камеры — игнорируется."""
+        self._pad_vel[pad] = (float(pan), float(tilt), float(zoom))
+        c = self._cell_of_pad(pad)
+        if c is not None:
+            c.mixer.set(f"pad{pad}", pan, tilt, zoom, focus)
+
+    def pad_stop(self, pad: int) -> None:
+        """Стоп с тачпада: только камера этого геймпада (все её источники), слежение и разрешения агенту."""
+        if pad == self._bridge_pad:
+            self.pad.reset_motion()  # автомат заперт до центра; смесителю — нули, чтобы он не защёлкнул источник
+            self.pad_velocity(pad, 0.0, 0.0, 0.0)
+        c = self._cell_of_pad(pad)
+        if c is None:
+            return
+        c.gate.revoke()
+        c.mixer.clear_all()
+        c.session.emergency_stop()
+        if c.session.limit_watch:
+            c.session.limit_watch.set_demand(0.0, 0.0, 0.0)
+        if self.camera_menu.is_open and self._menu_session() is c.session:
+            self.camera_menu.close_menu()  # сначала стоп, потом закрытие
+        self.agent_panel.refresh()
+
+    def pad_create(self, pad: int) -> None:
+        """Create: геймпад на следующую камеру по кругу."""
+        moves, fb = self.pad_router.create(pad)
+        self._pad_apply(moves, fb)
+        self._refresh_service_cells()
+
+    def pad_session(self, pad: int) -> CameraSession | None:
+        c = self._cell_of_pad(pad)
+        return c.session if c else None
+
+    def _pad_sync_slots(self) -> None:
+        """Открытые клетки изменились: маршрутизатор переводит геймпады закрытых."""
+        moves, fb = self.pad_router.set_slots([c is not None for c in self.grid.cells])
+        self._pad_apply(moves, fb)
+
+    def _pad_apply(self, moves: list[PadMove], fb: list[PadFeedback]) -> None:
+        for m in moves:
+            self._pad_moved(m)
+        for f in fb:
+            self._pad_feedback(f)
+        for i, cell in enumerate(self.cells):
+            cell.set_pads(len(self.pad_router.pads_on(i)))
+        if moves:
+            self._sync_pad_player()
+
+    def _pad_hold_on_new(self, pad: int, cell: Cell) -> None:
+        """Геймпад пришёл к камере со стиком не в центре: она поедет, только когда стик вернётся в центр."""
+        if pad == self._bridge_pad:  # физический: запирает автомат моста (нули в смеситель дойдут сами)
+            self.pad.reset_motion()
+            self.pad.cancel_holds()
+        elif any(self._pad_vel.get(pad, ())):
+            cell.mixer.latch(f"pad{pad}")
+
+    def _pad_moved(self, m: PadMove) -> None:
+        old = self.grid.cells[m.old_slot] if m.old_slot is not None else None
+        new = self.grid.cells[m.new_slot] if m.new_slot is not None else None
+        if old is not None:
+            old.mixer.release(f"pad{m.pad}")  # прежней камере — нули от этого геймпада; остальные источники едут
+            if old.session.limit_watch and m.pad == self._bridge_pad:
+                old.session.limit_watch.set_demand(0.0, 0.0, 0.0)
+        if self.camera_menu.is_open and self._menu_by_pad and m.pad == self._bridge_pad:
+            self.camera_menu.close_menu()
+        if new is not None:
+            self._pad_hold_on_new(m.pad, new)
+        elif m.pad == self._bridge_pad:
+            self.pad.reset_motion()
+
+    def _pad_feedback(self, f: PadFeedback) -> None:
+        if f.pad == self._bridge_pad:
+            if f.kind == "dots":
+                self.pad.set_player(f.value or None)
+            elif f.kind == "rumble_taken":
+                self.pad.rumble(RUMBLE_TAKEN)
+            elif f.kind == "rumble_nowhere":
+                self.pad.rumble(RUMBLE_NOWHERE)
+        if self.on_pad_feedback is not None:
+            self.on_pad_feedback(f)
+
+    def _on_pad_connection(self, info) -> None:
+        if info is not None:
+            if self._bridge_pad is None:
+                try:
+                    self.pad_connected(bridge=True)
+                except ValueError as e:
+                    log.warning("%s", e)
+        else:
+            self._pad_disconnect_bridge()
+        self._sync_pad_player()
+        self._update_pad_chip()
+
+    def _pad_disconnect_bridge(self) -> None:
+        if self._bridge_pad is not None:
+            self.pad_disconnected(self._bridge_pad)
 
     def _on_pad_intents(self, intents: list) -> None:
         """Намерения геймпада (поток Qt): те же пути, что клавиатура и кнопки окна."""
@@ -1453,22 +1606,26 @@ class MainWindow(QMainWindow):
                 # отключили: камера стоит — ничего не шлём; едет — нули. Слежение не трогаем
                 self.camera_menu.stop_focus()
                 self.pad.zero_velocity()
-                if any(self._pad_applied):
-                    moved = True
+                self._pad_disconnect_bridge()  # его камере уходят нули; номер освобождается
+                moved = False
             elif isinstance(it, Stop):
-                self.emergency_stop()
+                if self._bridge_pad is not None:
+                    self.pad_stop(self._bridge_pad)  # только камера этого геймпада; Esc останавливает все
                 moved = False
             elif isinstance(it, ToggleFollow):
-                self.toggle_follow()
+                if self._pad_on_selected():
+                    self.toggle_follow()
             elif isinstance(it, Composition):
-                self._pad_composition(it.d)
+                if self._pad_on_selected():
+                    self._pad_composition(it.d)
             elif isinstance(it, NextCamera):
-                self._pad_next_camera()
+                if self._bridge_pad is not None:
+                    self.pad_create(self._bridge_pad)
             elif isinstance(it, SaveMoment):
-                self.save_moment("геймпад")
+                self.save_moment("геймпад")  # запись — всего окна, не камеры
                 self.pad.rumble(RUMBLE_PRESET_STORED)
             elif isinstance(it, MenuOpen):
-                self.camera_menu.open()
+                self._pad_menu_open()
             elif isinstance(it, MenuNav):
                 self.camera_menu.nav(it.dx, it.dy)
             elif isinstance(it, MenuAccept):
@@ -1509,25 +1666,28 @@ class MainWindow(QMainWindow):
         elif isinstance(it, PushFocus):
             s.push_focus()
 
-    def _pad_next_camera(self) -> None:
-        """Create (коротко): следующая открытая клетка по кругу; открыта одна — «некуда»."""
-        opened = [i for i, c in enumerate(self.grid.cells) if c is not None]
-        if len(opened) < 2:
+    def _pad_on_selected(self) -> bool:
+        """Слежение и крупность живут в правой панели выбранной камеры: с геймпада — только когда он на ней."""
+        ok = self._pad_cell() is not None and self._pad_cell() is self.selected_cell
+        if not ok and self._pad_cell() is not None:
             self.pad.rumble(RUMBLE_NOWHERE)
+        return ok
+
+    def _pad_menu_open(self) -> None:
+        """Меню Options с геймпада: на его камере, поверх её видео."""
+        c = self._pad_cell()
+        if c is None or self.camera_menu.is_open:
             return
-        cur = self.grid.selected
-        nxt = next((i for i in opened if i > cur), opened[0])
-        self.select_slot(nxt)
-        self.pad.rumble(RUMBLE_NOWHERE)  # подтверждение; огоньки номера уже обновил select_slot
+        self._menu_by_pad = True
+        self._menu_to(self.cells[self.grid.cells.index(c)].video_frame)
+        self.camera_menu.open()
 
     def _pad_stop_motion(self) -> None:
-        """Геймпад больше ничего не держит: нули, автомат заперт до центра, опрос упора стоит."""
+        """Esc и закрытие окна: геймпад — нули и автомат заперт до центра, опрос упора стоит.
+        Смесители камер обнуляет grid.emergency_stop_all / close_all."""
         self.pad.reset_motion()
-        self._pad_applied = (0.0, 0.0, 0.0)
-        c = self._pad_cell()
-        if c is not None:
-            c.mixer.release("pad1")
-            if c.session.limit_watch:
+        for c in self.grid.cells:
+            if c is not None and c.session.limit_watch:
                 c.session.limit_watch.set_demand(0.0, 0.0, 0.0)
 
     def _pad_composition(self, d: int) -> None:
@@ -1597,7 +1757,7 @@ class MainWindow(QMainWindow):
             on_preview=state == "pvw",
             link_ok=bool(s and s.online),
             standby=getattr(s, "power", None) in ("standby", "switching"),
-            menu_open=self.camera_menu.is_open,
+            menu_open=self.camera_menu.is_open and self._menu_session() is s and s is not None,
             following=bool(f and f.enabled),
         ))
 

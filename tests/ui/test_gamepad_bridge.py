@@ -2,11 +2,10 @@
 
 import threading
 
-import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QApplication
 
-from ptztracker.config import CameraConfig, ConfigStore
+from ptztracker.config import ConfigStore
 from ptztracker.gamepad.device import RawPad
 from ptztracker.gamepad.feedback import (
     RUMBLE_FOLLOW_AUTO_OFF,
@@ -16,7 +15,6 @@ from ptztracker.gamepad.feedback import (
     RUMBLE_PRESET_STORED,
     PadStatus,
 )
-from ptztracker.ui.gamepad_bridge import pad_number_for
 from ptztracker.ui.main_window import MainWindow
 
 
@@ -425,30 +423,23 @@ def test_no_pygame_window_works(qtbot, tmp_path):
 def test_player_lights_follow_cell_number(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)
     qtbot.waitUntil(lambda: bool(b.of("player")), timeout=1000)
-    assert b.of("player")[-1] == (1,)  # огоньки = номер клетки выбранной камеры
-    w.select_slot(1)
+    assert b.of("player")[-1] == (1,)  # огоньки = номер клетки камеры геймпада
+    w.select_slot(1)  # выбор клетки геймпад не переводит
+    qtbot.wait(150)
+    assert b.of("player")[-1] == (1,)
+    w.pad_create(w._bridge_pad)
     qtbot.waitUntil(lambda: b.of("player")[-1] == (2,), timeout=1000)
     w.close()
 
 
-@pytest.mark.parametrize("name,pad,idx,want", [
-    ("KZ_PTZ_2", None, 0, 2), ("Сцена", None, 1, 2), ("Камера 7", None, 0, 4), ("Сцена", 3, 0, 3),
-    ("Сцена", 0, 0, 1), ("Сцена", True, 2, 3),
-])
-def test_pad_number_for(name, pad, idx, want):
-    cams = [CameraConfig(id=str(i), name="x", ip="10.0.0.12") for i in range(3)]
-    cams[idx] = CameraConfig(id=str(idx), name=name, ip="10.0.0.12", pad_number=pad)
-    assert pad_number_for(cams[idx], cams) == want
-
-
-def test_create_short_selects_next_camera_wraps(qtbot, tmp_path):
+def test_create_short_moves_pad_to_next_camera_wraps(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)  # в --sim открыты клетки 1 и 2
-    assert w.grid.selected == 0
+    assert w.pad_router.slot_of(w._bridge_pad) == 0
     press(qtbot, b, "create")
-    qtbot.waitUntil(lambda: w.grid.selected == 1, timeout=2000)
+    qtbot.waitUntil(lambda: w.pad_router.slot_of(w._bridge_pad) == 1, timeout=2000)
     press(qtbot, b, "create")
-    qtbot.waitUntil(lambda: w.grid.selected == 0, timeout=2000)
-    qtbot.waitUntil(lambda: b.of("rumble").count(RUMBLE_NOWHERE[0]) == 2, timeout=1000)  # подтверждение
+    qtbot.waitUntil(lambda: w.pad_router.slot_of(w._bridge_pad) == 0, timeout=2000)
+    assert w.grid.selected == 0  # выбранная клетка (клавиатура) не менялась
     w.close()
 
 

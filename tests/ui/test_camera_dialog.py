@@ -42,19 +42,6 @@ def test_new_camera_gets_unique_id(qtbot):
     assert d1.result_config().id != d2.result_config().id
 
 
-def test_dialog_pad_number(qtbot):
-    d = CameraDialog(CameraConfig(id="c", name="А", ip="10.0.0.7"))
-    qtbot.addWidget(d)
-    assert d.result_config().pad_number is None  # пусто — автоматически
-    d.pad_spin.setValue(3)
-    assert d.result_config().pad_number == 3
-    d2 = CameraDialog(CameraConfig(id="c", name="А", ip="10.0.0.7", pad_number=4))
-    qtbot.addWidget(d2)
-    assert d2.pad_spin.value() == 4
-    d2.pad_spin.setValue(d2.pad_spin.minimum())
-    assert d2.result_config().pad_number is None
-
-
 def test_edit_preserves_other_fields(qtbot):
     cfg = CameraConfig(id="c", name="А", ip="10.0.0.7", calibration={"k": 1}, speed_scale={"pan": 1.2},
                        composition="full", effort=0.9, stream="mjpeg_2")

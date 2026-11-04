@@ -46,6 +46,12 @@ class VelocityMixer:
         self._latched.discard(source)
         self._flush()
 
+    def latch(self, source: str) -> None:
+        """Источник держат с прежней камеры: ненулевые значения игнорируются, пока не придут нули."""
+        self._values.pop(source, None)
+        self._latched.add(source)
+        self._flush()
+
     def clear_all(self) -> None:
         """Всё в ноль без отправки (стоп уже ушёл); удерживавшие источники защёлкнуты до нулей."""
         self._latched.update(n for n, v in self._values.items() if any(v))
