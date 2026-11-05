@@ -155,7 +155,7 @@ class PresetRow(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QScrollArea.NoFrame)
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.setFixedHeight(CARD_H + 12)
+        self.scroll.setFixedHeight(CARD_H + 12)  # карточки + полоса прокрутки 6 px
         lay.addWidget(self.scroll, 1)
 
     def set(self, row: DrawerRow, selected: bool) -> None:
@@ -223,7 +223,7 @@ class PresetsDrawer(QWidget):
     renameRequested = Signal(int, int)
     eraseRequested = Signal(int, int)
     rowsShownChanged = Signal(int)
-    ROW_H = CARD_H + 20
+    ROW_H = CARD_H + 20  # строка: карточки, полоса прокрутки, отступы
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)

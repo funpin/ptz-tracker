@@ -111,6 +111,11 @@ QScrollBar::handle:vertical {{ background: {C.RAISED_HI}; border-radius: 4px; mi
 QScrollBar::handle:vertical:hover {{ background: {C.LINE}; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+QScrollBar:horizontal {{ height: 6px; background: transparent; margin: 0; }}
+QScrollBar::handle:horizontal {{ background: {C.RAISED_HI}; border-radius: 3px; min-width: 24px; }}
+QScrollBar::handle:horizontal:hover {{ background: {C.LINE}; }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: transparent; }}
 
 QMenuBar {{ background: {C.SURFACE}; }}
 QMenuBar::item {{ background: transparent; padding: 4px {SP[2]}px; }}
