@@ -419,3 +419,18 @@ def test_osd_on_air_asks_first(qtbot, monkeypatch):
     m.open()
     m.click_item("osd")
     assert asked and ("osd", True) not in s.calls and not m.osd_mode
+
+
+def test_quick_menu_lights_panel_row(qtbot):
+    """Крутите gain из быстрых настроек (M / геймпад) — на панели загорается строка Gain."""
+    s = FullSession()
+    s.image = ImageState(gain=P.GAIN_AUTO, wb=0)
+    m, c = build(qtbot, s)
+    m.open()
+    m.nav(0, 1)  # wb
+    m.nav(1, 0)
+    assert c.rows["wb"].active
+    m.nav(0, 1)
+    m.nav(0, 1)  # gain
+    m.accept()
+    assert c.rows["gain"].active

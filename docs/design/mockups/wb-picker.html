@@ -1,0 +1,41 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Выбор баланса белого</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A}
+*{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:22px 26px 60px;font-size:13px}
+h1{font-size:22px;margin:0 0 6px}p.sub{color:var(--dim);font-size:14px;line-height:1.5;max-width:1000px;margin:0 0 18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:22px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.card h3{margin:0 0 4px;font-size:15px}.card .d{color:var(--dim);font-size:12.5px;line-height:1.45;margin:0 0 14px;min-height:54px}
+.row{display:flex;align-items:center;gap:8px;height:30px;margin:6px 0}
+.lab{width:52px;color:var(--dim)}
+.sl{flex:1;height:3px;background:var(--raised-hi);border-radius:2px;position:relative}.sl s{position:absolute;left:0;top:0;bottom:0;width:45%;background:var(--grey);border-radius:2px}
+.sl u{position:absolute;top:-7px;left:42%;width:18px;height:16px;border-radius:6px;background:var(--raised-hi);border:1px solid var(--grey)}
+.btn{height:24px;padding:0 10px;border-radius:8px;background:var(--raised);border:1px solid var(--line);display:inline-flex;align-items:center;gap:6px;font-weight:500}
+.old{height:34px;width:80px;border-radius:8px;background:var(--raised);border:1px solid var(--line);display:flex;align-items:center;padding-left:10px;position:relative}
+.old:after{content:"▾";position:absolute;right:0;top:0;bottom:0;width:22px;border-left:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.chev{width:10px;height:10px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;height:24px}
+.seg span{padding:0 7px;display:flex;align-items:center;color:var(--dim);font-size:12px;border-right:1px solid var(--line)}.seg span:last-child{border:0}
+.seg span.on{background:var(--white);color:var(--bg);font-weight:600}
+.menu{margin:4px 0 0 60px;width:150px;background:var(--raised);border:1px solid var(--line);border-radius:8px;padding:4px;font-size:12.5px}
+.menu div{padding:4px 8px;border-radius:5px;color:var(--dim)}.menu div.on{background:var(--raised-hi);color:var(--white)}.menu div.on:before{content:"✓ ";color:var(--lime)}
+.choice{display:inline-flex;margin:18px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:var(--dim)}.choice.selected{border-color:var(--lime);color:var(--lime)}
+.tag{font-size:10px;font-weight:700;color:var(--bg);background:var(--lime);padding:1px 6px;border-radius:4px;margin-left:6px}
+</style></head><body>
+<h1>Баланс белого: выбор режима</h1>
+<p class="sub">Сейчас — большое поле со стрелкой в отдельном отсеке; на Windows этот отсек рисуется системным. Ниже — две замены в той же строке «WB». Режимов семь: ATW, AWB A, AWB B, ATW 2, 3200K, 5600K, VAR. Ползунок температуры работает только в VAR.</p>
+<div class="grid">
+<div class="card"><h3>Сейчас</h3><p class="d">Высота 34 px, отсек со стрелкой и разделителем.</p>
+<div class="row"><span class="lab">WB</span><span class="old">ATW</span><span class="sl"><s></s><u></u></span></div></div>
+
+<div class="card"><h3>А · Кнопка-чип <span class="tag">советую</span></h3><p class="d">Как «Разовый»: 24 px, текст и тонкая галочка ⌄ без отсека. Клик — короткий список с ✓. Так же станут все выпадающие списки в программе.</p>
+<div class="row"><span class="lab">WB</span><span class="btn">ATW <svg class="chev" viewBox="0 0 10 10"><path d="M2 3.5 5 6.5 8 3.5" stroke="#B4B8BD" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="sl"><s></s><u></u></span></div>
+<div class="menu"><div class="on">ATW</div><div>AWB A</div><div>AWB B</div><div>ATW 2</div><div>3200K</div><div>5600K</div><div>VAR — вручную</div></div></div>
+
+<div class="card"><h3>Б · Переключатель</h3><p class="d">Частые режимы видны сразу, редкие — в «…». Нагляднее, но занимает всю строку: ползунок температуры уходит на вторую строку при VAR.</p>
+<div class="row"><span class="lab">WB</span><span class="seg"><span class="on">ATW</span><span>3200K</span><span>5600K</span><span>VAR</span><span>…</span></span></div>
+<div class="row" style="opacity:.45"><span class="lab"></span><span class="sl"><s></s><u></u></span></div></div>
+</div>
+<div><span class="choice" data-choice="a">А · Кнопка-чип</span><span class="choice" data-choice="b">Б · Переключатель</span></div>
+</body></html>

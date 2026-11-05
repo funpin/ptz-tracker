@@ -1,0 +1,58 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Строки правой панели</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A;--red:#EF4444}
+*{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:20px 22px;font-size:13px}
+h1{font-size:20px;margin:0 0 4px}p.sub{color:var(--dim);font-size:13.5px;line-height:1.5;max-width:1150px;margin:0 0 14px}
+.grid{display:grid;grid-template-columns:repeat(3,350px);gap:20px}
+.v h3{margin:0 0 2px;font-size:15px}.v .d{color:var(--dim);font-size:12.5px;line-height:1.45;margin:0 0 10px;min-height:56px}
+.panel{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.sh{display:flex;justify-content:space-between;align-items:baseline;margin:8px 0 4px}.sh b{font-size:13px}.sh span{color:var(--faint);font-size:11px}
+.r{display:flex;align-items:center;gap:8px;height:32px;padding:0 8px;margin:0 -8px;border-radius:6px;position:relative}
+.l{width:46px;color:var(--dim)}
+.cb{width:14px;height:14px;border-radius:4px;border:1px solid var(--grey)}.cb.on{background:var(--lime);border-color:var(--lime)}
+.a{color:var(--white);font-size:12.5px}
+.sl{flex:1;height:3px;background:var(--raised-hi);border-radius:2px;position:relative}.sl s{position:absolute;left:0;top:0;bottom:0;background:var(--lime);border-radius:2px}
+.sl s.off{background:var(--grey)}.sl u{position:absolute;top:-7px;width:18px;height:16px;border-radius:6px;background:var(--faint)}.sl u.off{background:var(--raised-hi);border:1px solid var(--grey)}
+.val{color:var(--white);font-size:12px;min-width:34px;text-align:right;font-variant-numeric:tabular-nums}
+.btn{height:24px;padding:0 9px;border-radius:8px;background:var(--raised);border:1px solid var(--line);display:inline-flex;align-items:center;font-size:12px}
+.stop{margin-top:10px;height:40px;border:1px solid var(--red);border-radius:8px;color:var(--red);font-weight:700;display:flex;align-items:center;justify-content:center}
+/* A zebra */
+.zebra .r:nth-child(even of .r){background:rgba(245,245,242,.035)}
+.zebra .r.hot{background:rgba(245,245,242,.09)}
+/* B cards */
+.cards .grp{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:0 8px;margin:4px 0 6px}
+.cards .r{margin:0;border-radius:0;border-bottom:1px solid var(--line);padding:0 2px}.cards .r:last-child{border-bottom:0}
+.cards .r.hot{background:rgba(245,245,242,.05)}
+/* C active bar */
+.bar .r.hot{background:rgba(183,243,74,.07)}.bar .r.hot:before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--lime)}
+.bar .r.hot .l{color:var(--white);font-weight:600}
+.hint{font-size:11px;color:var(--faint);margin-top:6px}
+.choice{display:inline-flex;margin:16px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:var(--dim)}.choice.selected{border-color:var(--lime);color:var(--lime)}
+.tag{font-size:10px;font-weight:700;color:var(--bg);background:var(--lime);padding:1px 6px;border-radius:4px;margin-left:6px}
+</style></head><body>
+<h1>Строки правой панели: видно, что дёргаешь</h1>
+<p class="sub">Во всех трёх вариантах строка, которую сейчас крутят (мышью, клавишей или геймпадом), подсвечивается — на снимках это «Gain». Отличаются фоном остальных строк.</p>
+<div class="grid">
+<div class="v"><h3>А · Зебра</h3><p class="d">Через строку — чуть светлее фон, как в Excel. Глаз сразу ведёт по строке от подписи до значения.</p><div class="panel zebra"><div class="sh"><b>Изображение</b><span>не выключает слежение</span></div>
+<div class="r"><span class="l">Ирис</span><span class="cb on"></span><span class="a">Авто</span><span class="sl"><s class="off" style="width:30%"></s><u class="off" style="left:28%"></u></span><span class="val">F4.0</span></div>
+<div class="r hot"><span class="l">Gain</span><span class="cb"></span><span class="a">Авто</span><span class="sl"><s style="width:40%"></s><u style="left:38%"></u></span><span class="val">6 dB</span></div>
+<div class="r"><span class="l">Фокус</span><span class="btn">Разовый</span><span class="cb on" style="margin-left:6px"></span><span class="a">AF</span></div>
+<div class="r"><span class="l"></span><span class="btn">Ближе</span><span class="sl"><s style="width:0"></s><u style="left:46%"></u></span><span class="btn">Дальше</span></div>
+<div class="r"><span class="l">WB</span><span class="btn">ATW ⌄</span><span class="sl"><s class="off" style="width:45%"></s><u class="off" style="left:42%"></u></span><span class="val">5600K</span></div>
+<div class="stop">СТОП КАМЕРЫ</div></div></div><div class="v"><h3>Б · Карточки</h3><p class="d">Каждый раздел — своя карточка, строки разделены тонкими линиями. Самый «табличный» вид, но чуть теснее.</p><div class="panel cards"><div class="sh"><b>Изображение</b><span>не выключает слежение</span></div>
+<div class="grp"><div class="r"><span class="l">Ирис</span><span class="cb on"></span><span class="a">Авто</span><span class="sl"><s class="off" style="width:30%"></s><u class="off" style="left:28%"></u></span><span class="val">F4.0</span></div>
+<div class="r hot"><span class="l">Gain</span><span class="cb"></span><span class="a">Авто</span><span class="sl"><s style="width:40%"></s><u style="left:38%"></u></span><span class="val">6 dB</span></div>
+<div class="r"><span class="l">Фокус</span><span class="btn">Разовый</span><span class="cb on" style="margin-left:6px"></span><span class="a">AF</span></div>
+<div class="r"><span class="l"></span><span class="btn">Ближе</span><span class="sl"><s style="width:0"></s><u style="left:46%"></u></span><span class="btn">Дальше</span></div>
+<div class="r"><span class="l">WB</span><span class="btn">ATW ⌄</span><span class="sl"><s class="off" style="width:45%"></s><u class="off" style="left:42%"></u></span><span class="val">5600K</span></div></div>
+<div class="stop">СТОП КАМЕРЫ</div></div></div><div class="v"><h3>В · Полоска активной строки <span class=tag>советую</span></h3><p class="d">Фон чистый, а строка, которую крутят, получает лаймовую полоску слева и подсветку на 1–2 с. Плюс справа у каждой строки — текущее значение.</p><div class="panel bar"><div class="sh"><b>Изображение</b><span>не выключает слежение</span></div>
+<div class="r"><span class="l">Ирис</span><span class="cb on"></span><span class="a">Авто</span><span class="sl"><s class="off" style="width:30%"></s><u class="off" style="left:28%"></u></span><span class="val">F4.0</span></div>
+<div class="r hot"><span class="l">Gain</span><span class="cb"></span><span class="a">Авто</span><span class="sl"><s style="width:40%"></s><u style="left:38%"></u></span><span class="val">6 dB</span></div>
+<div class="r"><span class="l">Фокус</span><span class="btn">Разовый</span><span class="cb on" style="margin-left:6px"></span><span class="a">AF</span></div>
+<div class="r"><span class="l"></span><span class="btn">Ближе</span><span class="sl"><s style="width:0"></s><u style="left:46%"></u></span><span class="btn">Дальше</span></div>
+<div class="r"><span class="l">WB</span><span class="btn">ATW ⌄</span><span class="sl"><s class="off" style="width:45%"></s><u class="off" style="left:42%"></u></span><span class="val">5600K</span></div>
+<div class="stop">СТОП КАМЕРЫ</div></div></div>
+</div>
+<div><span class="choice" data-choice="a">А · Зебра</span><span class="choice" data-choice="b">Б · Карточки</span><span class="choice" data-choice="c">В · Полоска активной строки</span></div>
+</body></html>

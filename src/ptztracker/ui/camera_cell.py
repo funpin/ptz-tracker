@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 from ptztracker.ui.icons import icon
 from ptztracker.ui.preview import PreviewWidget
-from ptztracker.ui.theme import FS_CAPTION, R_PANEL, R_TAG, SP, C, _rgba
+from ptztracker.ui.theme import CHEVRON, FS_CAPTION, R_PANEL, R_TAG, SP, C, _rgba
 from ptztracker.ui.widgets import PadBadge, PowerOverlay, StateTag, StatusPill, VideoFrame
 
 MAX_PADS = 4
@@ -76,7 +76,10 @@ class CameraCell(QFrame):
             f"QComboBox {{ background: transparent; border: 1px solid transparent; font-weight: 600;"
             f" min-height: 26px; padding: 0 {SP[1]}px; border-radius: 7px; }}"
             f"QComboBox:hover {{ background: {C.RAISED}; }}"
-            "QComboBox::drop-down { border: none; width: 14px; }")
+            "QComboBox::drop-down { border: none; width: 14px; }"
+            # шапка чистая, как раньше; галочка ⌄ — только при наведении, что тут можно выбрать камеру
+            "QComboBox::down-arrow { image: none; }"
+            f"QComboBox:hover::down-arrow {{ image: url({CHEVRON}); width: 10px; height: 10px; }}")
         self.tally_tag = StateTag("pgm")
         self.state_tag = StateTag("off")
         self.sim_tag = StateTag("sim")

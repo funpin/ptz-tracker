@@ -208,3 +208,40 @@ def test_windows_full_hd_maximized_with_presets(qtbot, tmp_path, monkeypatch):
     assert w.side_scroll.viewport().height() - w.side_scroll.widget().sizeHint().height() >= 40, _heights(w)
     assert w.cells[0].video_frame.height() >= 300
     w.close()
+
+
+def test_wb_picker_same_size_as_one_shot_button(qtbot, tmp_path):
+    app = QApplication.instance()
+    old_style, old_pal = app.styleSheet(), app.palette()
+    apply_dark_theme(app)
+    w = make(qtbot, tmp_path)
+    try:
+        w.resize(1640, 850)
+        qtbot.wait(300)
+        c = w.controls
+        assert abs(c.wb_combo.height() - c.push_af.height()) <= 1
+        assert c.wb_combo.width() <= 96  # чип по тексту, а не во всю ширину
+    finally:
+        w.close()
+        app.setStyleSheet(old_style)
+        app.setPalette(old_pal)
+
+
+def test_slider_handles_not_clipped_in_window(qtbot, tmp_path):
+    """В окне ползунок был 15 px — ручку 17 px срезало сверху и снизу (замечание пользователя 2026-11-05)."""
+    app = QApplication.instance()
+    old_style, old_pal = app.styleSheet(), app.palette()
+    apply_dark_theme(app)
+    w = make(qtbot, tmp_path)
+    try:
+        w.resize(1640, 850)
+        qtbot.wait(300)
+        c = w.controls
+        for sl in (c.gain_slider, c.iris_slider, c.sens_slider, c.ctemp_slider, c.focus_slider,
+                   w.follow_panel.size_slider):
+            assert sl.height() >= 20, (type(sl).__name__, sl.height())
+        assert w.side_scroll.verticalScrollBar().maximum() == 0, _heights(w)
+    finally:
+        w.close()
+        app.setStyleSheet(old_style)
+        app.setPalette(old_pal)

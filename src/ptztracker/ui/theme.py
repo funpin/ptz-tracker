@@ -58,6 +58,10 @@ def _rgba(hex: str, alpha: float) -> str:
     return f"rgba({c.red()}, {c.green()}, {c.blue()}, {alpha})"
 
 
+# галочка выпадающего списка: свой рисунок вместо системного отсека (на Windows он выбивался из стиля)
+CHEVRON = (Path(__file__).resolve().parent / "icons" / "chevron-down.svg").as_posix()
+
+
 def stylesheet() -> str:
     """Общий QSS. Цвета только из C."""
     return f"""
@@ -101,6 +105,11 @@ QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {{ background: {C.RAISED};
 QComboBox:hover, QLineEdit:hover, QSpinBox:hover {{ background: {C.RAISED_HI}; }}
 QComboBox:focus, QLineEdit:focus, QSpinBox:focus {{ border-color: {C.TEXT_DIM}; }}
 QComboBox:disabled, QLineEdit:disabled, QSpinBox:disabled {{ color: {C.TEXT_FAINT}; }}
+QComboBox {{ padding-right: {SP[3] + SP[1]}px; }}
+QComboBox::drop-down {{ border: none; width: {SP[3]}px; subcontrol-origin: padding;
+    subcontrol-position: right center; }}
+QComboBox::down-arrow {{ image: url({CHEVRON}); width: 10px; height: 10px; }}
+QComboBox::down-arrow:disabled {{ image: none; }}
 QComboBox QAbstractItemView {{ background: {C.RAISED}; border: 1px solid {C.LINE};
     selection-background-color: {C.RAISED_HI}; outline: 0; }}
 
@@ -110,15 +119,22 @@ QCheckBox::indicator {{ width: 15px; height: 15px; border: 1px solid {C.GREY};
     border-radius: 4px; background: transparent; }}
 QCheckBox::indicator:checked {{ background: {C.LIME}; border-color: {C.LIME}; }}
 
+QSlider:horizontal {{ min-height: 20px; }}  /* ручка 17 px — ползунок ниже срезал бы её (Mac) */
+QSlider:vertical {{ min-width: 20px; }}
 QSlider::groove:horizontal {{ height: 3px; background: {C.RAISED_HI}; border-radius: 1px; }}
 QSlider::sub-page:horizontal {{ background: {C.LIME}; border-radius: 1px; }}
-QSlider::handle:horizontal {{ width: 16px; height: 16px; margin: -7px 0;
-    border-radius: 8px; background: {C.TEXT}; }}
-QSlider::handle:horizontal:disabled {{ background: {C.TEXT_FAINT}; }}
+QSlider::sub-page:horizontal:disabled {{ background: {C.GREY}; }}
+QSlider::handle:horizontal {{ width: 18px; height: 16px; margin: -7px 0;
+    border-radius: 6px; background: {C.TEXT_FAINT}; }}
+QSlider::handle:horizontal:hover {{ background: {C.TEXT_DIM}; }}
+QSlider::handle:horizontal:disabled {{ background: {C.RAISED_HI}; border: 1px solid {C.GREY}; width: 16px; height: 14px; }}
 QSlider::groove:vertical {{ width: 4px; background: {C.RAISED_HI}; border-radius: 2px; }}
-QSlider::handle:vertical {{ width: 16px; height: 16px; margin: 0 -6px;
-    border-radius: 8px; background: {C.TEXT}; }}
-QSlider::handle:vertical:disabled {{ background: {C.TEXT_FAINT}; }}
+QSlider::add-page:vertical {{ background: {C.LIME}; border-radius: 2px; }}
+QSlider::add-page:vertical:disabled {{ background: {C.GREY}; }}
+QSlider::handle:vertical {{ width: 18px; height: 16px; margin: 0 -7px;
+    border-radius: 6px; background: {C.TEXT_FAINT}; }}
+QSlider::handle:vertical:hover {{ background: {C.TEXT_DIM}; }}
+QSlider::handle:vertical:disabled {{ background: {C.RAISED_HI}; border: 1px solid {C.GREY}; width: 16px; height: 14px; }}
 
 QScrollBar:vertical {{ width: 8px; background: transparent; margin: 0; }}
 QScrollBar::handle:vertical {{ background: {C.RAISED_HI}; border-radius: 4px; min-height: 24px; }}

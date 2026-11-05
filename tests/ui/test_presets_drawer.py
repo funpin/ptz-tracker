@@ -180,3 +180,31 @@ def test_preset_speed_slider(qtbot, tmp_path):
     sl.sliderReleased.emit()
     qtbot.waitUntil(lambda: "#UPVS999" in w.session.sim.received, timeout=2000)
     w.close()
+
+
+def test_card_strip_has_no_dark_box(qtbot):
+    """Между карточками и вокруг них — фон строки, а не тёмный прямоугольник области прокрутки."""
+    from ptztracker.ui.theme import apply_dark_theme
+
+    app = QApplication.instance()
+    old_style, old_pal = app.styleSheet(), app.palette()
+    apply_dark_theme(app)
+    try:
+        d = PresetsDrawer()
+        qtbot.addWidget(d)
+        d.resize(1500, 200)
+        d.set_rows(rows())
+        d.show()
+        qtbot.wait(100)
+        row = d.row_widgets[0]
+        img = d.grab().toImage()
+        c1, c2 = row.cards[0], row.cards[1]
+        y = c1.mapTo(d, QPoint(0, c1.height() // 2)).y()
+        gap_x = (c1.mapTo(d, QPoint(c1.width(), 0)).x() + c2.mapTo(d, QPoint(0, 0)).x()) // 2
+        head_x = row.mapTo(d, QPoint(2, 0)).x()  # фон строки у её левого края
+        dpr = img.devicePixelRatio()
+        px = lambda x: img.pixelColor(round(x * dpr), round(y * dpr)).name()  # noqa: E731
+        assert px(gap_x) == px(head_x)
+    finally:
+        app.setStyleSheet(old_style)
+        app.setPalette(old_pal)

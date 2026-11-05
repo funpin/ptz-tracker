@@ -24,7 +24,7 @@ OUT = ROOT / "docs" / "assets" / "overview.png"
 
 
 def callouts(w: MainWindow) -> list[tuple[QWidget, str]]:
-    """(виджет, где ставить номер: tl — левый верхний угол, tr — правый верхний) по порядку списка README."""
+    """(виджет, где ставить номер: tl — левый верхний угол, up — над ним, на пустом месте) по порядку списка README."""
     cell = w.cells[0]
     return [
         (w.track_btn, "tl"),  # 1 TRACK и квадратики камер
@@ -37,8 +37,8 @@ def callouts(w: MainWindow) -> list[tuple[QWidget, str]]:
         (w._service["summary"], "tl"),  # 8 сводка
         (w._service["position"], "tl"),  # 9 положение камер
         (w.follow_panel.comp_buttons["waist_center"], "tl"),  # 10 кадр
-        (w.controls.joystick, "tl"),  # 11 стик, зум, чувствительность
-        (w.controls.iris_slider, "tl"),  # 12 изображение
+        (w.controls.camera_header, "up"),  # 11 стик, зум, чувствительность
+        (w.controls.image_header, "up"),  # 12 изображение
         (w.controls.stop_btn, "tl"),  # 13 стоп
         (w.presets_drawer, "tl"),  # 14 пресеты
         (w.help_btn, "tl"),  # 15 справка
@@ -53,11 +53,13 @@ def draw_numbers(img, w: MainWindow, scale: float) -> None:
     f.setBold(True)
     p.setFont(f)
     r = 11 * scale
-    for i, (wd, _corner) in enumerate(callouts(w), start=1):
+    for i, (wd, corner) in enumerate(callouts(w), start=1):
         if not wd.isVisible():
             continue
         tl = wd.mapTo(w, QPoint(0, 0))
         c = QPointF(tl.x() * scale - r * 0.2, tl.y() * scale - r * 0.2)
+        if corner == "up":  # заголовок раздела: номер над первой буквой, а не поверх неё
+            c = QPointF(tl.x() * scale + r, tl.y() * scale - r * 1.2)
         c = QPointF(max(r + 2, c.x()), max(r + 2, c.y()))
         p.setPen(QPen(qcolor(C.BG), 3 * scale))
         p.setBrush(qcolor(C.LIME))
@@ -89,6 +91,8 @@ def main() -> int:
         w._update_status()
 
     def shot() -> None:
+        w.statusBar().clearMessage()  # служебные сообщения запуска (например, занятый порт API) — не для README
+        app.processEvents()
         img = w.grab().toImage()
         # QPainter на картинке Retina уже рисует в логических точках окна
         draw_numbers(img, w, img.width() / img.devicePixelRatio() / w.width())

@@ -312,6 +312,7 @@ class CameraMenu(QFrame):
         k = self._cursor
         if not self._enabled(k):
             return
+        self._light(k)
         if k == "focus":
             if not self._controls.af_check.isChecked():
                 self._focus_moving = True
@@ -338,6 +339,7 @@ class CameraMenu(QFrame):
             return
         k = self._cursor
         if self._enabled(k):
+            self._light(k)
             if k == "osd":
                 self._enter_osd()
             elif k == "wb":
@@ -347,6 +349,12 @@ class CameraMenu(QFrame):
             elif k not in ("ctemp", "synchro", "pedestal"):
                 self._toggle(k)
         self._render()
+
+    def _light(self, key: str) -> None:
+        """На правой панели загорается строка того, что меняют из меню (редких настроек там нет)."""
+        light = getattr(self._controls, "light_row", None)
+        if light is not None:
+            light("wb" if key == "ctemp" else key)
 
     def click_item(self, key: str) -> None:
         if self.is_open and self._enabled(key):

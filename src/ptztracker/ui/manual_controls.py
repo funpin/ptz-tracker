@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QApplication,
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -22,7 +23,7 @@ from ptztracker.camera.session import CameraSession, ImageState
 from ptztracker.control.manual_curve import DEFAULT_SENS, SENS_MAX, SENS_MIN, clamp_sens, shape
 from ptztracker.ui.camera_menu import WHY
 from ptztracker.ui.joystick import JoystickWidget
-from ptztracker.ui.theme import FS_CAPTION, H_STOP, SP, C
+from ptztracker.ui.theme import FS_CAPTION, H_STOP, SP, C, qcolor
 from ptztracker.ui.widgets import KeyButton, SectionHeader, keycap_width, paint_keycap
 
 PRESET_SIZE = 32
@@ -30,7 +31,61 @@ ZOOM_ROCKER_H = 112  # вместе с клавишами и подписями 
 STICK_MIN, STICK_MAX = 176, 260  # стик: в окне 1640×850 и на высоком экране (MacBook Pro 16 во весь экран)
 LABEL_W = 52  # колонка подписей «Изображения» (спека «Всё влезает и стоит ровно»)
 H_SMALL = 28  # кнопки фокуса
+ROW_LIT_S = 1.5  # столько горит строка после действия оператора (мышь, клавиши, быстрые настройки)
 TOUCH_HOLD_S = 1.5  # столько опрос камеры не перебивает ползунок, который оператор только что тронул
+
+
+class PanelRow(QWidget):
+    """Строка панели как в таблице: через одну — чуть светлее фон; строка, которую оператор сейчас крутит,
+    горит — лаймовая полоска слева и светлее фон (пользователь 2026-11-05, вариант «зебра + полоска»)."""
+
+    PAD = SP[0]
+
+    def __init__(self, content, shaded: bool, label: QLabel | None = None):
+        super().__init__()
+        self.shaded = shaded
+        self.active = False
+        self._label = label
+        # общий стиль красит каждый виджет в фон окна — внутри строки фон должен быть её собственный
+        self.setStyleSheet("QLabel, QCheckBox, QSlider { background: transparent; }")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(self.PAD + 2, self.PAD, self.PAD, self.PAD)
+        lay.setSpacing(SP[0])
+        for part in content if isinstance(content, (list, tuple)) else (content,):
+            if isinstance(part, QWidget):
+                lay.addWidget(part)
+            else:
+                lay.addLayout(part)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(lambda: self._set_active(False))
+
+    def flash(self) -> None:
+        self._set_active(True)
+        self._timer.start(int(ROW_LIT_S * 1000))
+
+    def _set_active(self, on: bool) -> None:
+        if on == self.active:
+            return
+        self.active = on
+        if self._label is not None:
+            self._label.setStyleSheet(f"color: {C.TEXT if on else C.TEXT_DIM};")
+        self.update()
+
+    def paintEvent(self, e):  # noqa: N802
+        if not (self.shaded or self.active):
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        bg = qcolor(C.LIME if self.active else C.TEXT)  # горящая строка — с лаймовым оттенком, как в макете
+        bg.setAlphaF(0.08 if self.active else 0.035)
+        p.setBrush(bg)
+        p.drawRoundedRect(QRectF(self.rect()), 6, 6)
+        if self.active:
+            p.setBrush(qcolor(C.LIME))
+            p.drawRoundedRect(QRectF(0, 6, 3, self.height() - 12), 1.5, 1.5)
+        p.end()
 
 
 class SpringSlider(QSlider):
@@ -206,6 +261,11 @@ class ManualControls(QWidget):
         for mode, label in P.WB_MODES.items():
             self.wb_combo.addItem(label, mode)
         self.wb_combo.setToolTip("Баланс белого: ATW — авто, AWB A/B — запомненные, 3200K/5600K, VAR — вручную")
+        # баланс белого — чип размером с «Разовый»: текст и галочка, без широкого поля
+        self.wb_combo.setStyleSheet(f"QComboBox {{ min-height: {H_SMALL - 4}px; max-height: {H_SMALL - 4}px;"
+                                    f" padding: 0 {SP[3] + SP[0]}px 0 {SP[1] + 2}px; font-size: {FS_CAPTION}px; }}")
+        self.wb_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.wb_combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.ctemp_slider = QSlider(Qt.Horizontal)
         self.ctemp_slider.setRange(0, P.COLOR_TEMP_MAX)
         self.ctemp_slider.setEnabled(False)
@@ -242,18 +302,42 @@ class ManualControls(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(SP[1])
         lay.addStretch(1)
-        lay.addWidget(SectionHeader("Камера", "движение выключает слежение"))
+        self.camera_header = SectionHeader("Камера", "движение выключает слежение")
+        lay.addWidget(self.camera_header)
         lay.addLayout(stick_row)
-        lay.addLayout(sens_row)
-        lay.addWidget(self.slow_tele_check)
+        # строки — как в таблице (зебра); отступ между ними — внутри строк, чтобы фон шёл сплошной полосой
+        self.rows: dict[str, PanelRow] = {
+            "sens": PanelRow(sens_row, True, sens_row.itemAt(0).widget()),
+            "slow_tele": PanelRow(self.slow_tele_check, False),
+        }
+        cam_rows = QVBoxLayout()
+        cam_rows.setSpacing(0)
+        cam_rows.addWidget(self.rows["sens"])
+        cam_rows.addWidget(self.rows["slow_tele"])
+        lay.addLayout(cam_rows)
         lay.addWidget(self.stop_btn)
         lay.addStretch(1)  # высокий экран: лишняя высота — поровну между разделами, в 1640×850 — ноль
-        lay.addWidget(SectionHeader("Изображение", "не выключает слежение"))
-        lay.addLayout(il)
-        lay.addLayout(gl)
-        lay.addLayout(fl)
-        lay.addLayout(fbl)
-        lay.addLayout(wl)
+        self.image_header = SectionHeader("Изображение", "не выключает слежение")
+        lay.addWidget(self.image_header)
+        img_rows = QVBoxLayout()
+        img_rows.setSpacing(0)
+        for i, (key, part) in enumerate((("iris", il), ("gain", gl), ("focus", (fl, fbl)), ("wb", wl))):
+            first = part[0] if isinstance(part, tuple) else part
+            self.rows[key] = PanelRow(part, i % 2 == 1, first.itemAt(0).widget())
+            img_rows.addWidget(self.rows[key])
+        lay.addLayout(img_rows)
+        # строка загорается только от действия оператора: опрос камеры двигает ползунки сам и её не трогает
+        lit = self.light_row
+        for sl, key in ((self.iris_slider, "iris"), (self.gain_slider, "gain"), (self.ctemp_slider, "wb"),
+                        (self.sens_slider, "sens"), (self.focus_slider, "focus")):
+            sl.actionTriggered.connect(lambda _a, k=key: lit(k))
+            sl.sliderPressed.connect(lambda k=key: lit(k))
+        for cb, key in ((self.iris_auto, "iris"), (self.gain_auto, "gain"), (self.af_check, "focus"),
+                        (self.slow_tele_check, "slow_tele")):
+            cb.clicked.connect(lambda _c, k=key: lit(k))
+        for b in (self.push_af, self.near_btn, self.far_btn):
+            b.pressed.connect(lambda: lit("focus"))
+        self.wb_combo.activated.connect(lambda _i: lit("wb"))
         # пресеты — в выдвижной панели снизу окна (спека «Выдвижная панель „Пресеты“»); кнопки остаются
         # объектами для клавиш и API, но в правой колонке их нет
         for b in self.preset_buttons:
@@ -261,6 +345,12 @@ class ManualControls(QWidget):
             b.hide()
         self.bind(None)
         self._show_values()
+
+    def light_row(self, key: str) -> None:
+        """Подсветить строку, которую оператор сейчас меняет (мышь, клавиши, быстрые настройки, геймпад)."""
+        row = self.rows.get(key)
+        if row is not None:
+            row.flash()
 
     @staticmethod
     def _row(title: str, *widgets: QWidget) -> QHBoxLayout:

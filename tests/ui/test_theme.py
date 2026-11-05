@@ -80,3 +80,41 @@ def test_inter_is_loaded(qapp):
         assert app.font().family() == FONT_FAMILY
     finally:
         app.setStyleSheet("")
+
+
+def test_sliders_lime_fill_grey_handle():
+    """Все ползунки: лаймовая заливка до серой ручки (решение 2026-11-05); выключенный — заливка серая, ручка тёмная."""
+    qss = stylesheet()
+
+    def rule(selector: str) -> str:
+        return qss.split(selector + " {", 1)[1].split("}", 1)[0]
+
+    for o in ("horizontal", "vertical"):
+        assert f"background: {C.TEXT_FAINT}" in rule(f"QSlider::handle:{o}"), o
+        assert f"background: {C.TEXT_DIM}" in rule(f"QSlider::handle:{o}:hover"), o
+        assert f"background: {C.RAISED_HI}" in rule(f"QSlider::handle:{o}:disabled"), o
+    assert C.LIME in rule("QSlider::sub-page:horizontal")
+    assert C.LIME in rule("QSlider::add-page:vertical")  # вертикальный заполняется снизу
+    assert C.GREY in rule("QSlider::sub-page:horizontal:disabled")
+
+
+def test_slider_handle_is_rounded_square():
+    """Ручка — скруглённый квадрат чуть шире высоты, не круг (решение пользователя 2026-11-05)."""
+    qss = stylesheet()
+    rule = qss.split("QSlider::handle:horizontal {", 1)[1].split("}", 1)[0]
+    w = int(re.search(r"width: (\d+)px", rule).group(1))
+    h = int(re.search(r"height: (\d+)px", rule).group(1))
+    r = int(re.search(r"border-radius: (\d+)px", rule).group(1))
+    assert w > h and r < h / 2
+
+
+def test_combobox_is_chip_without_arrow_box():
+    """Выпадающий список — как кнопка: тонкая галочка ⌄ без отдельного отсека (на Windows отсек был системным)."""
+    from pathlib import Path
+
+    qss = stylesheet()
+    drop = qss.split("QComboBox::drop-down {", 1)[1].split("}", 1)[0]
+    assert "border: none" in drop
+    arrow = qss.split("QComboBox::down-arrow {", 1)[1].split("}", 1)[0]
+    path = arrow.split("url(", 1)[1].split(")", 1)[0]
+    assert Path(path).name == "chevron-down.svg" and Path(path).is_file()
