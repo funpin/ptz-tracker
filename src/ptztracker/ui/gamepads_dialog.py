@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -25,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from ptztracker.config import SPEED_GEARS
-from ptztracker.control.manual_curve import SENS_MAX, SENS_MIN, clamp_sens, shape
+from ptztracker.control.manual_curve import SENS_MAX, SENS_MIN, TELE_STRENGTH_MAX, clamp_sens, shape, tele_scale
 from ptztracker.ui.icons import icon
 from ptztracker.ui.theme import FS_CAPTION, R_PANEL, SP, C, qcolor
 from ptztracker.ui.widgets import battery_level
@@ -119,6 +120,55 @@ class CurvePreview(QWidget):
         p.end()
 
 
+TELE_MIN_UI = 20  # «Чуть» на ползунке: слабее — почти не заметно
+
+
+class TeleGraph(QWidget):
+    """Скорость ручного поворота по зуму (×1…×20, лог-шкала): лайм — выбранная сила, пунктир — «Чуть» и «Сильно»."""
+
+    def __init__(self, strength: int, parent=None):
+        super().__init__(parent)
+        self.strength = strength
+        self.setFixedSize(240, 96)
+
+    def set_strength(self, v: int) -> None:
+        self.strength = v
+        self.update()
+
+    def paintEvent(self, _e) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setPen(qcolor(C.LINE))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(r, 8, 8)
+        inner = r.adjusted(8, 8, -8, -18)
+        f = p.font()
+        f.setPixelSize(10)
+        p.setFont(f)
+        p.setPen(qcolor(C.TEXT_FAINT))
+        for z, align in ((1, Qt.AlignLeft), (4, Qt.AlignHCenter), (20, Qt.AlignRight)):
+            p.drawText(QRectF(inner.left(), inner.bottom() + 2, inner.width(), 14), align | Qt.AlignVCenter, f"×{z}")
+        ratio = math.log(20.0)
+
+        def path(strength: float) -> QPainterPath:
+            pp = QPainterPath()
+            for i in range(41):
+                z = math.exp(i / 40 * ratio)
+                pt = QPointF(inner.left() + i / 40 * inner.width(),
+                             inner.top() + (1 - tele_scale(z, strength)) * inner.height())
+                pp.moveTo(pt) if i == 0 else pp.lineTo(pt)
+            return pp
+
+        dash = QPen(qcolor(C.GREY), 1.1, Qt.DashLine)
+        for s in (TELE_MIN_UI, TELE_STRENGTH_MAX):
+            p.setPen(dash)
+            p.drawPath(path(s))
+        p.setPen(QPen(qcolor(C.LIME if self.isEnabled() else C.GREY), 2))
+        p.drawPath(path(self.strength))
+        p.end()
+
+
 class _ZebraRow(QWidget):
     def __init__(self, shaded: bool, dim: bool):
         super().__init__()
@@ -142,7 +192,7 @@ def _panel() -> tuple[QFrame, QVBoxLayout]:
     f = QFrame()
     f.setObjectName("padsPanel")
     f.setStyleSheet(f"QFrame#padsPanel {{ background: {C.SURFACE}; border: 1px solid {C.LINE};"
-                    f" border-radius: {R_PANEL}px; }} QCheckBox, QLabel {{ background: transparent; }}")
+                    f" border-radius: {R_PANEL}px; }} QCheckBox, QLabel, QSlider {{ background: transparent; }}")
     lay = QVBoxLayout(f)
     lay.setContentsMargins(1, 1, 1, 1)
     lay.setSpacing(0)
@@ -155,9 +205,11 @@ class GamepadsDialog(QDialog):
 
     def __init__(self, rows: list[PadRow], slow_on_tele: bool,
                  on_sensitivity: Callable[[str, int], None], on_slow_tele: Callable[[bool], None], parent=None,
-                 on_mode: Callable[[str, str], None] | None = None):
+                 on_mode: Callable[[str, str], None] | None = None, tele_strength: int = TELE_STRENGTH_MAX,
+                 on_tele_strength: Callable[[int], None] | None = None):
         super().__init__(parent)
         self.setWindowTitle("Геймпады")
+        self._on_tele_strength = on_tele_strength
         self._on_sens = on_sensitivity
         self._on_mode = on_mode
         self.mode_combos: dict[str, QComboBox] = {}
@@ -178,11 +230,43 @@ class GamepadsDialog(QDialog):
         self.slow_tele_check.toggled.connect(on_slow_tele)
         tele_note = QLabel("чем сильнее зум, тем медленнее ручной поворот — легче держать кадр")
         tele_note.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px; margin-left: 24px;")
+        # насколько медленнее: ползунок «Чуть ↔ Сильно», цифра на ×8 и график скорости по зуму
+        self.tele_slider = QSlider(Qt.Horizontal)
+        self.tele_slider.setRange(TELE_MIN_UI, TELE_STRENGTH_MAX)
+        self.tele_slider.setSingleStep(5)
+        self.tele_slider.setPageStep(25)
+        self.tele_slider.setFixedWidth(170)
+        self.tele_slider.setTracking(False)  # в config.json — по отпусканию
+        self.tele_readout = QLabel()
+        self.tele_readout.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
+        self.tele_graph = TeleGraph(tele_strength)
+        self.tele_slider.setValue(max(TELE_MIN_UI, min(TELE_STRENGTH_MAX, int(tele_strength))))
+        self.tele_slider.sliderMoved.connect(self._show_tele)
+        self.tele_slider.valueChanged.connect(self._tele_changed)
+        self._show_tele(self.tele_slider.value())
+        strength = QHBoxLayout()
+        strength.setSpacing(SP[1])
+        strength.addWidget(QLabel("Насколько"))
+        strength.addSpacing(SP[2])
+        strength.addWidget(self._caption("Чуть"))
+        strength.addWidget(self.tele_slider)
+        strength.addWidget(self._caption("Сильно"))
+        strength.addStretch(1)
+        strength.addWidget(self.tele_readout)
+        graph_row = QHBoxLayout()
+        graph_row.addWidget(self.tele_graph)
+        legend = QLabel("Скорость поворота по зуму. Лайм — выбранная сила,\nпунктир — «Чуть» и «Сильно». «Сильно» —\nкак было раньше.")
+        legend.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
+        graph_row.addWidget(legend, 1, Qt.AlignVCenter)
         tele_panel, tl = _panel()
         tl.setContentsMargins(SP[2], SP[2], SP[2], SP[2])
-        tl.setSpacing(2)
+        tl.setSpacing(SP[1])
         tl.addWidget(self.slow_tele_check)
         tl.addWidget(tele_note)
+        tl.addLayout(strength)
+        tl.addLayout(graph_row)
+        self.slow_tele_check.toggled.connect(self._sync_tele_enabled)
+        self._sync_tele_enabled(self.slow_tele_check.isChecked())
 
         self.done_button = QPushButton("Готово")
         self.done_button.setProperty("variant", "primary")
@@ -307,6 +391,19 @@ class GamepadsDialog(QDialog):
         if r is not None:  # «скорость N из 4» видна только в режиме предела
             self._rows[pad_id] = r = replace(r, mode=mode)
             self.status_labels[pad_id].setText(status_text(r))
+
+    def _show_tele(self, v: int) -> None:
+        self.tele_readout.setText(f"на ×8 — {round(tele_scale(8.0, v) * 100)} % скорости")
+        self.tele_graph.set_strength(v)
+
+    def _tele_changed(self, v: int) -> None:
+        self._show_tele(v)
+        if self._on_tele_strength is not None:
+            self._on_tele_strength(v)
+
+    def _sync_tele_enabled(self, on: bool) -> None:
+        for w in (self.tele_slider, self.tele_graph):
+            w.setEnabled(on)
 
     def set_slow_on_tele(self, on: bool) -> None:
         self.slow_tele_check.blockSignals(True)

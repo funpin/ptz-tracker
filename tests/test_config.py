@@ -433,3 +433,14 @@ def test_pad_l1r1_mode_and_speed_gear_roundtrip_and_bad_values(tmp_path):
     p.write_text(json.dumps({"cameras": [], "pad_l1r1_mode": [1], "pad_speed_gear": "x"}), encoding="utf-8")
     cfg = ConfigStore(p).load()
     assert cfg.pad_l1r1_mode == {} and cfg.pad_speed_gear == {}
+
+
+def test_tele_strength_default_and_clamped(tmp_path):
+    from ptztracker.config import ConfigStore
+
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    assert cfg.tele_strength == 100  # по умолчанию — как раньше
+    cfg.tele_strength = 250
+    store.save(cfg)
+    assert ConfigStore(tmp_path / "c.json").load().tele_strength == 100

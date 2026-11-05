@@ -60,3 +60,15 @@ def test_tele_scale_by_field_of_view():
     assert tele_scale(0.5) == pytest.approx(1.0)  # мусор — без замедления
     vals = [tele_scale(1.0 + i * 0.2) for i in range(96)]
     assert all(a >= b for a, b in zip(vals, vals[1:]))
+
+
+def test_tele_strength_softens_slowdown():
+    from ptztracker.control.manual_curve import TELE_SCALE_MIN, tele_scale
+
+    assert tele_scale(8.0, 100) == tele_scale(8.0)  # «Сильно» — как было
+    assert tele_scale(8.0) == TELE_SCALE_MIN
+    mid = tele_scale(8.0, 50)
+    assert abs(mid - 0.39) < 0.01  # ≈ корень из прежнего множителя
+    assert tele_scale(8.0, 0) == 1.0  # «ноль» — не замедлять
+    assert tele_scale(2.0, 25) > tele_scale(2.0, 50) > tele_scale(2.0, 100)
+    assert tele_scale(None, 50) == 1.0

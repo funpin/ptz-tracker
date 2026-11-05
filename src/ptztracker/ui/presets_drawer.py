@@ -42,6 +42,15 @@ class DrawerRow:
     last: int | None = None
 
 
+# пресеты 1–4 вызываются кнопками геймпада (gamepad/mapping._PRESET_BUTTONS): × ○ □ △
+PAD_SYMBOLS = {1: "×", 2: "○", 3: "□", 4: "△"}
+
+
+def badge_text(n: int) -> str:
+    """«1 ×» — номер пресета и кнопка геймпада, которой он вызывается."""
+    return f"{n} {PAD_SYMBOLS[n]}" if n in PAD_SYMBOLS else str(n)
+
+
 class PresetCard(QAbstractButton):
     def __init__(self, n: int, parent: QWidget | None = None):
         super().__init__(parent)
@@ -61,7 +70,8 @@ class PresetCard(QAbstractButton):
             self._mtime = thumb.image.stat().st_mtime if src else None
             self._pix = QPixmap(src) if src else None
         self.last = last
-        self.setToolTip(f"Пресет {self.n}\nКлик — вызвать, Shift+клик — записать")
+        pad = f"\nНа геймпаде — {PAD_SYMBOLS[self.n]} (держать 1 с — записать)" if self.n in PAD_SYMBOLS else ""
+        self.setToolTip(f"Пресет {self.n}\nКлик — вызвать, Shift+клик — записать{pad}")
         self.update()
 
     def sizeHint(self) -> QSize:
@@ -88,7 +98,7 @@ class PresetCard(QAbstractButton):
             f.setPixelSize(FS_CAPTION - 1)
             p.setFont(f)
             p.setPen(qcolor(C.TEXT_FAINT))
-            p.drawText(r, Qt.AlignCenter, f"{self.n}\nShift+клик")
+            p.drawText(r, Qt.AlignCenter, f"{badge_text(self.n)}\nShift+клик")
         if self.underMouse():
             p.fillPath(path, qcolor(C.TEXT, 18))
         p.setBrush(Qt.NoBrush)
@@ -98,13 +108,14 @@ class PresetCard(QAbstractButton):
         f.setPixelSize(FS_CAPTION - 1)
         f.setBold(True)
         p.setFont(f)
-        badge = QRectF(r.left() + 4, r.top() + 4, 8 + p.fontMetrics().horizontalAdvance(str(self.n)), 16)
+        text = badge_text(self.n)
+        badge = QRectF(r.left() + 4, r.top() + 4, 10 + p.fontMetrics().horizontalAdvance(text), 16)
         if self._pix is not None:
             p.setPen(Qt.NoPen)
             p.setBrush(qcolor(C.BG, 210))
             p.drawRoundedRect(badge, R_TAG - 1, R_TAG - 1)
             p.setPen(qcolor(C.TEXT))
-            p.drawText(badge, Qt.AlignCenter, str(self.n))
+            p.drawText(badge, Qt.AlignCenter, text)
         p.end()
 
 

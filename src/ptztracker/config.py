@@ -83,6 +83,7 @@ class AppConfig:
     # геймпады — своя у каждого по опознавателю (серийный номер или «GUID:имя»), имя — для окна «Геймпады…»
     stick_sensitivity: int = 50
     slow_on_tele: bool = True  # на теле тот же наклон поворачивает медленнее
+    tele_strength: int = 100  # насколько медленнее на теле: 100 — как раньше, 50 — мягче (manual_curve.tele_scale)
     pad_sensitivity: dict = field(default_factory=dict)
     pad_names: dict = field(default_factory=dict)
     # L1/R1 у каждого геймпада: "limit" — ступени предела скорости (по умолчанию), "sens" — чувствительность ±10
@@ -250,6 +251,9 @@ def _fix_control_settings(cfg: AppConfig) -> None:
     cfg.stick_sensitivity = d.stick_sensitivity if s is None else s
     if not isinstance(cfg.slow_on_tele, bool):
         cfg.slow_on_tele = d.slow_on_tele
+    ts = cfg.tele_strength
+    cfg.tele_strength = (d.tele_strength if isinstance(ts, bool) or not isinstance(ts, int)
+                         else ts if 0 <= ts <= 100 else d.tele_strength)
     ps = cfg.pad_sensitivity if isinstance(cfg.pad_sensitivity, dict) else {}
     cfg.pad_sensitivity = {k: sens(v) for k, v in ps.items() if isinstance(k, str) and k and sens(v) is not None}
     names = cfg.pad_names if isinstance(cfg.pad_names, dict) else {}

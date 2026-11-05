@@ -208,3 +208,9 @@ def test_card_strip_has_no_dark_box(qtbot):
     finally:
         app.setStyleSheet(old_style)
         app.setPalette(old_pal)
+
+
+def test_badge_shows_gamepad_button():
+    from ptztracker.ui.presets_drawer import badge_text
+
+    assert [badge_text(n) for n in (1, 2, 3, 4, 5)] == ["1 ×", "2 ○", "3 □", "4 △", "5"]

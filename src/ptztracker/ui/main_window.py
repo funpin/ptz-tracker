@@ -2214,11 +2214,19 @@ class MainWindow(QMainWindow):
 
     def _manual_pt_scale(self, s: CameraSession) -> float:
         """Множитель ручного поворота камеры: «медленнее на крупном плане» по её зуму; слежение его не видит."""
-        return tele_scale(s.zoom_x) if self.cfg.slow_on_tele else 1.0
+        return tele_scale(s.zoom_x, self.cfg.tele_strength) if self.cfg.slow_on_tele else 1.0
 
     def _on_stick_sensitivity(self, sens: int) -> None:
         self.cfg.stick_sensitivity = clamp_sens(sens)
         self._save()
+        if self._held:
+            self._apply_held()
+
+    def _on_tele_strength(self, v: int) -> None:
+        """Окно «Геймпады»: насколько медленнее на крупном плане (мышь, стрелки и все геймпады)."""
+        self.cfg.tele_strength = int(v)
+        self._save()
+        self._refresh_manual_speed()
         if self._held:
             self._apply_held()
 
@@ -2252,7 +2260,8 @@ class MainWindow(QMainWindow):
         if self.gamepads_dialog is None:
             self.gamepads_dialog = GamepadsDialog(
                 self.pad_rows(), self.cfg.slow_on_tele, self.set_pad_sensitivity,
-                self.controls.slow_tele_check.setChecked, parent=self, on_mode=self.set_pad_l1r1_mode)
+                self.controls.slow_tele_check.setChecked, parent=self, on_mode=self.set_pad_l1r1_mode,
+                tele_strength=self.cfg.tele_strength, on_tele_strength=self._on_tele_strength)
         else:
             self.gamepads_dialog.set_rows(self.pad_rows())
             self.gamepads_dialog.set_slow_on_tele(self.cfg.slow_on_tele)

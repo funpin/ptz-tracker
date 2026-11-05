@@ -135,3 +135,16 @@ def test_charging_without_level():
 
     t = status_text(PadRow("a0:b1:c2:d3:e4:f5", "DualSense", 50, True, 1, battery=None, charging=True))
     assert "· заряжается" in t and "%" not in t
+
+
+def test_tele_strength_slider_readout_and_callback(qtbot):
+    from ptztracker.ui.gamepads_dialog import GamepadsDialog
+
+    got = []
+    d = GamepadsDialog(_rows(), True, lambda *a: None, lambda on: None, tele_strength=50, on_tele_strength=got.append)
+    qtbot.addWidget(d)
+    assert d.tele_slider.value() == 50 and "39 %" in d.tele_readout.text()
+    d.tele_slider.setValue(100)
+    assert got == [100] and "15 %" in d.tele_readout.text() and d.tele_graph.strength == 100
+    d.slow_tele_check.setChecked(False)
+    assert not d.tele_slider.isEnabled()

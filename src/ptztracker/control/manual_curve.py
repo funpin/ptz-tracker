@@ -44,10 +44,17 @@ def shape(v: float, sens: float) -> float:
 TELE_SCALE_MIN = 0.15  # на теле не медленнее этой доли: иначе стик на полном наклоне почти не двигает камеру
 
 
-def tele_scale(zoom_x: float | None) -> float:
-    """«Медленнее на крупном плане»: множитель ручного поворота = угол обзора ÷ угол на широком (he42.hfov_deg),
-    не меньше TELE_SCALE_MIN. Зум не известен — 1."""
+TELE_STRENGTH_MAX = 100  # «Сильно» — множитель как до регулировки (пользователь 2026-11-06)
+
+
+def tele_scale(zoom_x: float | None, strength: float = TELE_STRENGTH_MAX) -> float:
+    """«Медленнее на крупном плане»: множитель ручного поворота = (угол обзора ÷ угол на широком) ** (сила/100),
+    не меньше TELE_SCALE_MIN. Сила 100 — прежнее поведение, 50 — корень из него (на ×8 ≈ 39 %), 0 — не замедлять.
+    Зум не известен — 1."""
     if zoom_x is None or not zoom_x > 1.0:
         return 1.0
+    k = max(0.0, min(1.0, float(strength) / TELE_STRENGTH_MAX))
+    if k == 0.0:
+        return 1.0
     frac = min(1.0, math.log(zoom_x) / math.log(he42.ZOOM_RATIO))
-    return max(TELE_SCALE_MIN, he42.hfov_deg(frac) / he42.HFOV_WIDE_DEG)
+    return max(TELE_SCALE_MIN, max(TELE_SCALE_MIN, he42.hfov_deg(frac) / he42.HFOV_WIDE_DEG) ** k)
