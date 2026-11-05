@@ -170,7 +170,7 @@ class MainWindow(QMainWindow):
         self.pad.connectionChanged.connect(lambda _info: self._update_pad_chip())
         self.pad.batteryChanged.connect(self._update_pad_chip)
         self._pad_applied = (0.0, 0.0, 0.0)  # скорость геймпада в последней отправке
-        self._last_waist = "waist_center"  # куда вернуться в пояс по R1 из «Роста»
+        self._last_waist = "waist_center"  # куда вернуться в пояс по L1 из «Роста»
 
         self.preview = PreviewWidget()
         self.video_frame = VideoFrame(self.preview)
@@ -348,9 +348,9 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         self.save_moment_action = QAction("Сохранить момент (F9)", self)  # не ручное управление: слежение не трогаем
         self.save_moment_action.triggered.connect(lambda: self.save_moment())
-        self.open_replay_action = QAction("Открыть запись…", self)
+        self.open_replay_action = QAction("Открыть журнал…", self)
         self.open_replay_action.triggered.connect(self._choose_replay)
-        self.rec_settings_action = QAction("Настройки записи…", self)
+        self.rec_settings_action = QAction("Настройки журнала…", self)
         self.rec_settings_action.triggered.connect(self._recording_settings)
         box_menu = QMenu(self)
         for act in (self.save_moment_action, self.open_replay_action, self.rec_settings_action):
@@ -1236,7 +1236,7 @@ class MainWindow(QMainWindow):
             s.limit_watch.set_demand(0.0, 0.0, 0.0)
 
     def _pad_composition(self, d: int) -> None:
-        """Только крупность: пояс ↔ рост ↔ общий. L1 (−1) — шире, R1 (+1) — ближе; за краем — «некуда».
+        """Только крупность: пояс ↔ рост ↔ общий. R1 (−1) — шире, к «Общему»; L1 (+1) — ближе; за краем — «некуда».
         В пояс из роста — на последнюю сторону пояса (слева/центр/справа)."""
         cam = self._current_cfg()
         if cam is None:

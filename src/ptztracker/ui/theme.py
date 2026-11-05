@@ -153,3 +153,16 @@ def apply_dark_theme(app: QApplication) -> None:
     font.setPixelSize(FS_TEXT)
     app.setFont(font)
     app.setStyleSheet(stylesheet())
+
+
+def install_russian(app: QApplication) -> None:
+    """Стандартные кнопки и окна Qt (Cancel, Yes/No, выбор папки) — по-русски."""
+    from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
+
+    if getattr(app, "_ru_translator", None) is not None:
+        return
+    tr = QTranslator(app)
+    if tr.load(QLocale(QLocale.Russian), "qtbase", "_", QLibraryInfo.path(QLibraryInfo.TranslationsPath)):
+        app.installTranslator(tr)
+        app._ru_translator = tr  # держим ссылку: иначе переводчик соберёт сборщик мусора
+
