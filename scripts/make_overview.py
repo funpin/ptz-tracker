@@ -1,24 +1,23 @@
 """Картинка-обзор окна для README: окно на симуляторе и лаймовые номера на элементах.
 
-Запуск: python scripts/make_overview.py — пишет docs/assets/overview.png. Номера совпадают со списком
-под картинкой в README.md: поменяли окно — пересоберите картинку и сверьте список."""
+Запуск на Mac: python scripts/make_overview.py — на ~6 с откроет окно и запишет docs/assets/overview.png
+в разрешении Retina. Снимаем только на Mac (решение пользователя 2026-11-05); Windows выглядит так же —
+шрифт и цвета у программы свои. Номера совпадают со списком под картинкой в README.md: поменяли окно —
+пересоберите картинку и сверьте список."""
 
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 from pathlib import Path
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
+from PySide6.QtGui import QFont, QPainter, QPen
+from PySide6.QtWidgets import QApplication, QWidget
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer  # noqa: E402
-from PySide6.QtGui import QFont, QPainter, QPen  # noqa: E402
-from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
-
-from ptztracker.config import ConfigStore  # noqa: E402
-from ptztracker.ui.main_window import MainWindow  # noqa: E402
-from ptztracker.ui.theme import C, apply_dark_theme, install_russian, qcolor  # noqa: E402
+from ptztracker.config import ConfigStore
+from ptztracker.ui.main_window import MainWindow
+from ptztracker.ui.theme import C, apply_dark_theme, install_russian, qcolor
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "assets" / "overview.png"
@@ -91,7 +90,8 @@ def main() -> int:
 
     def shot() -> None:
         img = w.grab().toImage()
-        draw_numbers(img, w, img.width() / w.width())
+        # QPainter на картинке Retina уже рисует в логических точках окна
+        draw_numbers(img, w, img.width() / img.devicePixelRatio() / w.width())
         OUT.parent.mkdir(parents=True, exist_ok=True)
         img.save(str(OUT))
         app.quit()

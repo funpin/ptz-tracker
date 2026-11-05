@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QScrollArea,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -121,6 +122,17 @@ class PresetCard(QAbstractButton):
         p.end()
 
 
+class _WheelScroll(QScrollArea):
+    """Строка карточек: колесо мыши листает вбок (полосы прокрутки нет)."""
+
+    def wheelEvent(self, e):  # noqa: N802
+        d = e.angleDelta()
+        step = d.x() if abs(d.x()) > abs(d.y()) else d.y()
+        bar = self.horizontalScrollBar()
+        bar.setValue(bar.value() - step)
+        e.accept()
+
+
 class PresetRow(QWidget):
     def __init__(self, drawer: PresetsDrawer, parent: QWidget | None = None):
         super().__init__(parent)
@@ -150,13 +162,40 @@ class PresetRow(QWidget):
             c.customContextMenuRequested.connect(lambda pos, c=c: self._menu(c, pos))
             sl.addWidget(c)
         sl.addStretch(1)
-        self.scroll = QScrollArea()
+        # без полосы прокрутки: листается колесом мыши; «‹ ›» у краёв — если есть ещё карточки
+        self.scroll = _WheelScroll()
         self.scroll.setWidget(strip)
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QScrollArea.NoFrame)
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.setFixedHeight(CARD_H + 12)  # карточки + полоса прокрутки 6 px
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setFixedHeight(CARD_H + 4)
+        self.more_left = self._edge("‹", -1)
+        self.more_right = self._edge("›", 1)
+        bar = self.scroll.horizontalScrollBar()
+        bar.rangeChanged.connect(lambda *_: self._sync_edges())
+        bar.valueChanged.connect(lambda *_: self._sync_edges())
+        lay.addWidget(self.more_left)
         lay.addWidget(self.scroll, 1)
+        lay.addWidget(self.more_right)
+        self._sync_edges()
+
+    def _edge(self, text: str, d: int) -> QToolButton:
+        b = QToolButton()
+        b.setText(text)
+        b.setFixedSize(20, CARD_H)
+        b.setFocusPolicy(Qt.NoFocus)
+        b.setCursor(Qt.PointingHandCursor)
+        b.setStyleSheet(f"QToolButton {{ border: none; border-radius: 6px; color: {C.TEXT_DIM}; font-size: 18px;"
+                        f" background: transparent; }} QToolButton:hover {{ background: {C.RAISED}; }}")
+        b.clicked.connect(lambda: self.scroll.horizontalScrollBar().setValue(
+            self.scroll.horizontalScrollBar().value() + d * 4 * (CARD_W + SP[1])))
+        return b
+
+    def _sync_edges(self) -> None:
+        bar = self.scroll.horizontalScrollBar()
+        self.more_left.setVisible(bar.value() > 0)
+        self.more_right.setVisible(bar.value() < bar.maximum())
 
     def set(self, row: DrawerRow, selected: bool) -> None:
         self.slot = row.slot
@@ -223,7 +262,7 @@ class PresetsDrawer(QWidget):
     renameRequested = Signal(int, int)
     eraseRequested = Signal(int, int)
     rowsShownChanged = Signal(int)
-    ROW_H = CARD_H + 20  # строка: карточки, полоса прокрутки, отступы
+    ROW_H = CARD_H + 12  # строка: карточки и отступы
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)

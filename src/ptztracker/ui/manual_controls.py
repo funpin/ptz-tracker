@@ -163,16 +163,15 @@ class ManualControls(QWidget):
         self.focus_slider.valueChanged.connect(lambda v: self._focus(v / 200))  # полный ход = как кнопка (±0,5)
         self.focus_slider.sliderReleased.connect(lambda: self.focus_slider.setValue(0))
         fl = self._row("Фокус", self.af_check)
+        fl.addSpacing(SP[2])
+        fl.addWidget(self.push_af)  # сразу за AF: разовая фокусировка — про автофокус
         fl.addStretch(1)
-        self.push_af.setStyleSheet(f"QPushButton {{ min-height: {H_SMALL}px; max-height: {H_SMALL}px;"
-                                   f" padding: 0 {SP[2]}px; font-size: {FS_CAPTION + 1}px; }}")
-        fl.addWidget(self.push_af)
         fbl = QHBoxLayout()
         fbl.setSpacing(SP[1])
         fbl.addSpacing(LABEL_W + SP[1])
-        for wd in (self.near_btn, self.far_btn):
+        for wd in (self.push_af, self.near_btn, self.far_btn):  # одна высота и вид у всех кнопок фокуса
             wd.setStyleSheet(f"QPushButton {{ min-height: {H_SMALL - 4}px; max-height: {H_SMALL - 4}px;"
-                             f" padding: 0 {SP[1]}px; font-size: {FS_CAPTION}px; }}")
+                             f" padding: 0 {SP[1] + 2}px; font-size: {FS_CAPTION}px; }}")
         fbl.addWidget(self.near_btn)
         fbl.addWidget(self.focus_slider, 1)
         fbl.addWidget(self.far_btn)

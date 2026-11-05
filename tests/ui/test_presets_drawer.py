@@ -1,7 +1,7 @@
 """Выдвижная панель пресетов: строка выбранной камеры, карточки со снимками, тянется вверх за другими камерами."""
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from ptztracker.camera.preset_thumbs import PresetThumb
 from ptztracker.config import ConfigStore
@@ -108,3 +108,23 @@ def test_recall_without_thumb_captures_when_camera_stops(qtbot, tmp_path):
     qtbot.waitUntil(lambda: 5 in w.thumbs.load(w.session.cfg.id), timeout=8000)
     w.close()
 
+
+
+def test_no_scrollbar_wheel_scrolls(qtbot):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QWheelEvent
+
+    d = PresetsDrawer()
+    qtbot.addWidget(d)
+    d.set_rows(rows())
+    d.resize(700, 200)
+    d.show()
+    row = d.row_widgets[0]
+    assert row.scroll.horizontalScrollBar().isHidden() or \
+        row.scroll.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
+    bar = row.scroll.horizontalScrollBar()
+    assert bar.maximum() > 0 and row.more_right.isVisible()
+    ev = QWheelEvent(QPointF(50, 30), QPointF(50, 30), QPoint(0, 0), QPoint(0, -240), Qt.NoButton,
+                     Qt.NoModifier, Qt.NoScrollPhase, False)
+    QApplication.sendEvent(row.scroll.viewport(), ev)
+    assert bar.value() > 0

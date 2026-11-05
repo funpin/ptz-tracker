@@ -155,3 +155,12 @@ def test_af_and_one_shot_share_a_row(qtbot):
     c.show()
     assert abs(c.af_check.geometry().center().y() - c.push_af.geometry().center().y()) <= 4
     assert abs(c.near_btn.geometry().center().y() - c.focus_slider.geometry().center().y()) <= 4
+
+
+def test_one_shot_af_sits_next_to_af(qtbot):
+    c, _ = make(qtbot)
+    c.resize(320, 700)
+    c.show()
+    gap = c.push_af.geometry().left() - c.af_check.geometry().right()
+    assert 0 < gap <= 24  # не у правого края
+    assert c.push_af.height() == c.near_btn.height()
