@@ -1,7 +1,7 @@
 """Общие компоненты интерфейса: клавиша-подсказка, плитка состояния, чип, рамка видео."""
 
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPen
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (
 from ptztracker.ui.icons import icon
 from ptztracker.ui.theme import (
     FS_CAPTION,
-    R_PANEL,
+    R_BUTTON,
+    R_TAG,
     SP,
     C,
     qcolor,
@@ -207,11 +208,15 @@ class SectionHeader(QWidget):
 
 
 class TrackButton(QPushButton):
-    """TRACK ON/OFF в верхней панели: цвет — состояние слежения, пояснение — во всплывающей подсказке.
-    «Калибровка…» (action_btn) — отдельная кнопка рядом, видна только при раскачке."""
+    """TRACK в верхней панели — про выбранную камеру: цвет и слово — её состояние, пояснение — в подсказке.
+    Справа внутри — квадратики камер с анализом (set_cams); клик по квадратику — camToggled(номер),
+    сама кнопка при этом не переключается. «Калибровка…» (action_btn) — рядом, только при раскачке."""
 
     actionClicked = Signal()
-    WORDS = {"on": "TRACK ON", "lost": "TRACK LOST"}
+    camToggled = Signal(int)
+    WORDS = {"on": "TRACK ON", "lost": "ИЩУ ЦЕЛЬ", "none": "TRACK —"}
+    CAM = 22  # сторона квадратика
+    CAM_GAP = 3
 
     def __init__(self):
         super().__init__("TRACK OFF")
@@ -220,6 +225,7 @@ class TrackButton(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
         self._kind = ""
         self._why = ""
+        self._cams: list[tuple[int, str, bool]] = []
         self.action_btn = KeyButton("Калибровка…")
         self.action_btn.setFocusPolicy(Qt.NoFocus)
         self.action_btn.clicked.connect(self.actionClicked)
@@ -229,23 +235,303 @@ class TrackButton(QPushButton):
     def kind(self) -> str:
         return self._kind
 
+    def _filled(self) -> bool:
+        return self._kind in ("on", "lost")
+
+    def _fg(self) -> str:
+        return C.BG if self._filled() else C.TEXT_FAINT if self._kind == "none" else C.TEXT
+
+    def _cams_width(self) -> int:
+        n = len(self._cams)
+        return n * self.CAM + (n - 1) * self.CAM_GAP + 2 * SP[0] if n else 0
+
+    def _restyle(self) -> None:
+        bg = {"on": C.LIME, "lost": C.LOST}.get(self._kind, C.RAISED)
+        border = {"on": C.LIME, "lost": C.LOST, "swing": C.FAULT}.get(self._kind, C.LINE)
+        pad_r = SP[2] + (self._cams_width() + SP[1] if self._cams else 0)
+        self.setStyleSheet(
+            f"QPushButton {{ border: 1px solid {border}; border-radius: {R_BUTTON + 1}px;"
+            f" padding: 0 {pad_r}px 0 {SP[2] + 2}px; min-height: 36px; font-weight: 700;"
+            f" color: {self._fg()}; background: {bg}; }}"
+            + ("" if self._filled() else f"QPushButton:hover {{ background: {C.RAISED_HI}; }}")
+        )
+        self.setIcon(icon("track", self._fg()))
+        self.updateGeometry()
+
     def set_view(self, kind: str, word: str, why: str, show_action: bool) -> None:
         self.setText(self.WORDS.get(kind, "TRACK OFF"))
         if kind != self._kind:
             self._kind = kind
-            color = STATE_COLOR.get(kind, C.TEXT_FAINT)
-            self.setIcon(icon("track", color))
-            on = kind in ("on", "lost")
-            self.setStyleSheet(
-                f"QPushButton {{ border: 2px solid {color}; border-radius: {R_PANEL}px; padding: 4px 12px;"
-                f" font-weight: 700; color: {C.BG if on else C.TEXT}; background: {color if on else C.RAISED}; }}"
-            )
+            self._restyle()
         self.action_btn.setVisible(show_action)
         self.set_why(why)
 
+    def set_cams(self, cams: list[tuple[int, str, bool]]) -> None:
+        """(номер камеры 1–4, вид on|lost|off, выбрана) — только камеры с анализом."""
+        cams = list(cams)
+        if cams != self._cams:
+            self._cams = cams
+            self._restyle()
+            self.update()
+
+    def cam_rect(self, number: int) -> QRectF:
+        nums = [n for n, _k, _s in self._cams]
+        i = nums.index(number)
+        x0 = self.width() - SP[1] - self._cams_width() + SP[0]
+        return QRectF(x0 + i * (self.CAM + self.CAM_GAP), (self.height() - self.CAM) / 2, self.CAM, self.CAM)
+
+    def _cam_at(self, pos) -> int | None:
+        for n, _k, _s in self._cams:
+            if self.cam_rect(n).contains(QPointF(pos)):
+                return n
+        return None
+
+    def mousePressEvent(self, e):  # noqa: N802
+        n = self._cam_at(e.position()) if e.button() == Qt.LeftButton else None
+        if n is not None:
+            self._pressed_cam = n
+            e.accept()
+            return
+        self._pressed_cam = None
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):  # noqa: N802
+        n = getattr(self, "_pressed_cam", None)
+        if n is not None:
+            self._pressed_cam = None
+            if self._cam_at(e.position()) == n:
+                self.camToggled.emit(n)
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
+
+    def paintEvent(self, e):  # noqa: N802
+        super().paintEvent(e)
+        if not self._cams:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        fg = qcolor(self._fg())
+        first = self.cam_rect(self._cams[0][0])
+        tray = QRectF(first.left() - SP[0] + 1, first.top() - 3, self._cams_width() - 2, self.CAM + 6)
+        tray_bg = qcolor(C.BG, 56) if self._filled() else qcolor(C.BG)
+        p.setPen(Qt.NoPen)
+        p.setBrush(tray_bg)
+        p.drawRoundedRect(tray, 7, 7)
+        f = QFont(self.font())
+        f.setPixelSize(11)
+        f.setBold(True)
+        p.setFont(f)
+        for n, kind, selected in self._cams:
+            r = self.cam_rect(n)
+            if kind in ("on", "lost"):
+                p.setPen(Qt.NoPen)
+                p.setBrush(qcolor(C.BG))
+                p.drawRoundedRect(r, R_TAG, R_TAG)
+                p.setPen(qcolor(C.LIME if kind == "on" else C.LOST))
+            else:
+                p.setPen(QPen(fg, 1.5))
+                p.setBrush(Qt.NoBrush)
+                p.drawRoundedRect(r.adjusted(0.75, 0.75, -0.75, -0.75), R_TAG, R_TAG)
+                p.setPen(fg)
+            p.drawText(r, Qt.AlignCenter, str(n))
+            if selected:
+                p.setPen(QPen(fg, 2))
+                p.setBrush(Qt.NoBrush)
+                p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), R_TAG + 2, R_TAG + 2)
+        p.end()
+
     def set_why(self, text: str) -> None:
         self._why = text
-        self.setToolTip(f"{text}\nПробел — включить или выключить слежение".strip())
+        tip = f"{text}\nПробел — включить или выключить слежение".strip()
+        if self._cams:
+            tip += "\nКвадратики — камеры с анализом: клик включает или выключает слежение этой камеры"
+        self.setToolTip(tip)
+
+
+def paint_brackets(p: QPainter, rect: QRectF, color: QColor, width: float) -> None:
+    """Рамка цели как в знаке: два скруглённых угла — левый верхний и правый нижний."""
+    arm = max(8.0, min(rect.width(), rect.height()) * 0.3)
+    r = min(5.0, arm / 3)
+    pen = QPen(color, width)
+    pen.setCapStyle(Qt.RoundCap)
+    p.save()
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+    tl = QPainterPath(QPointF(rect.left(), rect.top() + arm))
+    tl.lineTo(rect.left(), rect.top() + r)
+    tl.quadTo(rect.left(), rect.top(), rect.left() + r, rect.top())
+    tl.lineTo(rect.left() + arm, rect.top())
+    br = QPainterPath(QPointF(rect.right(), rect.bottom() - arm))
+    br.lineTo(rect.right(), rect.bottom() - r)
+    br.quadTo(rect.right(), rect.bottom(), rect.right() - r, rect.bottom())
+    br.lineTo(rect.right() - arm, rect.bottom())
+    p.drawPath(tl)
+    p.drawPath(br)
+    p.restore()
+
+
+class BrandMark(QWidget):
+    """Знак PTZ Tracker: две встречные скобки и лаймовая точка (docs/BRANDBOOK.md §2)."""
+
+    def __init__(self, size: int = 24, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._size = size
+        self.setFixedSize(size, size)
+
+    def sizeHint(self) -> QSize:
+        return QSize(self._size, self._size)
+
+    def paintEvent(self, _e):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        k = self._size / 120
+        pen = QPen(qcolor(C.TEXT), (11 if self._size <= 24 else 9) * k)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        a = QPainterPath(QPointF(31 * k, 58 * k))
+        a.lineTo(31 * k, 42 * k)
+        a.quadTo(31 * k, 31 * k, 42 * k, 31 * k)
+        a.lineTo(58 * k, 31 * k)
+        b = QPainterPath(QPointF(62 * k, 89 * k))
+        b.lineTo(78 * k, 89 * k)
+        b.quadTo(89 * k, 89 * k, 89 * k, 78 * k)
+        b.lineTo(89 * k, 62 * k)
+        p.drawPath(a)
+        p.drawPath(b)
+        p.setPen(Qt.NoPen)
+        p.setBrush(qcolor(C.LIME))
+        rad = (11 if self._size <= 24 else 10) * k
+        p.drawEllipse(QPointF(60 * k, 60 * k), rad, rad)
+        p.end()
+
+
+class PadBadge(QWidget):
+    """Геймпад: значок, номер (как огоньки на геймпаде) и батарейка с процентом внутри, как в iOS.
+    Один виджет и для верхней строки, и для шапки клетки, и для «Сводки»."""
+
+    W, H = 86, 24
+    BAT_W, BAT_H = 34, 17
+
+    def __init__(self, framed: bool = True, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._framed = framed
+        self._n = 0
+        self._pct: int | None = None
+        self._charging = False
+        self.setFixedSize(self.W, self.H)
+
+    def sizeHint(self) -> QSize:
+        return QSize(self.W, self.H)
+
+    def set(self, number: int, percent: int | None, charging: bool) -> None:
+        if (number, percent, charging) != (self._n, self._pct, self._charging):
+            self._n, self._pct, self._charging = number, percent, charging
+            self.update()
+
+    def battery_text(self) -> str:
+        return "—" if self._pct is None else str(self._pct)
+
+    @staticmethod
+    def fill_color(pct: int | None, charging: bool) -> str:
+        if charging:
+            return C.LIME
+        if pct is None:
+            return C.TEXT_FAINT
+        return C.FAULT if pct <= 10 else C.LOST if pct <= 20 else C.TEXT
+
+    @staticmethod
+    def text_color(pct: int | None) -> str:
+        return C.BG if pct is not None and pct >= 50 else C.TEXT
+
+    def paintEvent(self, _e):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        if self._framed:
+            p.setPen(QPen(qcolor(C.LINE), 1))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 7, 7)
+        x = SP[1] - 2
+        icon("gamepad", C.TEXT_DIM, 16).paint(p, int(x), (self.H - 16) // 2, 16, 16)
+        x += 16 + SP[0]
+        f = QFont(self.font())
+        f.setPixelSize(12)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(qcolor(C.TEXT))
+        p.drawText(QRectF(x, 0, 12, self.H), Qt.AlignCenter, str(self._n))
+        bat = QRectF(self.W - SP[1] + 2 - 3 - self.BAT_W, (self.H - self.BAT_H) / 2, self.BAT_W, self.BAT_H)
+        body = QPainterPath()
+        body.addRoundedRect(bat, 5, 5)
+        p.setPen(Qt.NoPen)
+        p.setBrush(qcolor(C.TEXT, 46))
+        p.drawPath(body)
+        if self._pct is not None:
+            fill = QRectF(bat.left(), bat.top(), bat.width() * max(0, min(100, self._pct)) / 100, bat.height())
+            p.save()
+            p.setClipPath(body)
+            p.fillRect(fill, qcolor(self.fill_color(self._pct, self._charging)))
+            p.restore()
+        p.setPen(QPen(qcolor(C.TEXT, 140), 1.2))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(bat.adjusted(0.6, 0.6, -0.6, -0.6), 5, 5)
+        p.setPen(Qt.NoPen)
+        p.setBrush(qcolor(C.TEXT, 140))
+        p.drawRoundedRect(QRectF(bat.right() + 1, bat.center().y() - 2.5, 2, 5), 1, 1)
+        f.setPixelSize(11)
+        f.setWeight(QFont.ExtraBold)
+        p.setFont(f)
+        p.setPen(qcolor(self.text_color(self._pct)))
+        text_rect = bat
+        if self._charging:  # молния рисуется, а не символом: эмодзи на Windows цветное
+            bx, cy = bat.left() + 7, bat.center().y()
+            bolt = QPainterPath(QPointF(bx + 1.5, cy - 6))
+            for dx, dy in ((-3.5, 1), (-0.5, 1), (-1.5, 6), (3.5, -1), (0.5, -1), (1.5, -6)):
+                bolt.lineTo(bx + dx, cy + dy)
+            bolt.closeSubpath()
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(C.BG))
+            p.drawPath(bolt)
+            text_rect = bat.adjusted(9, 0, 0, 0)
+        p.setPen(qcolor(self.text_color(self._pct)))
+        p.drawText(text_rect, Qt.AlignCenter, self.battery_text())
+        p.end()
+
+
+class StateTag(QLabel):
+    """Плашка 5 px в шапке клетки: эфир, состояние слежения, симулятор (docs/BRANDBOOK.md §6)."""
+
+    TEXTS = {"on": "ВЕДУ", "lost": "ИЩУ", "off": "ВЫКЛ", "standby": "ОЖИДАНИЕ", "no_analysis": "БЕЗ АНАЛИЗА",
+             "pgm": "PGM", "pvw": "PVW", "sim": "СИМУЛЯТОР"}
+
+    def __init__(self, kind: str = "off", parent: QWidget | None = None):
+        super().__init__(parent)
+        self._kind = ""
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setAlignment(Qt.AlignCenter)
+        self.set(kind)
+
+    def kind(self) -> str:
+        return self._kind
+
+    def set(self, kind: str) -> None:
+        if kind == self._kind:
+            return
+        self._kind = kind
+        self.setText(self.TEXTS.get(kind, kind))
+        bg, fg, border = {
+            "on": (C.LIME, C.BG, C.LIME),
+            "lost": (C.LOST, C.BG, C.LOST),
+            "pgm": (C.PGM, C.TEXT, C.PGM),
+            "pvw": ("transparent", C.PVW, C.PVW),
+            "sim": (C.TEXT, C.BG, C.TEXT),
+        }.get(kind, ("transparent", C.TEXT_FAINT, C.LINE))
+        self.setStyleSheet(
+            f"background: {bg}; color: {fg}; border: 1px solid {border}; border-radius: {R_TAG}px;"
+            f" padding: 1px 5px; font-size: 10.5px; font-weight: 700;"
+        )
 
 
 class PowerOverlay(QWidget):

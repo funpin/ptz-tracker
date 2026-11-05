@@ -1,8 +1,20 @@
 import pytest
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
-from ptztracker.ui.theme import apply_dark_theme
-from ptztracker.ui.widgets import Chip, KeyButton, SectionHeader, TrackButton, VideoFrame
+from ptztracker.ui.theme import C, apply_dark_theme, qcolor
+from ptztracker.ui.widgets import (
+    BrandMark,
+    Chip,
+    KeyButton,
+    PadBadge,
+    SectionHeader,
+    StateTag,
+    TrackButton,
+    VideoFrame,
+    paint_brackets,
+)
 
 KINDS = ("off", "on", "lost", "remote", "swing")
 
@@ -34,7 +46,7 @@ def test_section_header(qtbot):
 def test_track_button_texts_and_tooltip(qtbot):
     t = TrackButton()
     qtbot.addWidget(t)
-    expected = {"off": "TRACK OFF", "on": "TRACK ON", "lost": "TRACK LOST", "remote": "TRACK OFF",
+    expected = {"off": "TRACK OFF", "on": "TRACK ON", "lost": "ИЩУ ЦЕЛЬ", "remote": "TRACK OFF",
                 "swing": "TRACK OFF"}
     for k in KINDS:
         t.set_view(k, "СЛОВО", "очень длинная причина " * 10, k == "swing")
@@ -152,3 +164,92 @@ def test_section_header_hint_does_not_widen_panel(qtbot):
     qtbot.addWidget(h)
     assert h.minimumSizeHint().width() < 120
     assert "движение выключает слежение" in h.hint_label.toolTip()
+
+
+def test_track_on_text_is_dark(qtbot):
+    t = TrackButton()
+    qtbot.addWidget(t)
+    t.set_view("on", "", "", False)
+    assert f"color: {C.BG}" in t.styleSheet() and f"background: {C.LIME}" in t.styleSheet()
+    t.set_view("lost", "", "", False)
+    assert f"color: {C.BG}" in t.styleSheet() and f"background: {C.LOST}" in t.styleSheet()
+
+
+def test_track_cams_fit_and_click(qtbot):
+    t = TrackButton()
+    qtbot.addWidget(t)
+    t.set_view("on", "", "", False)
+    w1 = t.sizeHint().width()
+    t.set_cams([(1, "on", True), (2, "off", False), (3, "lost", False), (4, "on", False)])
+    t.resize(t.sizeHint())
+    t.show()
+    assert t.sizeHint().width() >= w1 + 4 * 22
+    r = t.cam_rect(3)
+    assert t.rect().contains(r.toRect())
+    with qtbot.waitSignal(t.camToggled, timeout=500) as sig:
+        qtbot.mouseClick(t, Qt.LeftButton, pos=r.center().toPoint())
+    assert sig.args == [3]
+
+
+def test_track_cam_click_does_not_toggle_selected(qtbot):
+    t = TrackButton()
+    qtbot.addWidget(t)
+    t.set_cams([(1, "on", True), (2, "off", False)])
+    t.resize(t.sizeHint())
+    t.show()
+    checked = t.isChecked()
+    qtbot.mouseClick(t, Qt.LeftButton, pos=t.cam_rect(2).center().toPoint())
+    assert t.isChecked() == checked
+
+
+def test_pad_badge_values(qtbot):
+    widths = set()
+    for args, text in (((1, 0, False), "0"), ((2, 100, False), "100"), ((3, None, False), "—"),
+                       ((4, 46, True), "46")):
+        b = PadBadge()
+        qtbot.addWidget(b)
+        b.set(*args)
+        b.grab()
+        assert b.battery_text() == text
+        widths.add(b.sizeHint().width())
+    assert len(widths) == 1
+
+
+def test_pad_badge_fill_color():
+    assert PadBadge.fill_color(5, False) == C.FAULT
+    assert PadBadge.fill_color(18, False) == C.LOST
+    assert PadBadge.fill_color(46, True) == C.LIME
+    assert PadBadge.fill_color(83, False) == C.TEXT
+    assert PadBadge.text_color(83) == C.BG and PadBadge.text_color(18) == C.TEXT
+
+
+def test_state_tag_kinds(qtbot):
+    texts = {}
+    for k in ("on", "lost", "off", "standby", "no_analysis", "pgm", "pvw", "sim"):
+        t = StateTag(k)
+        qtbot.addWidget(t)
+        texts[k] = t.text()
+    assert texts["on"] == "ВЕДУ" and texts["lost"] == "ИЩУ" and texts["no_analysis"] == "БЕЗ АНАЛИЗА"
+    assert len(set(texts.values())) == len(texts)
+    assert f"background: {C.PGM}" in StateTag("pgm").styleSheet()
+    assert "background: transparent" in StateTag("pvw").styleSheet()
+
+
+def test_brackets_only_at_corners():
+    img = QImage(100, 100, QImage.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    paint_brackets(p, QRectF(10, 10, 80, 80), qcolor(C.LIME), 3)
+    p.end()
+    lime = qcolor(C.LIME).rgb()
+    assert img.pixel(50, 10) != lime  # середина верхней стороны пустая
+    assert img.pixel(14, 10) == lime  # левый верхний угол
+    assert img.pixel(89, 86) == lime  # правый нижний угол
+    assert img.pixel(89, 14) != lime  # правого верхнего угла нет: две скобки, как в знаке
+
+
+def test_brand_mark_paints(qtbot):
+    m = BrandMark(24)
+    qtbot.addWidget(m)
+    assert m.sizeHint().width() == 24
+    assert not m.grab().isNull()

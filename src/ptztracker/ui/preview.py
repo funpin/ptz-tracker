@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ptztracker.ui.state import no_video_text
 from ptztracker.ui.theme import FONT_FAMILY, C, qcolor
+from ptztracker.ui.widgets import paint_brackets
 from ptztracker.video.frames import FrameSource
 from ptztracker.vision.types import (
     KP_L_ANKLE,
@@ -225,9 +226,7 @@ class PreviewWidget(QWidget):
             if is_target:
                 lost = r.target_state == "lost"
                 color = LOST_COLOR if lost else TARGET_COLOR
-                p.setPen(QPen(color, 3))
-                p.setBrush(Qt.NoBrush)
-                p.drawRect(rect)
+                paint_brackets(p, rect, color, 3)
                 self._label(p, rect, "ЦЕЛЬ ПОТЕРЯНА" if lost else "ВЕДУ", color)
             else:
                 pen = QPen(OTHER_COLOR, 1)

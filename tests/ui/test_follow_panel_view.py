@@ -7,7 +7,7 @@ def test_set_view_updates_track_button_and_hint(qtbot):
     qtbot.addWidget(p)
     v = tracking_view(True, None, 1, "lost")
     p.set_view(v)
-    assert p.follow_btn.text() == "TRACK LOST"
+    assert p.follow_btn.text() == "ИЩУ ЦЕЛЬ"
     assert p.status_label.text() == v.why
 
 
