@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from ptztracker import __version__
 from ptztracker.api.backend import start_window_api
+from ptztracker.camera.preset_thumbs import PresetThumbs
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import GRID_SLOTS, AppConfig, CameraConfig, ConfigStore, get_password, set_password
 from ptztracker.control.camera_model import DEFAULT_TABLE_ID
@@ -74,6 +76,7 @@ from ptztracker.ui.gamepad_bridge import GamepadBridge
 from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.manual_controls import ManualControls
+from ptztracker.ui.presets_drawer import DrawerRow, PresetsDrawer
 from ptztracker.ui.service_cell import KINDS, ServiceCell, ServiceRow
 from ptztracker.ui.state import (
     TrackingView,
@@ -345,9 +348,26 @@ class MainWindow(QMainWindow):
             c.skeleton_check.toggled.connect(lambda on, cell=c: self._on_skeleton(on, cell))
             c.preview.targetClicked.connect(lambda _id: self._update_status())
             c.powerClicked.connect(self._cell_power)
+        # пресеты — выдвижная панель под сеткой камер (кнопка «Пресеты» внизу или P); правая колонка не двигается
+        self.thumbs = PresetThumbs(store.path.parent / "presets")
+        self._thumb_cache: dict[str, dict] = {}
+        self._last_preset: dict[int, int] = {}
+        self._thumb_watch: dict[int, tuple[int, int, tuple | None]] = {}  # клетка → (пресет, тиков, положение)
+        self.presets_drawer = PresetsDrawer()
+        self.presets_drawer.hide()
+        self.presets_drawer.recallRequested.connect(self.recall_preset)
+        self.presets_drawer.storeRequested.connect(self.store_preset)
+        self.presets_drawer.renameRequested.connect(self._rename_preset)
+        self.presets_drawer.eraseRequested.connect(self._erase_preset)
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(SP[1])
+        ll.addWidget(grid_host, 1)
+        ll.addWidget(self.presets_drawer)
         central = QWidget()
         hl = QHBoxLayout(central)
-        hl.addWidget(grid_host, 1)
+        hl.addWidget(left, 1)
         hl.addWidget(side_col)
         self.setCentralWidget(central)
 
@@ -363,6 +383,7 @@ class MainWindow(QMainWindow):
             b.setStyleSheet(f"QPushButton {{ min-height: 24px; max-height: 24px; padding: 0 {SP[1]}px;"
                             f" font-size: {FS_CAPTION}px; border-radius: 6px; text-align: left; }}")
         self.help_btn.clicked.connect(self.show_hotkeys)
+        self.presets_btn.toggled.connect(self._show_presets)
         self.version_label = QLabel(f"v{__version__}")
         self.version_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
         self.credit_label = QLabel("by funpin.ru & Claude")
@@ -707,6 +728,7 @@ class MainWindow(QMainWindow):
         self._view_shown = None
         self._tally_shown = None
         self._sync_pad_player()
+        self._refresh_drawer()
 
     def _move_overlays(self, frame: VideoFrame) -> None:
         if self._overlay_host is frame:
@@ -1031,6 +1053,111 @@ class MainWindow(QMainWindow):
 
     def save_config(self) -> None:
         self._save()
+
+    # --- пресеты: выдвижная панель и снимки ---------------------------
+
+    def _show_presets(self, on: bool) -> None:
+        self.presets_drawer.setVisible(on)
+        if on:
+            self._refresh_drawer()
+
+    def _thumbs_of(self, cam_id: str) -> dict:
+        if cam_id not in self._thumb_cache:
+            self._thumb_cache[cam_id] = self.thumbs.load(cam_id)
+        return self._thumb_cache[cam_id]
+
+    def _refresh_drawer(self) -> None:
+        if not hasattr(self, "presets_drawer") or self.presets_drawer.isHidden():
+            return
+        sel = self.grid.selected
+        order = [sel] + [i for i in range(GRID_SLOTS) if i != sel] if sel is not None else range(GRID_SLOTS)
+        rows = []
+        for i in order:
+            c = self.grid.cells[i] if i is not None else None
+            if c is None:
+                continue
+            rows.append(DrawerRow(i, c.cfg.name, self._tally_per[i][1], dict(self._thumbs_of(c.cfg.id)),
+                                  self._last_preset.get(i)))
+        self.presets_drawer.set_rows(rows)
+
+    def recall_preset(self, slot: int, n: int) -> None:
+        """Пресет n (1…) камеры в клетке: клетка выбирается, слежение и агент этой камеры выключаются
+        до команды (ручное действие сессии)."""
+        c = self.grid.cells[slot]
+        if c is None:
+            return
+        if slot != self.grid.selected:
+            self.select_slot(slot)
+        c.session.recall_preset(n - 1)
+        self._after_recall(slot, n)
+
+    def _after_recall(self, slot: int, n: int) -> None:
+        self._last_preset[slot] = n
+        c = self.grid.cells[slot]
+        if c is not None and n not in self._thumbs_of(c.cfg.id):
+            self._thumb_watch[slot] = (n, 0, None)  # снимок — когда камера доедет (или через 5 с)
+        self._refresh_drawer()
+
+    def store_preset(self, slot: int, n: int) -> None:
+        c = self.grid.cells[slot]
+        if c is None:
+            return
+        if slot != self.grid.selected:
+            self.select_slot(slot)
+        if QMessageBox.question(self, "Пресет", f"Записать текущее положение камеры {c.cfg.name} в пресет {n}?") \
+                != QMessageBox.Yes:
+            return
+        c.session.store_preset(n - 1)
+        self._last_preset[slot] = n
+        self._capture_thumb_soon(slot, n)
+
+    def _capture_thumb_soon(self, slot: int, n: int) -> None:
+        QTimer.singleShot(300, lambda: self._capture_thumb(slot, n))
+
+    def _capture_thumb(self, slot: int, n: int) -> None:
+        c = self.grid.cells[slot]
+        frame = c.session.frames.latest() if c is not None else None
+        if frame is None:
+            return
+        ptz = c.session.ptz
+        self.thumbs.save(c.cfg.id, n, frame.image, ptz.pan_deg if ptz is not None else None)
+        self._thumb_cache.pop(c.cfg.id, None)
+        self._refresh_drawer()
+
+    def _watch_thumbs(self) -> None:
+        """После вызова пресета без снимка: снять, когда положение два опроса подряд не меняется, или через 5 с."""
+        for slot, (n, ticks, last) in list(self._thumb_watch.items()):
+            c = self.grid.cells[slot]
+            if c is None:
+                self._thumb_watch.pop(slot)
+                continue
+            c.session.poll_position()
+            p = c.session.ptz
+            pos = (round(p.pan_deg, 1), round(p.tilt_deg, 1), p.zoom_x) if p is not None else None
+            if (ticks >= 2 and pos is not None and pos == last) or ticks >= 10:
+                self._thumb_watch.pop(slot)
+                self._capture_thumb(slot, n)
+            else:
+                self._thumb_watch[slot] = (n, ticks + 1, pos)
+
+    def _rename_preset(self, slot: int, n: int) -> None:
+        c = self.grid.cells[slot]
+        if c is None:
+            return
+        old = self._thumbs_of(c.cfg.id).get(n)
+        name, ok = QInputDialog.getText(self, "Пресет", f"Имя пресета {n}:", text=old.name if old else "")
+        if ok:
+            self.thumbs.rename(c.cfg.id, n, name)
+            self._thumb_cache.pop(c.cfg.id, None)
+            self._refresh_drawer()
+
+    def _erase_preset(self, slot: int, n: int) -> None:
+        c = self.grid.cells[slot]
+        if c is None:
+            return
+        self.thumbs.erase(c.cfg.id, n)
+        self._thumb_cache.pop(c.cfg.id, None)
+        self._refresh_drawer()
 
     def _toggle_follow_slot(self, slot: int) -> None:
         """Квадратик камеры на TRACK: то же, что Пробел для этой камеры, выбор не меняется."""
@@ -1451,6 +1578,8 @@ class MainWindow(QMainWindow):
         self._update_cell_headers()
         for i, cell in enumerate(self.cells):
             cell.set_pads(self._cell_pads(i))  # заряд меняется сам по себе
+        self._watch_thumbs()
+        self._refresh_drawer()
         self._update_selected_status()
 
     def _update_selected_status(self) -> None:
@@ -1656,6 +1785,10 @@ class MainWindow(QMainWindow):
             if key == Qt.Key_F1:
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self.show_hotkeys()
+                return True
+            if key == Qt.Key_P:
+                if et == QEvent.KeyPress and not event.isAutoRepeat():
+                    self.presets_btn.toggle()
                 return True
             if key == Qt.Key_F9:  # сохранить момент: не ручное управление, слежение не трогаем
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
@@ -2039,11 +2172,14 @@ class MainWindow(QMainWindow):
         if s is None:
             return
         if isinstance(it, Preset):
+            slot = self.grid.cells.index(self._pad_cell(pad))
             if it.store:
                 s.store_preset(it.n)
+                self._capture_thumb_soon(slot, it.n + 1)
                 self._pad_rumble(pad, RUMBLE_PRESET_STORED)
             else:
                 s.recall_preset(it.n)
+                self._after_recall(slot, it.n + 1)
         elif isinstance(it, IrisStep):
             if not s.iris_step(it.d):
                 self._pad_rumble(pad, RUMBLE_NOWHERE)
