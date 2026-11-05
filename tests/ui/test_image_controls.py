@@ -21,7 +21,8 @@ def make(qtbot, tmp_path):
 def _heights(w) -> str:
     """Высоты строк правой панели — чтобы по логу CI понять, что не поместилось."""
     out = [f"окно {w.width()}x{w.height()}, область {w.side_scroll.viewport().height()},"
-           f" содержимое {w.side_scroll.widget().sizeHint().height()}"]
+           f" содержимое {w.side_scroll.widget().sizeHint().height()},"
+           f" мин. ширина содержимого {w.side_scroll.widget().minimumSizeHint().width()}"]
     for panel in (w.follow_panel, w.controls):
         lay = panel.layout()
         for i in range(lay.count()):
@@ -29,7 +30,13 @@ def _heights(w) -> str:
             wd = it.widget()
             name = type(wd).__name__ if wd else "layout"
             text = getattr(wd, "text", lambda: "")() if wd and hasattr(wd, "text") else ""
-            out.append(f"{type(panel).__name__}[{i}] {name} {text[:20]!r} h={it.sizeHint().height()}")
+            out.append(f"{type(panel).__name__}[{i}] {name} {text[:20]!r} h={it.sizeHint().height()}"
+                       f" мин. ширина {it.minimumSize().width()}")
+            if not wd and it.layout():
+                sub = it.layout()
+                out.append("    " + ", ".join(
+                    f"{type(sub.itemAt(k).widget()).__name__ if sub.itemAt(k).widget() else 'layout'}"
+                    f"={sub.itemAt(k).minimumSize().width()}" for k in range(sub.count())))
     return "\n".join(out)
 
 
