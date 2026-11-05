@@ -228,3 +228,25 @@ def test_main_window_factory_passes_cancel_observer_and_camera_info(qtbot, tmp_p
     assert r.cancel is seen["cancel"] and r.on_sample is seen["obs"]
     assert (r.model, r.firmware) == ("AW-HE42", "1.23")
     w.close()
+
+
+def test_cancel_racing_done_saves_nothing(qtbot):
+    # «Прервать» нажали после последней проверки отмены в мастере, но до того, как окно получило done
+    saved = []
+    d = CalibrationDialog(lambda progress, cancel, on_sample: StubRunner(progress), saved.append)
+    qtbot.addWidget(d)
+    d._cancel.set()
+    d._done(default_calibration().to_json())
+    assert saved == []
+    assert "прервана" in d.result_label.text()
+
+
+def test_close_and_start_wait_for_runner_thread_end(qtbot):
+    saved = []
+    d = CalibrationDialog(lambda progress, cancel, on_sample: StubRunner(progress), saved.append)
+    qtbot.addWidget(d)
+    d.close_button.setEnabled(False)
+    d._done(default_calibration().to_json())  # результат пришёл, поток мастера ещё не закончился
+    assert not d.close_button.isEnabled()
+    d._ended()
+    assert d.close_button.isEnabled()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import threading
 from typing import Callable
 
@@ -123,7 +124,7 @@ def numbers_text(snap: dict) -> str:
         lines.append("")
         lines.append("Скорость зума (во сколько раз в секунду):")
         for c, rate in res["zoom"]["points"]:
-            lines.append(f"  код {c}: ×{fmt(2.718281828 ** rate)}")
+            lines.append(f"  код {c}: ×{fmt(math.exp(rate))}")
     return "\n".join(lines)
 
 
@@ -384,12 +385,13 @@ class CalibrationDialog(QDialog):
             self.numbers_view.setPlainText(numbers_text(snap))
 
     def _finish(self) -> None:
+        # «Закрыть» и «Начать» включаются в _ended: до конца потока мастер ещё может возвращать камеру
         self.cancel_button.setEnabled(False)
-        self.close_button.setEnabled(True)
-        self.off_air_check.setEnabled(True)
-        self.start_button.setEnabled(self.off_air_check.isChecked())
 
     def _done(self, calib: dict) -> None:
+        if self._cancel.is_set():  # «Прервать» нажали, пока шёл сигнал done: калибровку не сохраняем
+            self._cancelled()
+            return
         self._finish()
         self._on_saved(calib)
         self.result_label.setText("Готово: калибровка сохранена для этой камеры.")
@@ -406,6 +408,9 @@ class CalibrationDialog(QDialog):
         """Поток мастера закончился (после done/cancelled/failed): последний кадр графика и цифр."""
         self._timer.stop()
         self._refresh()
+        self.close_button.setEnabled(True)
+        self.off_air_check.setEnabled(True)
+        self.start_button.setEnabled(self.off_air_check.isChecked())
         if self._close_when_done:
             self._close_when_done = False
             super().reject()
