@@ -237,3 +237,12 @@ def test_shutter_synchro_pedestal_detail_preset_speed():
     assert s.handle("QTP") == "OTP:096" and s.handle("OTP:0A5") == "OTP:0A5" and s.handle("QTP") == "OTP:0A5"
     assert s.handle("QDT") == "ODT:1" and s.handle("ODT:2") == "ODT:2"
     assert s.handle("#UPVS") == "uPVS625" and s.handle("#UPVS999") == "uPVS999" and s.handle("#UPVS") == "uPVS999"
+
+
+def test_osd_menu():
+    s = SimPtz()
+    assert s.handle("QUS") == "OUS:0"
+    assert s.handle("DUS:1") == "DUS:1" and s.handle("QUS") == "OUS:1" and s.osd_open
+    for k in ("DUP", "DDW", "DIT", "DPG"):
+        assert not s.handle(k).upper().startswith("ER")
+    assert s.handle("DUS:0") == "DUS:0" and not s.osd_open

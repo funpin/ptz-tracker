@@ -292,3 +292,18 @@ def parse_preset_speed(body: str) -> int:
         raise ValueError(f"Не похоже на ответ скорости пресетов: {body!r}")
     v = int(m.group(1))
     return max(1, min(30, 1 + round((v - PRESET_SPEED_LO) * 29 / (PRESET_SPEED_HI - PRESET_SPEED_LO))))
+
+
+# Меню Panasonic на самой камере (OSD) — стр. 168–171 спецификации. Камера рисует его в свой видеосигнал:
+# у камеры в эфире его увидят зрители. Влево/вправо (DLT/DRT) у HE40/42 нет. ⚠ Параметр DUP/DDW для
+# HE40/42 в документе не указан — шлём без него; сверить на живой камере.
+Q_OSD = "QUS"
+OSD_KEYS = {"up": "DUP", "down": "DDW", "enter": "DIT", "back": "DPG"}
+
+
+def osd(on: bool) -> str:
+    return "DUS:1" if on else "DUS:0"
+
+
+def parse_osd(body: str) -> bool:
+    return _parse_hex(r"OUS:([01])", body, "меню камеры") == 1

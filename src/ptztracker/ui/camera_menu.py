@@ -66,7 +66,13 @@ WHY = {
     "synchro": "Крутите, пока полосы на LED-экране не исчезнут.",
     "pedestal": "Уровень чёрного: подогнать картинку под соседние камеры, чтобы при переключении не было скачка.",
     "detail": "Резкость контуров: подогнать под соседние камеры; «Высокая» делает лица жёстче.",
+    "osd": "Всё остальное, что умеет камера, — в её собственном меню Panasonic. Оно появляется в видео камеры"
+           " (у камеры в эфире — и в эфире).",
 }
+OSD_AUTOCLOSE_S = 60.0
+TITLE_QUICK = "Быстрые настройки    ↑↓ пункт · ←→ значение · ○ закрыть"
+TITLE_OSD = "Меню Panasonic на камере    ↑↓ · → выбрать · ← назад · ○ закрыть"
+OSD_HINT = "Меню рисует сама камера — смотрите на картинку этой клетки. ○ или Esc — закрыть меню камеры."
 HZ50 = True  # ⚠ сеть 50 Гц (Россия): подписи затвора и частоты Synchro; формат камеры пока не спрашиваем
 
 
@@ -91,11 +97,15 @@ class CameraMenu(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(SP[1], SP[1], SP[1], SP[1])
         lay.setSpacing(2)
-        head = QLabel("Меню камеры    ↑↓ пункт · ←→ значение · ○ закрыть")
-        head.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px; padding: 2px {SP[2]}px;")
-        lay.addWidget(head)
+        # «Быстрые настройки» — наше окошко в программе (в эфир не попадает); «Меню Panasonic» — меню самой
+        # камеры, которое она рисует в своё видео (пользователь 2026-11-05: не путать два меню)
+        self.title_label = QLabel(TITLE_QUICK)
+        self.title_label.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px; padding: 2px {SP[2]}px;")
+        lay.addWidget(self.title_label)
+        self.osd_mode = False
+        self.on_air: Callable[[], bool] = lambda: False  # окно подставляет: камера меню сейчас в PGM
         self._rows: dict[str, _Row] = {}
-        for key in ("focus", "wb", "ctemp", "iris", "gain", "shutter", "synchro", "pedestal", "detail"):
+        for key in ("focus", "wb", "ctemp", "iris", "gain", "shutter", "synchro", "pedestal", "detail", "osd"):
             r = _Row(key)
             r.clicked.connect(self.click_item)
             self._rows[key] = r
@@ -168,6 +178,8 @@ class CameraMenu(QFrame):
                     and self._wb() == P.WB_VAR)
         if key in RARE:
             return self._has(RARE[key]) and self._val(key) is not None
+        if key == "osd":
+            return self._has("set_osd", "osd_key")
         return False
 
     def visible_keys(self) -> list[str]:
@@ -184,6 +196,8 @@ class CameraMenu(QFrame):
             keys.append("pedestal")
         if self._has("set_detail"):
             keys.append("detail")
+        if self._has("set_osd"):
+            keys.append("osd")
         return keys
 
     def _val(self, key: str) -> int | None:
@@ -206,6 +220,7 @@ class CameraMenu(QFrame):
         out["synchro"] = "—" if sy is None else f"{P.synchro_hz(sy, HZ50):.1f} Гц  ◀ ▶".replace(".", ",")
         out["pedestal"] = "—" if pd is None else f"{pd:+d}  ◀ ▶".replace("+0", "0")
         out["detail"] = "—" if dt is None else P.DETAIL_MODES.get(dt, "?")
+        out["osd"] = "›"
         return out
 
     def _render(self) -> None:
@@ -215,14 +230,15 @@ class CameraMenu(QFrame):
         vals = self.values()
         titles = {"focus": "Фокус", "wb": "Баланс белого", "ctemp": "   Цвет. температура",
                   "iris": "Ирис", "gain": "Gain", "shutter": "Затвор", "synchro": "   Частота Synchro",
-                  "pedestal": "Уровень чёрного", "detail": "Резкость"}
+                  "pedestal": "Уровень чёрного", "detail": "Резкость", "osd": "Меню Panasonic на камере"}
+        self.title_label.setText(TITLE_OSD if self.osd_mode else TITLE_QUICK)
         for k, r in self._rows.items():
-            r.setVisible(k in keys)
+            r.setVisible(k in keys and not self.osd_mode)
             r.title.setText(titles[k])
             r.value.setText(vals[k])
             r.setToolTip(WHY[k])
             r.style(k == self._cursor, self._enabled(k))
-        self.hint.setText(WHY.get(self._cursor, ""))
+        self.hint.setText(OSD_HINT if self.osd_mode else WHY.get(self._cursor, ""))
         self.adjustSize()
 
     # --- открытие и закрытие ---------------------------------------------------
@@ -239,6 +255,7 @@ class CameraMenu(QFrame):
         self._restart()
 
     def close_menu(self) -> None:
+        self._leave_osd()
         self._stop_focus()
         self._timer.stop()
         self._tick.stop()
@@ -251,7 +268,8 @@ class CameraMenu(QFrame):
         self.close_menu() if self.is_open else self.open()
 
     def _restart(self) -> None:
-        self._timer.start(int(AUTOCLOSE_S * 1000))
+        # по меню Panasonic ходят медленнее — минута без нажатий, а не AUTOCLOSE_S
+        self._timer.start(int((OSD_AUTOCLOSE_S if self.osd_mode else AUTOCLOSE_S) * 1000))
 
     def _on_timeout(self) -> None:
         self.close_menu()  # close_menu сначала останавливает фокус
@@ -275,6 +293,10 @@ class CameraMenu(QFrame):
         self._restart()
         if dx == 0 and dy == 0:
             self._stop_focus()  # отпустили ←/→
+            return
+        if self.osd_mode:  # кнопки пульта камеры: ↑↓ — пункт, → — выбрать, ← — назад
+            key = ("up" if dy < 0 else "down") if dy else ("enter" if dx > 0 else "back")
+            self._s().osd_key(key)
             return
         if dy:
             keys = [k for k in self.visible_keys() if self._enabled(k)]
@@ -301,6 +323,9 @@ class CameraMenu(QFrame):
             self._ctemp_step(d)
         elif k in RARE:
             self._rare_step(k, d)
+        elif k == "osd":
+            if d > 0:
+                self._enter_osd()
         else:
             self._toggle(k)
 
@@ -308,9 +333,14 @@ class CameraMenu(QFrame):
         if not self.is_open:
             return
         self._restart()
+        if self.osd_mode:
+            self._s().osd_key("enter")
+            return
         k = self._cursor
         if self._enabled(k):
-            if k == "wb":
+            if k == "osd":
+                self._enter_osd()
+            elif k == "wb":
                 self._wb_step(+1)
             elif k in ("shutter", "detail"):
                 self._rare_step(k, +1)
@@ -351,6 +381,28 @@ class CameraMenu(QFrame):
         if new != wb:
             self._s().set_wb(new)
             self._remember("wb", new)
+
+    def _enter_osd(self) -> None:
+        """Открыть меню Panasonic. У камеры в эфире — сначала спросить: меню увидят зрители."""
+        if self.on_air():
+            from PySide6.QtWidgets import QMessageBox
+
+            q = ("Камера сейчас в эфире (PGM). Меню Panasonic камера рисует прямо в своё видео — его увидят"
+                 " зрители.\n\nВсё равно открыть?")
+            if QMessageBox.question(self.window(), "Меню Panasonic", q) != QMessageBox.Yes:
+                return
+        self._stop_focus()
+        self._s().set_osd(True)
+        self.osd_mode = True
+        self._render()
+        self._restart()
+
+    def _leave_osd(self) -> None:
+        if self.osd_mode:
+            self.osd_mode = False
+            s = self._s()
+            if s is not None:
+                s.set_osd(False)
 
     def _rare_step(self, k: str, d: int) -> None:
         """Затвор и резкость — по кругу ступеней (клик/✕ — следующая); Synchro и уровень чёрного — шагом."""

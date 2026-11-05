@@ -758,6 +758,15 @@ class CameraSession:
     def set_preset_speed(self, n: int) -> None:
         self._submit("preset_speed", P.preset_speed(n), only_if_changed=False)
 
+    def set_osd(self, on: bool) -> None:
+        """Меню Panasonic на камере: открыть или закрыть (картинку меню камера кладёт в своё видео)."""
+        self._submit("osd", P.osd(on), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
+
+    def osd_key(self, key: str) -> None:
+        """up | down | enter | back — кнопка пульта в меню Panasonic."""
+        self._osd_n = getattr(self, "_osd_n", 0) + 1  # свой ключ на нажатие: очередь не сливает быстрые нажатия
+        self._submit(f"osd_key_{self._osd_n}", P.OSD_KEYS[key], only_if_changed=False, ttl=ONE_SHOT_TTL_S)
+
     # --- ручное управление --------------------------------------------
 
     def _submit(self, key: str, cmd: str, only_if_changed: bool = True, ttl: float | None = None) -> None:

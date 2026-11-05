@@ -377,3 +377,45 @@ def test_rows_explain_why(qtbot):
     m._cursor = "shutter"
     m._render()
     assert m.hint.text() == cm.WHY["shutter"] and "мерцан" in m.hint.text()
+
+
+class OsdSession(RareSession):
+    def set_osd(self, on):
+        self.calls.append(("osd", on))
+
+    def osd_key(self, key):
+        self.calls.append(("osd_key", key))
+
+
+def test_quick_settings_title_and_osd_item(qtbot):
+    s = OsdSession()
+    s.image = dataclasses.replace(ImageState(), shutter=0, pedestal=0, detail=1)
+    m, _ = build(qtbot, s)
+    m.open()
+    assert m.title_label.text().startswith("Быстрые настройки")
+    assert m.visible_keys()[-1] == "osd" and "Panasonic" in m._rows["osd"].title.text()
+    m.click_item("osd")
+    assert ("osd", True) in s.calls and m.osd_mode
+    assert m.title_label.text().startswith("Меню Panasonic")
+    m.nav(0, 1)
+    m.nav(0, -1)
+    m.nav(1, 0)
+    m.nav(-1, 0)
+    m.accept()
+    assert [c[1] for c in s.calls if c[0] == "osd_key"] == ["down", "up", "enter", "back", "enter"]
+    m.close_menu()
+    assert s.calls[-1] == ("osd", False) and not m.osd_mode
+
+
+def test_osd_on_air_asks_first(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    s = OsdSession()
+    s.image = dataclasses.replace(ImageState(), shutter=0, pedestal=0, detail=1)
+    m, _ = build(qtbot, s)
+    m.on_air = lambda: True
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a) or QMessageBox.No)
+    m.open()
+    m.click_item("osd")
+    assert asked and ("osd", True) not in s.calls and not m.osd_mode

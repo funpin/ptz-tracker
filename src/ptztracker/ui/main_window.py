@@ -118,7 +118,7 @@ KEY_ZOOM_SPEED = 0.5
 SIDE_WIDTH = 372
 _HOTKEYS = [
     ("Пробел", "слежение"), ("1–3", "кадр: пояс, рост, общий"), ("← → ↑ ↓", "поворот"), ("+ −", "зум"), ("Esc", "стоп"),
-    ("F9", "сохранить момент"), ("M", "меню камеры"),
+    ("F9", "сохранить момент"), ("M", "быстрые настройки (меню поверх видео)"),
 ]  # F1 («справка») сюда не добавляем: окно F1 показывает её само
 # в строке состояния — только главное; остальное в окне F1
 _PAN_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
@@ -307,6 +307,8 @@ class MainWindow(QMainWindow):
         # виртуальную камеру нельзя принять за живую: плашка «СИМУЛЯТОР» в шапке клетки
         self._tally_per: list[tuple[int, str | None, bool]] = [(0, None, False)] * GRID_SLOTS
         self.camera_menu.openChanged.connect(self._on_menu_changed)
+        # меню Panasonic камера рисует в своё видео: у камеры в эфире — спросить перед открытием
+        self.camera_menu.on_air = lambda: (s := self._menu_slot()) is not None and self._tally_per[s][1] == "pgm"
 
         side = QWidget()
         sl = QVBoxLayout(side)
@@ -440,7 +442,7 @@ class MainWindow(QMainWindow):
         self.diag_action.triggered.connect(self._run_diagnostics)
         self.power_action = QAction("Перевести камеру в режим ожидания…", self)
         self.power_action.triggered.connect(self._power_menu)
-        self.osd_action = QAction("Меню камеры (OSD)\tM", self)
+        self.osd_action = QAction("Быстрые настройки\tM", self)
         self.osd_action.triggered.connect(self._open_osd_menu)
         self.atem_action = menu.addAction("ATEM…", self._edit_atem)
         self.agent_action = menu.addAction("Агент…", self._show_agent_window)

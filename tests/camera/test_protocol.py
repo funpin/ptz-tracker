@@ -192,3 +192,11 @@ def test_preset_speed():
     assert P.preset_speed(1) == "#UPVS250" and P.preset_speed(30) == "#UPVS999"
     assert P.parse_preset_speed("uPVS250") == 1 and P.parse_preset_speed("uPVS999") == 30
     assert P.parse_preset_speed(f"uPVS{P.preset_speed(15)[5:]}") == 15
+
+
+def test_osd_commands():
+    from ptztracker.camera import protocol as P
+
+    assert P.osd(True) == "DUS:1" and P.osd(False) == "DUS:0"
+    assert P.OSD_KEYS == {"up": "DUP", "down": "DDW", "enter": "DIT", "back": "DPG"}
+    assert P.parse_osd("OUS:1") is True and P.parse_osd("OUS:0") is False
