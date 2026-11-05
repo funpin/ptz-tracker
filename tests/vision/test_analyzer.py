@@ -228,7 +228,9 @@ def test_pose_detector_on_1280x720_frame_through_analyzer():
         assert wait_until(lambda: a.latest() is not None and len(a.latest().tracks) >= 3, 5)
         r = a.latest()
         assert r.frame_size == (1280, 720)
-        assert all(0 <= t.box[0] < t.box[2] <= 1280 + 1 and 0 <= t.box[1] < t.box[3] <= 720 + 1 for t in r.tracks)
+        # пиксели кадра, а не доли; рамка человека у края может чуть выйти за кадр
+        assert max(t.box[2] for t in r.tracks) > 100
+        assert all(-64 <= t.box[0] < t.box[2] <= 1280 + 64 and -36 <= t.box[1] < t.box[3] <= 720 + 36 for t in r.tracks)
     finally:
         a.stop()
 

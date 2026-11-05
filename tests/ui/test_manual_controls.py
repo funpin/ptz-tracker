@@ -131,3 +131,9 @@ def test_zoom_is_vertical_rocker_right_of_stick(qtbot):
     assert sl_left > js_right
     sl.setValue(sl.maximum())
     assert s.zoom[-1] > 0
+
+
+def test_zoom_column_not_taller_than_stick(qtbot):
+    # Windows (крупный шрифт): колонка выше стика удлиняла правую панель, и та прокручивалась
+    c, _ = make(qtbot)
+    assert c._zoom_col.sizeHint().height() <= c.joystick.height()

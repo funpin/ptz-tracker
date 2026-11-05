@@ -28,6 +28,7 @@ class PadBackend:
         self.fail = fail
         self.batt = (None, None)
         self.calls = []
+        self.polls = 0
         self._lock = threading.Lock()
 
     def open(self):
@@ -36,6 +37,7 @@ class PadBackend:
         return True
 
     def poll(self):
+        self.polls += 1
         return self.pad
 
     def info(self):
@@ -260,10 +262,15 @@ def test_camera_switch_requires_recenter(qtbot, tmp_path):
 
 
 def press(qtbot, b, button, hold_s=0.05):
+    """Нажать и отпустить; ждём, пока опрос геймпада увидит и нажатие, и отпускание (медленная машина CI)."""
+    n = b.polls
     b.pad = stick(buttons={button})
     qtbot.wait(int(hold_s * 1000))
+    qtbot.waitUntil(lambda: b.polls >= n + 2, timeout=2000)
+    n = b.polls
     b.pad = stick()
-    qtbot.wait(80)
+    qtbot.waitUntil(lambda: b.polls >= n + 2, timeout=2000)
+    qtbot.wait(30)
 
 
 def test_r3_toggles_like_space(qtbot, tmp_path):

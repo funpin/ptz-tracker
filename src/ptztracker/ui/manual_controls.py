@@ -77,13 +77,18 @@ class ManualControls(QWidget):
         self.zoom_slider.setToolTip("Тяните вверх — приблизить, вниз — отдалить. Отпустите — стоп.")
         self.zoom_slider.valueChanged.connect(self._on_zoom)
         self.zoom_slider.sliderReleased.connect(lambda: self.zoom_slider.setValue(0))
-        zoom_col = QVBoxLayout()
+        # клавиша и подпись в одну строку: колонка не выше стика (крупный шрифт Windows)
+        self._zoom_col = zoom_col = QVBoxLayout()
         zoom_col.setSpacing(SP[0])
-        for wd in (self._keycap_label("+"), self._caption("Ближе")):
-            zoom_col.addWidget(wd, 0, Qt.AlignHCenter)
-        zoom_col.addWidget(self.zoom_slider, 0, Qt.AlignHCenter)
-        for wd in (self._caption("Шире"), self._keycap_label("−")):
-            zoom_col.addWidget(wd, 0, Qt.AlignHCenter)
+        for key, text in (("+", "Ближе"), (None, None), ("−", "Шире")):
+            if key is None:
+                zoom_col.addWidget(self.zoom_slider, 0, Qt.AlignHCenter)
+                continue
+            row = QHBoxLayout()
+            row.setSpacing(SP[0])
+            row.addWidget(self._keycap_label(key))
+            row.addWidget(self._caption(text))
+            zoom_col.addLayout(row)
 
         stick_row = QHBoxLayout()
         stick_row.addStretch(1)
