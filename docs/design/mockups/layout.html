@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>PTZ Tracker — кнопки и питание</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--graphite:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;
+ --white:#F5F5F2;--dim:#B4B8BD;--grey:#858A91;--grey-brand:#777C83;--lime:#B7F34A;--fault:#EF4444;--pgm:#E8202A;--pvw:#2FB65E;--lost:#F0A020}
+*{box-sizing:border-box}
+body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:24px 28px 60px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:36px 0 6px}
+p.sub{color:var(--dim);margin:0 0 14px;font-size:14px;line-height:1.5;max-width:1100px}
+.win{width:1180px;height:720px;background:var(--graphite);border-radius:12px;border:1px solid var(--line);display:grid;grid-template-rows:50px 1fr 34px;overflow:hidden;font-size:13px}
+.top{display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line)}
+.sp{flex:1}
+.pill{height:30px;padding:0 10px;border-radius:8px;display:flex;align-items:center;gap:7px;color:var(--dim);font-size:12.5px;border:1px solid transparent;position:relative}
+.pill:hover{background:var(--raised)}
+.pill b{color:var(--white);font-weight:600}
+.dot{width:8px;height:8px;border-radius:50%}
+.vl{width:1px;height:20px;background:var(--line);margin:0 4px}
+.track{height:34px;padding:0 14px;border-radius:8px;background:var(--lime);color:var(--graphite);display:flex;align-items:center;gap:8px;font-weight:700}
+.mid{display:grid;grid-template-columns:1fr 280px;min-height:0}
+.left{display:flex;flex-direction:column;min-height:0}
+.grid{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:10px;padding:10px}
+.cell{border-radius:10px;border:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;overflow:hidden;position:relative}
+.cell.sel{border-color:var(--white)}
+.ch{height:36px;display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;flex:none}
+.num{width:22px;height:22px;border-radius:6px;background:var(--raised-hi);display:grid;place-items:center;font-weight:700;font-size:12px}
+.sel .num{background:var(--white);color:var(--graphite)}
+.cname{height:26px;padding:0 8px;border-radius:7px;display:flex;align-items:center;gap:8px;font-weight:600}
+.cname:hover{background:var(--raised)}
+.cname i{font-style:normal;color:var(--grey);font-size:10px}
+.tag{font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:5px;letter-spacing:.3px}
+.tag.pgm{background:var(--pgm)}.tag.pvw{color:var(--pvw);border:1px solid var(--pvw);padding:1px 5px}
+.tag.on{color:var(--graphite);background:var(--lime)}.tag.off{color:var(--grey);border:1px solid var(--line);padding:1px 5px}.tag.lost{color:var(--graphite);background:var(--lost)}
+.padb{height:22px;padding:0 6px;border-radius:6px;border:1px solid var(--line);display:flex;align-items:center;gap:4px;font-size:11px;color:var(--white)}
+.padb .bat{width:14px;height:7px;border:1px solid var(--dim);border-radius:2px;position:relative}.padb .bat:after{content:"";position:absolute;left:1px;top:1px;bottom:1px;width:var(--b);background:var(--dim)}
+.ib{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:var(--dim);font-size:14px;position:relative}
+.ib:hover{background:var(--raised)}
+.ib.pw-on{color:var(--lime)}.ib.pw-off{color:var(--grey)}
+.vid{flex:1;position:relative;background:linear-gradient(180deg,#4a5260 0%,#3b4049 55%,#4a3a2c 56%,#3a2d22 100%)}
+.vid .tb{position:absolute;left:8px;top:8px;height:26px;display:flex;align-items:center;gap:6px;padding:0 4px 0 9px;border-radius:7px;background:rgba(23,25,29,.85);font-size:12px}
+.vid .tb span.i{width:22px;height:22px;border-radius:5px;display:grid;place-items:center;color:var(--dim)}
+.vid .hint{position:absolute;left:8px;bottom:8px;font-size:11.5px;color:var(--dim);background:rgba(23,25,29,.85);padding:4px 8px;border-radius:7px}
+.vid .fps{position:absolute;right:8px;bottom:8px;font-size:11px;color:var(--dim);background:rgba(23,25,29,.85);padding:3px 7px;border-radius:6px}
+.person{position:absolute;left:46%;top:30%;width:20px;height:60px;border-radius:9px 9px 4px 4px;background:#c8968a}
+.standby{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--dim);font-size:12.5px}
+.standby .big{width:64px;height:64px;border-radius:50%;border:1.5px solid var(--grey-brand);display:grid;place-items:center;font-size:26px;color:var(--white)}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--grey);font-size:12.5px}
+.empty .add{height:30px;padding:0 12px;border-radius:8px;border:1px dashed var(--grey-brand);display:flex;align-items:center;color:var(--white)}
+.side{border-left:1px solid var(--line);padding:12px 14px;display:flex;flex-direction:column;gap:10px;color:var(--grey);font-size:12px}
+.lbl{color:var(--grey);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.selhead{display:flex;align-items:center;gap:8px;color:var(--white);font-weight:600;font-size:13px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.stop{margin-top:auto;height:42px;border-radius:8px;border:1px solid var(--fault);color:var(--fault);display:flex;align-items:center;justify-content:center;font-weight:700}
+.foot{border-top:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 14px;font-size:12px;background:var(--surface);color:var(--dim)}
+.fbtn{height:24px;padding:0 10px;border-radius:6px;border:1px solid var(--line);display:flex;align-items:center;gap:6px;color:var(--white)}
+.kc{font-size:10.5px;font-weight:600;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 5px;background:var(--raised)}
+.faint{color:var(--grey)}
+/* нумерованные выноски */
+.n{position:absolute;width:18px;height:18px;border-radius:50%;background:var(--lime);color:var(--graphite);font-size:10.5px;font-weight:800;display:grid;place-items:center;z-index:5;box-shadow:0 0 0 2px #0E0F12}
+/* меню */
+.menus{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.menu{width:300px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;font-size:13px}
+.menu .t{color:var(--grey);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:6px 10px 4px}
+.menu .m{padding:7px 10px;border-radius:7px;display:flex;gap:8px;align-items:center}
+.menu .m:hover{background:var(--raised)}
+.menu .m .r{margin-left:auto;color:var(--grey);font-size:11.5px}
+.menu hr{border:none;border-top:1px solid var(--line);margin:5px 4px}
+.menu .m.warn{color:var(--lost)}
+.legend{columns:2;column-gap:36px;max-width:1180px;color:var(--dim);font-size:13.5px;line-height:1.55}
+.legend div{break-inside:avoid;margin-bottom:10px;display:flex;gap:10px}
+.legend .n{position:static;flex:none;margin-top:2px}
+.legend b{color:var(--white)}
+.choice{display:inline-flex;margin:12px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:var(--dim);font-size:13px}
+.choice.selected{border-color:var(--lime);color:var(--lime)}
+</style></head><body>
+<h1>Где какие кнопки</h1>
+<p class="sub">Главная мысль: <b>всё, что касается одной камеры, — в шапке её клетки</b> (питание, геймпады, эфир, слежение, меню камеры). <b>Всё общее</b> — в верхней строке и меню ☰. Справа — ручное управление <b>выбранной</b> камерой, её имя сверху колонки. Лаймовые номера — пояснения ниже.</p>
+
+<div class="win">
+  <div class="top" style="position:relative">
+    <svg width="24" height="24" viewBox="0 0 120 120"><g fill="none" stroke="#F5F5F2" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"><path d="M31 58V42c0-6.075 4.925-11 11-11h16"/><path d="M62 89h16c6.075 0 11-4.925 11-11V62"/></g><circle cx="60" cy="60" r="11" fill="#B7F34A"/></svg>
+    <b style="letter-spacing:.5px">PTZ</b><span class="faint" style="font-size:10px;letter-spacing:3px">TRACKER</span>
+    <div class="sp"></div>
+    <span class="pill"><span class="n" style="left:-8px;top:-8px">1</span><span class="dot" style="background:var(--pvw)"></span><b>ATEM</b> 10.0.0.20</span>
+    <span class="pill"><span class="n" style="left:-8px;top:-8px">2</span>🎮︎ <b>2</b> геймпада</span>
+    <span class="pill"><span class="n" style="left:-8px;top:-8px">3</span>⟲ <b>Журнал</b> <span class="kc">F9</span></span>
+    <span class="pill" style="color:var(--lime)">AGENT</span>
+    <span class="vl"></span>
+    <span class="pill" style="font-size:16px"><span class="n" style="left:-8px;top:-8px">4</span>☰</span>
+    <span class="track" style="position:relative"><span class="n" style="left:-8px;top:-8px">5</span>● TRACK ON</span>
+  </div>
+  <div class="mid">
+    <div class="left"><div class="grid">
+      <div class="cell sel">
+        <div class="ch" style="position:relative">
+          <span class="n" style="left:-2px;top:-2px">6</span>
+          <span class="num">1</span><span class="cname">Сцена · центр <i>▾</i></span>
+          <span class="tag pgm">PGM</span><span class="tag on">ВЕДУ</span>
+          <div class="sp"></div>
+          <span class="padb" style="--b:70%;position:relative"><span class="n" style="left:-10px;top:-10px">7</span>🎮︎1 <span class="bat"></span></span>
+          <span class="ib pw-on" title="Питание: включена"><span class="n" style="left:-8px;top:-10px">8</span>⏻</span>
+          <span class="ib" title="Камера: калибровка, диагностика, поток…"><span class="n" style="left:-8px;top:-10px">9</span>⋯</span>
+        </div>
+        <div class="vid"><div class="person"></div>
+          <div class="tb">Цель №1 <span class="i">⊘</span><span class="i">⚲</span></div>
+          <span class="fps">1280×720 · 25 · анализ 15</span></div>
+      </div>
+      <div class="cell">
+        <div class="ch"><span class="num">2</span><span class="cname">Зал · общий <i>▾</i></span><span class="tag pvw">PVW</span><span class="tag off">ВЫКЛ</span>
+          <div class="sp"></div><span class="padb" style="--b:30%">🎮︎2 <span class="bat"></span></span><span class="ib pw-on">⏻</span><span class="ib">⋯</span></div>
+        <div class="vid"><span class="fps">640×360 · 25</span></div>
+      </div>
+      <div class="cell">
+        <div class="ch"><span class="num">3</span><span class="cname">Трибуна <i>▾</i></span><span class="tag off">ОЖИДАНИЕ</span>
+          <div class="sp"></div><span class="ib pw-off">⏻</span><span class="ib">⋯</span></div>
+        <div class="standby" style="position:relative"><span class="n" style="left:calc(50% - 50px);top:calc(50% - 50px)">10</span><span class="big">⏻</span>Камера в режиме ожидания · включить (~8 с)</div>
+      </div>
+      <div class="cell">
+        <div class="ch"><span class="num">4</span><span class="cname" style="color:var(--grey)">нет камеры <i>▾</i></span><div class="sp"></div></div>
+        <div class="empty" style="position:relative"><span class="n" style="left:calc(50% - 70px);top:calc(50% - 30px)">11</span>
+          <svg width="46" height="40" viewBox="0 0 46 40"><g fill="none" stroke="#777C83" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="4" width="28" height="18" rx="5"/><circle cx="23" cy="13" r="5"/><path d="M23 22v8M13 36h20M17 30h12"/></g></svg>
+          <span class="add">+ Поставить камеру</span><span>или выберите в списке ▾ · или служебный вид</span></div>
+      </div>
+    </div></div>
+    <div class="side" style="position:relative">
+      <div class="selhead"><span class="n" style="left:-8px;top:4px">12</span><span class="num" style="background:var(--white);color:var(--graphite)">1</span>Сцена · центр</div>
+      <div class="lbl">Кадр</div><div style="height:70px">силуэты + ползунок</div>
+      <div class="lbl">Камера</div><div style="height:120px">стик · зум · чувствительность</div>
+      <div class="lbl">Изображение</div><div style="height:70px">ирис · gain · фокус · WB</div>
+      <div class="stop">СТОП КАМЕРЫ <span class="kc" style="margin-left:10px">Esc</span></div>
+    </div>
+  </div>
+  <div class="foot" style="position:relative">
+    <span class="n" style="left:6px;top:-9px">13</span>
+    <span>CPU анализ: 2 из 2 камер</span><div class="sp"></div>
+    <span class="fbtn">▴ Пресеты</span><span class="fbtn"><span class="kc">F1</span> Справка</span><span class="faint">v1.1.0 · by funpin.ru &amp; Claude</span>
+  </div>
+</div>
+
+<h2>Пояснения</h2>
+<div class="legend">
+  <div><span class="n">1</span><span><b>ATEM</b> — связь с микшером (точка: зелёная — на связи, серая — нет). Клик — настройки ATEM. Какой вход у какой камеры — в окне «Камеры».</span></div>
+  <div><span class="n">2</span><span><b>Геймпады</b> — сколько подключено. Клик — окно «Геймпады…»: какой геймпад на какой клетке, заряд, чувствительность. Без геймпадов значок скрыт.</span></div>
+  <div><span class="n">3</span><span><b>Журнал для разбора</b> — сохранить момент (F9), открыть, настройки.</span></div>
+  <div><span class="n">4</span><span><b>Меню ☰</b> — только общее: Камеры…, ATEM…, Геймпады…, Агент…, журнал, сколько камер анализировать, симулятор, обновления. Всё «про одну камеру» отсюда уходит в ⋯ клетки.</span></div>
+  <div><span class="n">5</span><span><b>TRACK</b> — слежение выбранной камеры (Пробел). Состояние каждой камеры видно в её шапке.</span></div>
+  <div><span class="n">6</span><span><b>Шапка клетки:</b> номер клетки (у выбранной — белый), камера ▾ (сменить камеру или служебный вид), PGM/PVW из ATEM, состояние слежения: ВЕДУ / ПОТЕРЯ / ВЫКЛ / ОЖИДАНИЕ.</span></div>
+  <div><span class="n">7</span><span><b>Геймпад на этой клетке:</b> номер геймпада и заряд. Номер совпадает с огоньками на геймпаде. Клик — перевести этот геймпад на другую клетку (или кнопка Create на самом геймпаде).</span></div>
+  <div><span class="n">8</span><span><b>Питание камеры:</b> лаймовый ⏻ — работает, серый — ожидание. Клик по включённой — спросит «Перевести в ожидание?» (у камеры в эфире — отдельное предупреждение красным). Клик по серой — включает.</span></div>
+  <div><span class="n">9</span><span><b>⋯ Камера:</b> меню этой камеры — см. ниже.</span></div>
+  <div><span class="n">10</span><span><b>Ожидание:</b> в клетке вместо видео — большая кнопка питания, как сейчас.</span></div>
+  <div><span class="n">11</span><span><b>Пустая клетка:</b> рисунок камеры в линиях бренда и кнопка «Поставить камеру».</span></div>
+  <div><span class="n">12</span><span><b>Правая колонка</b> подписана выбранной камерой — сразу видно, чем управляет стик.</span></div>
+  <div><span class="n">13</span><span><b>Нижняя строка:</b> общая нагрузка анализа; разрешение и к/с каждой камеры — в углу её видео. Пресеты, Справка, версия.</span></div>
+</div>
+
+<h2>Меню</h2>
+<div class="menus">
+  <div class="menu"><div class="t">⋯ Камера 1 · Сцена · центр</div>
+    <div class="m">Меню камеры (OSD) <span class="r">M</span></div>
+    <div class="m">Видеопоток ▸ <span class="r">MJPEG 640×360</span></div>
+    <hr>
+    <div class="m">Калибровка…</div>
+    <div class="m">Диагностика…</div>
+    <hr>
+    <div class="m">Изменить камеру…</div>
+    <div class="m">Убрать из клетки</div>
+    <hr>
+    <div class="m warn">Перевести в режим ожидания…</div></div>
+  <div class="menu"><div class="t">☰ Общее</div>
+    <div class="m">Камеры… <span class="r">добавить, изменить, удалить</span></div>
+    <div class="m">Геймпады…</div>
+    <div class="m">ATEM…</div>
+    <div class="m">Агент…</div>
+    <hr>
+    <div class="m">Журнал для разбора ▸</div>
+    <div class="m">Анализировать камер одновременно ▸</div>
+    <div class="m">Симулятор (для тренировки)</div>
+    <hr>
+    <div class="m">Проверять обновления ✓</div>
+    <div class="m">Справка <span class="r">F1</span></div></div>
+</div>
+<div><span class="choice" data-choice="ok">Так нравится</span><span class="choice" data-choice="change">Поменять (напишу)</span></div>
+</body></html>

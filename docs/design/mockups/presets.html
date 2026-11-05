@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>PTZ Tracker — пресеты</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--graphite:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;
+ --white:#F5F5F2;--dim:#B4B8BD;--grey:#858A91;--grey-brand:#777C83;--lime:#B7F34A;--fault:#EF4444;--pgm:#E8202A;--pvw:#2FB65E}
+*{box-sizing:border-box}
+body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:24px 28px 60px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:38px 0 6px}
+p.sub{color:var(--dim);margin:0 0 14px;font-size:14px;line-height:1.5;max-width:1000px}
+.win{width:1100px;background:var(--graphite);border-radius:12px;border:1px solid var(--line);overflow:hidden;font-size:13px}
+.body{display:grid;grid-template-columns:1fr 230px;height:600px}
+.left{display:flex;flex-direction:column;min-height:0}
+.grid{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:8px;padding:8px}
+.cell{border-radius:10px;border:1px solid var(--line);background:linear-gradient(180deg,#4a5260 0%,#3b4049 55%,#4a3a2c 56%,#3a2d22 100%);position:relative}
+.cell.sel{border-color:var(--white)}
+.cell .n{position:absolute;top:6px;left:8px;font-size:11.5px;color:var(--white)}
+.cell .t{position:absolute;top:6px;right:8px;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;background:var(--pgm)}
+.side{border-left:1px solid var(--line);padding:10px 12px;color:var(--grey);font-size:12px;display:flex;flex-direction:column;gap:6px}
+.side .stop{margin-top:auto;height:36px;border-radius:8px;border:1px solid var(--fault);color:var(--fault);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px}
+.foot{border-top:1px solid var(--line);height:30px;display:flex;align-items:center;gap:14px;padding:0 12px;font-size:11.5px;background:var(--surface)}
+.sp{flex:1}.faint{color:var(--grey)}
+.fbtn{height:22px;padding:0 9px;border-radius:6px;border:1px solid var(--line);display:flex;align-items:center}.fbtn.on{border-color:var(--white)}
+
+.drawer{border-top:1px solid var(--line);background:var(--surface);padding:6px 10px 10px;position:relative}
+.grip{position:absolute;top:-4px;left:50%;transform:translateX(-50%);width:44px;height:5px;border-radius:3px;background:var(--grey-brand)}
+.dh{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--grey);height:22px}
+.dh b{color:var(--white);font-weight:600}
+.prow{display:flex;align-items:center;gap:8px;margin-top:6px}
+.cam{width:62px;flex:none;font-size:11.5px;color:var(--dim);line-height:1.25}
+.cam b{display:block;color:var(--white);font-size:12px}
+.cam.sel b{color:var(--white)} .cam .pg{display:inline-block;margin-top:3px;font-size:9.5px;font-weight:700;padding:0 5px;border-radius:3px;background:var(--pgm);color:var(--white)}
+.th{flex:1;min-width:0;display:grid;grid-template-columns:repeat(8,1fr);gap:6px}
+.p{aspect-ratio:16/9;border-radius:7px;border:1px solid var(--line);position:relative;overflow:hidden;cursor:pointer}
+.p.full{background:linear-gradient(180deg,#4f5866 0%,#3e434c 55%,#4d3c2e 56%,#3a2d22 100%)}
+.p .fig{position:absolute;bottom:22%;width:9%;height:46%;border-radius:40% 40% 15% 15%;background:#c8968a}
+.p .k{position:absolute;left:4px;top:4px;font-size:10px;font-weight:700;background:rgba(23,25,29,.8);padding:0 4px;border-radius:3px}
+.p .nm{position:absolute;left:0;right:0;bottom:0;font-size:9.5px;padding:2px 5px;background:linear-gradient(transparent,rgba(23,25,29,.9))}
+.p.empty{background:var(--graphite);border-style:dashed;display:grid;place-items:center;color:var(--grey);font-size:10px;text-align:center;line-height:1.2}
+.p.last{outline:2px solid var(--lime);outline-offset:-2px}
+.prow.sel{background:rgba(245,245,242,.04);border-radius:8px;padding:4px;margin-left:-4px;margin-right:-4px}
+
+/* вариант C: пресеты в клетке */
+.cell .strip{position:absolute;left:6px;right:6px;bottom:6px;display:grid;grid-template-columns:repeat(6,1fr);gap:4px;padding:4px;border-radius:7px;background:rgba(23,25,29,.82)}
+.cell .strip .p{border-radius:4px}
+.cell .strip .p .k{font-size:8.5px;left:2px;top:2px}
+
+.choice{display:inline-flex;margin:12px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:var(--dim);font-size:13px}
+.choice.selected{border-color:var(--lime);color:var(--lime)}
+ul.notes{color:var(--dim);font-size:13.5px;line-height:1.6;max-width:1000px;margin:8px 0 0;padding-left:18px}ul.notes b{color:var(--white)}
+.callout{position:relative;display:inline-block;font-size:12px;color:var(--lime);margin:6px 0 0}
+</style></head><body>
+<h1>Пресеты с картинками</h1>
+<p class="sub">Ирис, gain, фокус и баланс белого остаются справа (в новом стиле). Вниз уезжают только пресеты. У каждого пресета — снимок кадра, сделанный в момент записи (Shift+клик). Если пресет записан с пульта, снимок появится, когда вы впервые вызовете его из программы. На карточке — номер, снимок и короткое имя (по желанию). Последний вызванный пресет — с лаймовой рамкой.</p>
+
+<h2>А. Лента выбранной камеры, тянется вниз для остальных</h2>
+<p class="sub">Свёрнуто: одна строка — 8 пресетов выбранной камеры. Потяните панель за верхний край вверх — добавляются строки остальных камер (по одной на камеру, выбранная всегда первая). Сетка камер при этом уменьшается. Больше 8 пресетов — строка листается вбок.</p>
+<div class="win" id="A"></div>
+
+<h2>Б. Все камеры сразу, по колонкам</h2>
+<p class="sub">Панель всегда показывает пресеты всех камер: каждая камера — своя колонка 2×3 (6 пресетов). Тянуть не нужно, но на камеру видно меньше пресетов, и миниатюры мельче.</p>
+<div class="win" id="B"></div>
+
+<h2>В. Пресеты прямо в клетке камеры</h2>
+<p class="sub">Нижней панели нет: наведите мышь на клетку камеры (или нажмите P) — снизу в ней всплывает лента из 6 пресетов этой камеры. Ничего не тянется и не сжимает сетку, но лента закрывает низ видео, пока открыта.</p>
+<div class="win" id="C"></div>
+
+<h2>Общее</h2>
+<ul class="notes">
+  <li><b>Клик</b> — вызвать пресет, <b>Shift+клик</b> — записать текущее положение и снимок; <b>правый клик</b> — переименовать, обновить снимок, стереть.</li>
+  <li><b>Клик по пресету другой камеры</b> сначала выбирает эту камеру, потом вызывает пресет; слежение на ней выключается (как при любом ручном движении). Камера в эфире помечена красным PGM прямо в строке/колонке, чтобы не дёрнуть её случайно.</li>
+  <li>Снимки хранятся рядом с настройками программы, по камере; в журнал для разбора не попадают.</li>
+</ul>
+<div>
+<span class="choice" data-choice="a">Ближе А</span>
+<span class="choice" data-choice="b">Ближе Б</span>
+<span class="choice" data-choice="c">Ближе В</span>
+</div>
+
+<script>
+const names=["Трибуна","Пояс центр","Общий","Слева","Справа","Зал","","",""];
+const pos=[46,50,48,28,70,50];
+function pres(n,camSel,small){let h='';for(let i=0;i<n;i++){
+  if(i<6){h+=`<div class="p full${camSel&&i==1?' last':''}"><span class="fig" style="left:${pos[i]}%;${i==2||i==5?'height:22%;width:5%;bottom:32%':''}"></span><span class="k">${i+1}</span>${small?'':`<span class="nm">${names[i]}</span>`}</div>`}
+  else h+=`<div class="p empty">${small?i+1:i+1+'<br>Shift+клик'}</div>`}return h}
+const top4=(sel)=>`<div class="grid">${[1,2,3,4].map(i=>`<div class="cell${i==sel?' sel':''}"><span class="n">${i} · ${["Сцена","Зал","Трибуна","Общий"][i-1]}</span>${i==1?'<span class="t">PGM</span>':''}</div>`).join('')}</div>`;
+const side=`<div class="side">КАДР<br><br>стик · зум · чувствительность<br><br>ИРИС · GAIN<br>ФОКУС · WB<div class="stop">СТОП КАМЕРЫ</div></div>`;
+const foot=(on)=>`<div class="foot">▣ 1280×720 · 25 &nbsp; ◉ 15 к/с<div class="sp"></div><span class="fbtn ${on?'on':''}">▾ Пресеты</span><span class="fbtn">F1 Справка</span><span class="faint">v1.1.0</span></div>`;
+const row=(c,nm,sel,pgm)=>`<div class="prow${sel?' sel':''}"><div class="cam${sel?' sel':''}"><b>${c}</b>${nm}${pgm?'<br><span class="pg">PGM</span>':''}</div><div class="th">${pres(8,sel)}</div></div>`;
+document.getElementById('A').innerHTML=`<div class="body"><div class="left">${top4(2)}<div class="drawer"><span class="grip"></span><div class="dh"><b>Пресеты</b> · тяните край, чтобы показать другие камеры</div>${row(2,'Зал',true)}${row(1,'Сцена',false,true)}</div></div>${side}</div>${foot(true)}`;
+const col=(c,nm,sel,pgm)=>`<div style="flex:1;min-width:0;${sel?'background:rgba(245,245,242,.04);border-radius:8px;':''}padding:4px"><div class="dh"><b>${c} · ${nm}</b>${pgm?'<span class="pg" style="font-size:9.5px;font-weight:700;padding:0 5px;border-radius:3px;background:var(--pgm);color:#fff">PGM</span>':''}</div><div class="th" style="grid-template-columns:repeat(3,1fr)">${pres(6,sel,true)}</div></div>`;
+document.getElementById('B').innerHTML=`<div class="body"><div class="left">${top4(2)}<div class="drawer"><div style="display:flex;gap:8px">${col(1,'Сцена',false,true)}${col(2,'Зал',true)}${col(3,'Трибуна')}${col(4,'Общий')}</div></div></div>${side}</div>${foot(true)}`;
+document.getElementById('C').innerHTML=`<div class="body"><div class="left"><div class="grid">${[1,2,3,4].map(i=>`<div class="cell${i==2?' sel':''}"><span class="n">${i} · ${["Сцена","Зал","Трибуна","Общий"][i-1]}</span>${i==1?'<span class="t">PGM</span>':''}${i==2?`<div class="strip">${pres(6,true,true)}</div>`:''}</div>`).join('')}</div></div>${side}</div>${foot(false)}`;
+</script>
+</body></html>

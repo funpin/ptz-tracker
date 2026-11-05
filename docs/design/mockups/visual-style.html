@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>PTZ Tracker — стиль</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --graphite:#17191D; --surface:#1E2126; --raised:#272B31; --raised-hi:#30353C; --line:#33373E;
+  --white:#F5F5F2; --dim:#B4B8BD; --grey:#858A91; --grey-brand:#777C83;
+  --lime:#B7F34A; --lime-dim:rgba(183,243,74,.16);
+  --pgm:#E8202A; --pvw:#2FB65E; --lost:#F0A020; --fault:#EF4444;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:24px 28px 60px}
+h1{font-size:22px;margin:0 0 4px} h2{font-size:17px;margin:34px 0 6px}
+p.sub{color:var(--dim);margin:0 0 18px;font-size:14px;line-height:1.5;max-width:980px}
+.pal{display:flex;gap:10px;flex-wrap:wrap}
+.sw{width:128px;border-radius:10px;overflow:hidden;border:1px solid var(--line);background:var(--surface);font-size:12px}
+.sw i{display:block;height:54px}
+.sw div{padding:7px 9px;line-height:1.35}.sw b{display:block;font-size:12.5px}.sw span{color:var(--grey)}
+.grp{color:var(--grey);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin:16px 0 8px}
+
+/* ---- окно ---- */
+.win{width:min(1100px,100%);height:690px;background:var(--graphite);border-radius:12px;border:1px solid var(--line);
+  display:grid;grid-template-rows:48px 1fr 34px;overflow:hidden;font-size:13px;position:relative}
+.top{display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line)}
+.top .logo{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.5px;font-size:14px}
+.top .logo small{font-weight:400;letter-spacing:3px;font-size:10px;color:var(--dim)}
+.sp{flex:1}
+.ico{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:var(--dim)}
+.ico:hover{background:var(--raised)}
+.vl{width:1px;height:20px;background:var(--line)}
+.track{height:34px;padding:0 14px;border-radius:8px;border:1px solid var(--line);background:var(--raised);
+  display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.4px}
+.track .dot{width:9px;height:9px;border-radius:50%;background:var(--grey)}
+.track.on{background:var(--lime);color:var(--graphite);border-color:var(--lime)}
+.track.on .dot{background:var(--graphite)}
+.mid{display:grid;grid-template-columns:1fr 270px;min-height:0}
+.grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:10px;padding:10px}
+.cell{position:relative;border-radius:10px;border:1px solid var(--line);background:var(--surface);overflow:hidden}
+.cell .vid{position:absolute;inset:30px 0 0 0;background:
+  linear-gradient(180deg,#4a5260 0%,#3b4049 55%,#4a3a2c 56%,#3a2d22 100%)}
+.cell .hd{position:absolute;top:0;left:0;right:0;height:30px;display:flex;align-items:center;gap:8px;padding:0 10px;font-size:12.5px}
+.cell .hd .n{color:var(--grey);font-weight:600}
+.cell .hd .tally{margin-left:auto;font-size:11px;font-weight:700;padding:2px 7px;border-radius:5px}
+.tally.pgm{background:var(--pgm)} .tally.pvw{color:var(--pvw);border:1px solid var(--pvw)}
+.person{position:absolute;left:46%;top:38%;width:22px;height:58px;border-radius:10px 10px 4px 4px;background:#c8968a}
+.box{position:absolute;left:calc(46% - 8px);top:calc(38% - 8px);width:38px;height:74px}
+.cell.sel{border-color:var(--white)}
+.cell.empty .vid{background:var(--surface);display:grid;place-items:center;color:var(--grey)}
+.side{border-left:1px solid var(--line);padding:12px 14px;display:flex;flex-direction:column;gap:12px;background:var(--graphite)}
+.lbl{color:var(--grey);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.frames{display:flex;justify-content:space-between;align-items:flex-end;padding:0 4px}
+.frames svg{opacity:.45}.frames .act svg{opacity:1}
+.frames div{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:var(--dim)}
+.slider{position:relative;height:18px}
+.slider .trk{position:absolute;left:0;right:0;top:8px;height:3px;border-radius:2px;background:var(--raised-hi)}
+.slider .fill{position:absolute;left:0;top:8px;height:3px;border-radius:2px;background:var(--lime)}
+.slider .kn{position:absolute;top:1px;width:16px;height:16px;border-radius:50%;background:var(--white);box-shadow:0 0 0 3px var(--graphite)}
+.row{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--dim)}
+.stickwrap{display:flex;align-items:center;gap:16px;justify-content:center}
+.stick{width:150px;height:150px;border-radius:50%;border:1px solid var(--line);background:var(--surface);position:relative}
+.stick:before{content:"";position:absolute;inset:38px;border-radius:50%;border:1px dashed var(--line)}
+.stick .k{position:absolute;left:58px;top:58px;width:34px;height:34px;border-radius:50%;background:var(--raised-hi);border:1px solid var(--grey-brand)}
+.zoom{display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--grey);font-size:11px}
+.zoom .rail{width:4px;height:100px;border-radius:2px;background:var(--raised-hi);position:relative}
+.zoom .rail i{position:absolute;left:-6px;top:42px;width:16px;height:16px;border-radius:50%;background:var(--white)}
+.chk{width:15px;height:15px;border-radius:4px;border:1px solid var(--grey-brand)}
+.chk.on{background:var(--lime);border-color:var(--lime)}
+.stop{margin-top:auto;height:42px;border-radius:8px;border:1px solid var(--fault);color:var(--fault);display:flex;align-items:center;justify-content:center;font-weight:700;letter-spacing:.6px;position:relative}
+.kc{font-size:10.5px;font-weight:600;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 5px;background:var(--raised)}
+.stop .kc{position:absolute;right:8px}
+.drawer-tab{position:absolute;left:50%;transform:translateX(-50%);bottom:34px;height:24px;padding:0 14px;border-radius:8px 8px 0 0;
+  border:1px solid var(--line);border-bottom:none;background:var(--surface);color:var(--dim);font-size:11.5px;display:flex;align-items:center;gap:6px}
+.foot{border-top:1px solid var(--line);display:flex;align-items:center;gap:16px;padding:0 14px;color:var(--dim);font-size:12px;background:var(--surface)}
+.foot .ok{color:var(--white)} .foot .faint{color:var(--grey)}
+.help{height:24px;padding:0 10px;border-radius:6px;border:1px solid var(--line);display:flex;align-items:center;gap:6px;color:var(--white)}
+
+/* ---- вариант Б: скобки ---- */
+.b .cell{border-color:transparent;background:var(--surface)}
+.b .cell.sel{border-color:transparent}
+.b .cell .br{position:absolute;width:18px;height:18px;border:2.5px solid var(--white);pointer-events:none;z-index:3}
+.b .cell .br.tl{top:4px;left:4px;border-right:none;border-bottom:none;border-radius:7px 0 0 0}
+.b .cell .br.brr{bottom:4px;right:4px;border-left:none;border-top:none;border-radius:0 0 7px 0}
+.a .br,.b .cell:not(.sel) .br{display:none}
+.b .cell .br{width:24px;height:24px;border-width:3px}
+.b .track,.b .stop,.b .help{border-radius:999px}
+.b .stick{border:2px solid var(--line)}
+.b .lbl{text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--dim)}
+
+.choice{display:inline-flex;gap:8px;align-items:center;margin:10px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:var(--dim);font-size:13px}
+.choice.selected{border-color:var(--lime);color:var(--lime)}
+ul.notes{color:var(--dim);font-size:13.5px;line-height:1.6;max-width:1000px;margin:8px 0 0;padding-left:18px}
+ul.notes b{color:var(--white)}
+</style></head><body>
+
+<h1>PTZ Tracker — стиль окна</h1>
+<p class="sub">Это черновики, а не готовый экран: смотрим цвета, линии, скругления и общее ощущение. Расположение (кадр-ползунок, выдвижная панель снизу, кнопка «Справка») — как договорились; детали каждого места покажу отдельно.</p>
+
+<h2>Цвета</h2>
+<p class="sub">Ваши четыре цвета — основа. Я добавил ступени графита для панелей и кнопок и чуть осветлил серый для мелких надписей (ваш #777C83 на графите читается плохо в 12 px — оставил его для линий и рамок). Красный и зелёный ATEM, оранжевый «цель потеряна» и красный «стоп» — служебные, их смысл не меняется.</p>
+<div class="grp">Бренд</div>
+<div class="pal">
+  <div class="sw"><i style="background:#17191D"></i><div><b>Graphite</b><span>#17191D · фон</span></div></div>
+  <div class="sw"><i style="background:#F5F5F2"></i><div><b>Soft White</b><span>#F5F5F2 · текст, знак</span></div></div>
+  <div class="sw"><i style="background:#B7F34A"></i><div><b>Tracking Lime</b><span>#B7F34A · слежение</span></div></div>
+  <div class="sw"><i style="background:#777C83"></i><div><b>Neutral Grey</b><span>#777C83 · рамки</span></div></div>
+</div>
+<div class="grp">Ступени (добавил)</div>
+<div class="pal">
+  <div class="sw"><i style="background:#1E2126"></i><div><b>Surface</b><span>#1E2126 · панели</span></div></div>
+  <div class="sw"><i style="background:#272B31"></i><div><b>Raised</b><span>#272B31 · кнопки</span></div></div>
+  <div class="sw"><i style="background:#30353C"></i><div><b>Raised hi</b><span>#30353C · наведение</span></div></div>
+  <div class="sw"><i style="background:#33373E"></i><div><b>Line</b><span>#33373E · линии</span></div></div>
+  <div class="sw"><i style="background:#B4B8BD"></i><div><b>Text dim</b><span>#B4B8BD · подписи</span></div></div>
+  <div class="sw"><i style="background:#858A91"></i><div><b>Text faint</b><span>#858A91 · мелкое</span></div></div>
+</div>
+<div class="grp">Служебные (смысл не меняется)</div>
+<div class="pal">
+  <div class="sw"><i style="background:#E8202A"></i><div><b>Эфир PGM</b><span>#E8202A</span></div></div>
+  <div class="sw"><i style="background:#2FB65E"></i><div><b>Превью PVW</b><span>#2FB65E</span></div></div>
+  <div class="sw"><i style="background:#F0A020"></i><div><b>Цель потеряна</b><span>#F0A020</span></div></div>
+  <div class="sw"><i style="background:#EF4444"></i><div><b>Стоп, ошибка</b><span>#EF4444</span></div></div>
+</div>
+
+<template id="win">
+  <div class="win">
+    <div class="top">
+      <div class="logo">
+        <svg width="26" height="26" viewBox="0 0 120 120"><g fill="none" stroke="#F5F5F2" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"><path d="M31 58V42c0-6.075 4.925-11 11-11h16"/><path d="M62 89h16c6.075 0 11-4.925 11-11V62"/></g><circle cx="60" cy="60" r="11" fill="#B7F34A"/></svg>
+        <span>PTZ <small>TRACKER</small></span>
+      </div>
+      <div class="sp"></div>
+      <div class="ico" title="журнал">⟲</div><div class="ico" title="геймпад">🎮︎</div>
+      <div class="vl"></div><div class="ico">☰</div>
+      <div class="track TRACKCLS"><span class="dot"></span>TRACKTXT</div>
+    </div>
+    <div class="mid">
+      <div class="grid">
+        <div class="cell sel"><span class="br tl"></span><span class="br brr"></span>
+          <div class="hd"><span class="n">1</span> Сцена · центр <span class="tally pgm">PGM</span></div>
+          <div class="vid"><div class="person"></div>
+            <svg class="box" viewBox="0 0 38 74"><g fill="none" stroke="BOXCOL" stroke-width="2.4" stroke-linecap="round"><path d="M2 16V6a4 4 0 0 1 4-4h10"/><path d="M22 72h10a4 4 0 0 0 4-4V58"/></g></svg>
+          </div></div>
+        <div class="cell"><span class="br tl"></span><span class="br brr"></span>
+          <div class="hd"><span class="n">2</span> Зал · общий <span class="tally pvw">PVW</span></div><div class="vid"></div></div>
+        <div class="cell empty"><div class="hd"><span class="n">3</span> нет камеры</div><div class="vid">+ добавить</div></div>
+        <div class="cell empty"><div class="hd"><span class="n">4</span> нет камеры</div><div class="vid">+ добавить</div></div>
+      </div>
+      <div class="side">
+        <div class="lbl">Кадр</div>
+        <div class="frames">
+          <div class="act"><svg width="40" height="40" viewBox="0 0 40 40"><rect x="1" y="1" width="38" height="38" rx="6" fill="none" stroke="#777C83"/><circle cx="20" cy="15" r="6" fill="#F5F5F2"/><path d="M7 40c0-9 6-15 13-15s13 6 13 15z" fill="#F5F5F2"/></svg>Пояс</div>
+          <div><svg width="40" height="40" viewBox="0 0 40 40"><rect x="1" y="1" width="38" height="38" rx="6" fill="none" stroke="#777C83"/><circle cx="20" cy="9" r="3.5" fill="#F5F5F2"/><path d="M15 15h10v12h-2v9h-6v-9h-2z" fill="#F5F5F2"/></svg>Рост</div>
+          <div><svg width="40" height="40" viewBox="0 0 40 40"><rect x="1" y="1" width="38" height="38" rx="6" fill="none" stroke="#777C83"/><circle cx="20" cy="18" r="2" fill="#F5F5F2"/><path d="M18 21h4v6h-1v4h-2v-4h-1z" fill="#F5F5F2"/><path d="M4 32h32" stroke="#777C83"/></svg>Общий</div>
+        </div>
+        <div class="slider"><div class="trk"></div><div class="fill" style="width:22%"></div><div class="kn" style="left:20%"></div></div>
+        <div class="row" style="justify-content:space-between"><span>Мягко</span><div class="slider" style="flex:1"><div class="trk"></div><div class="fill" style="width:55%"></div><div class="kn" style="left:52%"></div></div><span>Резко</span></div>
+        <div class="lbl" style="margin-top:4px">Камера</div>
+        <div class="stickwrap"><div class="stick"><div class="k"></div></div>
+          <div class="zoom">Ближе<div class="rail"><i></i></div>Шире</div></div>
+        <div class="row"><span>Чувствительность</span><div class="slider" style="flex:1"><div class="trk"></div><div class="fill" style="width:40%"></div><div class="kn" style="left:38%"></div></div></div>
+        <div class="row"><span class="chk on"></span> Медленнее на крупном плане</div>
+        <div class="stop">СТОП КАМЕРЫ <span class="kc">Esc</span></div>
+      </div>
+    </div>
+    <div class="drawer-tab">▴ Изображение и пресеты</div>
+    <div class="foot">
+      <span class="ok">▣ 1280×720 · 25</span><span class="ok">◉ 15 к/с</span>
+      <span class="sp"></span>
+      <span class="help"><span class="kc">F1</span> Справка</span>
+      <span class="faint">v1.1.0 · by funpin.ru &amp; Claude</span>
+    </div>
+  </div>
+</template>
+
+<h2>А. «Тихий графит»</h2>
+<p class="sub">Лайм только там, где что-то активно: TRACK ON, рамка цели, заполненная часть ползунков, включённые флажки. Выбранная камера — белая рамка. Скругления 10 px у панелей и 8 px у кнопок, все линии одной толщины 1 px. Подписи разделов — маленькими заглавными.</p>
+<div class="a" id="A"></div>
+<div class="choice" data-choice="a" onclick="pick(this)">Мне ближе А</div>
+
+<h2>Б. «Скобки»</h2>
+<p class="sub">То же, но с мотивом знака: выбранная камера и цель отмечены двумя скруглёнными уголками, как на логотипе, без сплошной рамки. Кнопки TRACK, СТОП и Справка — капсулами. Подписи разделов — обычным регистром.</p>
+<div class="b" id="B"></div>
+<div class="choice" data-choice="b" onclick="pick(this)">Мне ближе Б</div>
+
+<h2>Что общее для обоих</h2>
+<ul class="notes">
+  <li><b>Шрифт Inter</b> (как в логотипе) — встроим в программу, чтобы на Windows и Mac он был одинаковым. Лицензия OFL, с открытой программой совместима.</li>
+  <li><b>Синий уходит.</b> Сейчас синим отмечено и «выбрано», и «слежение ведёт» — путается. Станет: слежение и активное = лайм, выбранное = белое.</li>
+  <li><b>Осторожно с зелёным:</b> лайм слежения и зелёный PVW от ATEM похожи. Поэтому PVW рисуем только контуром с надписью, а PGM — сплошной красной плашкой.</li>
+  <li><b>Сетка отступов</b> 4 / 8 / 12 / 16 / 24 px, высота кнопок 34 px, аварийной — 42 px.</li>
+</ul>
+
+<script>
+const t=document.getElementById('win').innerHTML;
+document.getElementById('A').innerHTML=t.replace('TRACKCLS','on').replace('TRACKTXT','TRACK ON').replace(/BOXCOL/g,'#B7F34A');
+document.getElementById('B').innerHTML=t.replace('TRACKCLS','on').replace('TRACKTXT','TRACK ON').replace(/BOXCOL/g,'#B7F34A');
+function pick(el){document.querySelectorAll('.choice').forEach(c=>c.classList.remove('selected'));el.classList.add('selected');}
+</script>
+</body></html>

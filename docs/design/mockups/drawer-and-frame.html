@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>PTZ Tracker — панель и кадр</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--graphite:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;
+ --white:#F5F5F2;--dim:#B4B8BD;--grey:#858A91;--grey-brand:#777C83;--lime:#B7F34A;--fault:#EF4444;--pgm:#E8202A;--pvw:#2FB65E}
+*{box-sizing:border-box}
+body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:24px 28px 60px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:34px 0 6px}
+p.sub{color:var(--dim);margin:0 0 16px;font-size:14px;line-height:1.5;max-width:1000px}
+.win{width:min(1100px,100%);height:690px;background:var(--graphite);border-radius:12px;border:1px solid var(--line);
+ display:grid;grid-template-rows:48px 1fr 34px;overflow:hidden;font-size:13px}
+.top{display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line)}
+.sp{flex:1}
+.track{height:34px;padding:0 14px;border-radius:8px;background:var(--lime);color:var(--graphite);display:flex;align-items:center;gap:8px;font-weight:700}
+.mid{display:grid;grid-template-columns:1fr 270px;min-height:0}
+.left{display:flex;flex-direction:column;min-height:0}
+.grid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:10px;padding:10px;min-height:0}
+.cell{border-radius:10px;border:1px solid var(--line);background:linear-gradient(180deg,#4a5260 0%,#3b4049 55%,#4a3a2c 56%,#3a2d22 100%)}
+.cell.sel{border-color:var(--white)}
+.cell.e{background:var(--surface)}
+.drawer{border-top:1px solid var(--line);background:var(--surface);padding:10px 14px 12px;display:flex;flex-direction:column;gap:8px}
+.dh{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--grey)}
+.dh b{color:var(--white);font-weight:600}
+.dh .x{margin-left:auto;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:2px 8px}
+.groups{display:flex;gap:18px}
+.g{display:flex;flex-direction:column;gap:7px;min-width:0}
+.g+.g{padding-left:18px;border-left:1px solid var(--line)}
+.lbl{color:var(--grey);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.row{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12.5px}
+.chk{width:15px;height:15px;border-radius:4px;border:1px solid var(--grey-brand)}.chk.on{background:var(--lime);border-color:var(--lime)}
+.sl{position:relative;height:16px;width:120px}.sl i{position:absolute;left:0;right:0;top:7px;height:3px;border-radius:2px;background:var(--raised-hi)}
+.sl s{position:absolute;left:0;top:7px;height:3px;border-radius:2px;background:var(--lime)}.sl u{position:absolute;top:0;width:15px;height:15px;border-radius:50%;background:var(--white)}
+.btn{height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--raised);display:inline-flex;align-items:center;color:var(--white);font-size:12.5px}
+.combo{height:28px;padding:0 8px;border-radius:8px;border:1px solid var(--line);background:var(--raised);display:inline-flex;align-items:center;gap:16px;font-size:12.5px}
+.pre{display:grid;grid-template-columns:repeat(5,30px);gap:6px}
+.pre span{height:30px;border-radius:8px;border:1px solid var(--line);background:var(--raised);display:grid;place-items:center;font-size:12.5px}
+.pre span.saved{border-color:var(--grey-brand)}
+.side{border-left:1px solid var(--line);padding:12px 14px;display:flex;flex-direction:column;gap:12px}
+.stick{width:140px;height:140px;border-radius:50%;border:1px solid var(--line);background:var(--surface);margin:0 auto}
+.stop{margin-top:auto;height:42px;border-radius:8px;border:1px solid var(--fault);color:var(--fault);display:flex;align-items:center;justify-content:center;font-weight:700}
+.foot{border-top:1px solid var(--line);display:flex;align-items:center;gap:16px;padding:0 14px;color:var(--white);font-size:12px;background:var(--surface)}
+.kc{font-size:10.5px;font-weight:600;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 5px;background:var(--raised)}
+.fbtn{height:24px;padding:0 10px;border-radius:6px;border:1px solid var(--line);display:flex;align-items:center;gap:6px}
+.fbtn.on{border-color:var(--white)}
+.faint{color:var(--grey)}
+
+/* кадр */
+.framebox{width:300px;background:var(--graphite);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.figs{display:flex;justify-content:space-between}
+.figs div{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11.5px;color:var(--dim);cursor:pointer}
+.figs svg{width:62px;height:46px}
+.figs .act{color:var(--white)}
+.figs .act svg rect{stroke:var(--lime)}
+.big{position:relative;height:22px}
+.big i{position:absolute;left:0;right:0;top:9px;height:4px;border-radius:2px;background:var(--raised-hi)}
+.big b{position:absolute;top:6px;width:2px;height:10px;background:var(--grey-brand)}
+.big s{position:absolute;left:0;top:9px;height:4px;border-radius:2px;background:var(--lime)}
+.big u{position:absolute;top:2px;width:18px;height:18px;border-radius:50%;background:var(--white);box-shadow:0 0 0 3px var(--graphite)}
+.cap{font-size:12px;color:var(--grey);line-height:1.45}
+.flex{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
+.vid{width:520px;height:292px;border-radius:10px;border:1px solid var(--line);position:relative;overflow:hidden;
+ background:linear-gradient(180deg,#4a5260 0%,#3b4049 55%,#4a3a2c 56%,#3a2d22 100%)}
+.zone{position:absolute;left:150px;top:30px;width:190px;height:240px;border:1.5px dashed rgba(245,245,242,.7);border-radius:8px}
+.zone em{position:absolute;top:-1px;left:8px;transform:translateY(-100%);font-style:normal;font-size:11px;background:var(--surface);padding:2px 6px;border-radius:5px 5px 0 0;color:var(--dim)}
+.zone .h{position:absolute;width:10px;height:10px;background:var(--white);border-radius:3px}
+.p{position:absolute;left:228px;top:70px;width:36px;height:150px;border-radius:16px 16px 6px 6px;background:#c8968a}
+.arrow{position:absolute;top:140px;color:var(--white);font-size:20px}
+.choice{display:inline-flex;margin:12px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:var(--dim);font-size:13px}
+.choice.selected{border-color:var(--lime);color:var(--lime)}
+</style></head><body>
+<h1>Выдвижная панель и «Кадр»</h1>
+<p class="sub">Стиль — вариант А. Здесь — две вещи: что уезжает в выдвижную панель и как выглядит ползунок кадра.</p>
+
+<h2>1. Выдвижная панель «Изображение и пресеты»</h2>
+<p class="sub">Открывается кнопкой в нижней строке (или клавишей <span class="kc">P</span> — моя догадка, можно другую). Встаёт <b>под сеткой камер</b>, над нижней строкой: сетка становится ниже, а правая колонка со стиком и СТОП не двигается. Настройки — для выбранной камеры, её имя в заголовке панели. Справа остаются кадр, стик, зум, чувствительность и СТОП.</p>
+<div class="win">
+  <div class="top"><b>PTZ</b><span class="faint" style="font-size:10px;letter-spacing:3px">TRACKER</span><div class="sp"></div><div class="track">● TRACK ON</div></div>
+  <div class="mid">
+    <div class="left">
+      <div class="grid"><div class="cell sel"></div><div class="cell"></div><div class="cell e"></div><div class="cell e"></div></div>
+      <div class="drawer">
+        <div class="dh"><b>Изображение и пресеты</b> · камера 1, Сцена · центр <span class="x">▾ Скрыть</span></div>
+        <div class="groups">
+          <div class="g"><div class="lbl">Ирис</div><div class="row"><span class="chk on"></span>Авто</div><div class="sl"><i></i><s style="width:60%"></s><u style="left:56%"></u></div></div>
+          <div class="g"><div class="lbl">Gain</div><div class="row"><span class="chk"></span>Авто <span style="margin-left:auto;color:var(--white)">3 dB</span></div><div class="sl"><i></i><s style="width:15%"></s><u style="left:12%"></u></div></div>
+          <div class="g"><div class="lbl">Фокус</div><div class="row"><span class="chk on"></span>AF</div><div class="row"><span class="btn">Разовый</span><span class="btn">−</span><span class="btn">+</span></div></div>
+          <div class="g"><div class="lbl">Баланс белого</div><span class="combo">ATW <span class="faint">▾</span></span><div class="sl"><i></i><s style="width:40%"></s><u style="left:37%"></u></div></div>
+          <div class="g"><div class="lbl">Пресеты · Shift+клик — записать</div><div class="pre"><span class="saved">1</span><span class="saved">2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="side"><div class="lbl">Кадр</div><div style="height:96px" class="faint">(ползунок кадра)</div><div class="lbl">Камера</div><div class="stick"></div>
+      <div class="row">Чувствительность</div><div class="row"><span class="chk on"></span>Медленнее на крупном плане</div><div class="stop">СТОП КАМЕРЫ</div></div>
+  </div>
+  <div class="foot">▣ 1280×720 · 25 &nbsp; ◉ 15 к/с<div class="sp"></div><span class="fbtn on">▾ Изображение и пресеты</span><span class="fbtn"><span class="kc">F1</span> Справка</span><span class="faint">v1.1.0 · by funpin.ru &amp; Claude</span></div>
+</div>
+
+<h2>2. «Кадр»: три силуэта и ползунок</h2>
+<p class="sub">Клик по силуэту — прыжок к нему; ползунок двигается плавно, между «Поясом» и «Ростом» есть промежуточные крупности. Активный силуэт — с лаймовой рамкой. Клавиши 1 / 2 / 3 — пояс / рост / общий (сейчас 1 / 4 / 5 — поменяю, если согласны). Влево-вправо кадр больше не выбирается кнопками: зону двигают мышью прямо на видео (это часть версии 1.2 — справа набросок).</p>
+<div class="flex">
+  <div class="framebox">
+    <div style="color:var(--grey);font-size:11px;font-weight:600;letter-spacing:.08em">КАДР</div>
+    <div class="figs">
+      <div class="act"><svg viewBox="0 0 62 46"><rect x="1" y="1" width="60" height="44" rx="6" fill="none" stroke="#777C83" stroke-width="1.5"/><circle cx="31" cy="17" r="7.5" fill="#F5F5F2"/><path d="M14 46c0-11 7-18 17-18s17 7 17 18z" fill="#F5F5F2"/></svg>Пояс</div>
+      <div><svg viewBox="0 0 62 46"><rect x="1" y="1" width="60" height="44" rx="6" fill="none" stroke="#777C83" stroke-width="1.5"/><circle cx="31" cy="9" r="4" fill="#F5F5F2"/><path d="M25 15h12v13h-2.5v12h-7v-12H25z" fill="#F5F5F2"/></svg>Рост</div>
+      <div><svg viewBox="0 0 62 46"><rect x="1" y="1" width="60" height="44" rx="6" fill="none" stroke="#777C83" stroke-width="1.5"/><path d="M5 37h52" stroke="#777C83"/><circle cx="31" cy="21" r="2.2" fill="#F5F5F2"/><path d="M29 24h4v6h-1v6h-2v-6h-1z" fill="#F5F5F2"/></svg>Общий</div>
+    </div>
+    <div class="big"><i></i><s style="width:18%"></s><b style="left:8%"></b><b style="left:50%"></b><b style="left:92%"></b><u style="left:15%"></u></div>
+    <div class="cap">Ползунок между отметками — промежуточная крупность.</div>
+  </div>
+  <div>
+    <div class="vid"><div class="zone"><em>Зона кадра · тяните</em><span class="h" style="left:-6px;top:-6px"></span><span class="h" style="right:-6px;bottom:-6px"></span></div><div class="p"></div>
+      <span class="arrow" style="left:110px">←</span><span class="arrow" style="left:360px">→</span></div>
+    <div class="cap" style="margin-top:6px;max-width:520px">Набросок 1.2: зона, в которой камера держит человека, видна на видео пунктиром; её можно перетащить мышью влево-вправо.</div>
+  </div>
+</div>
+
+<div>
+<span class="choice" data-choice="ok">Так нравится</span>
+<span class="choice" data-choice="change">Надо поменять (напишу)</span>
+</div>
+</body></html>

@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>PTZ Tracker — окно целиком</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--graphite:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;
+ --white:#F5F5F2;--dim:#B4B8BD;--grey:#858A91;--grey-brand:#777C83;--lime:#B7F34A;--fault:#EF4444;--pgm:#E8202A;--pvw:#2FB65E;--lost:#F0A020}
+*{box-sizing:border-box}
+body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:20px 24px 50px}
+h1{font-size:22px;margin:0 0 4px}
+p.sub{color:var(--dim);margin:0 0 14px;font-size:14px;line-height:1.5;max-width:1200px}
+.tabs{display:flex;gap:6px;margin:0 0 14px}
+.tbtn{padding:7px 14px;border-radius:999px;border:1px solid var(--line);color:var(--dim);font-size:13px;cursor:pointer}
+.tbtn.on{border-color:var(--white);color:var(--white)}
+.scaler{width:100%;overflow:hidden}
+.win{width:1640px;height:850px;background:var(--graphite);border-radius:12px;border:1px solid var(--line);display:grid;grid-template-rows:50px 1fr 34px;overflow:hidden;font-size:13px;transform-origin:0 0}
+.top{display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line)}
+.sp{flex:1}
+.pill{height:30px;padding:0 10px;border-radius:8px;display:flex;align-items:center;gap:7px;color:var(--dim);font-size:12.5px}
+.pill b{color:var(--white);font-weight:600}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.vl{width:1px;height:20px;background:var(--line);margin:0 4px}
+.track{height:36px;border-radius:9px;display:inline-flex;align-items:center;gap:10px;padding:0 6px 0 14px;font-weight:700;letter-spacing:.3px;font-size:13.5px;background:var(--lime);color:var(--graphite)}
+.track .cams{display:flex;gap:3px;padding:3px;border-radius:7px;background:rgba(23,25,29,.22)}
+.c{width:22px;height:22px;border-radius:5px;display:grid;place-items:center;font-size:11px;font-weight:800;background:var(--graphite);color:var(--lime)}
+.c.sel{outline:2px solid var(--graphite);outline-offset:1px}
+.mid{display:grid;grid-template-columns:1fr 320px;min-height:0}
+.left{display:flex;flex-direction:column;min-height:0}
+.grid{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:10px;padding:10px}
+.cell{border-radius:10px;border:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.cell.sel{border-color:var(--white)}
+.ch{height:36px;display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;flex:none}
+.num{width:22px;height:22px;border-radius:6px;background:var(--raised-hi);display:grid;place-items:center;font-weight:700;font-size:12px}
+.sel .num{background:var(--white);color:var(--graphite)}
+.cname{height:26px;padding:0 8px;border-radius:7px;display:flex;align-items:center;gap:8px;font-weight:600}
+.cname i{font-style:normal;color:var(--grey);font-size:10px}
+.tag{font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:5px;letter-spacing:.3px}
+.tag.pgm{background:var(--pgm)}.tag.pvw{color:var(--pvw);border:1px solid var(--pvw);padding:1px 5px}
+.tag.on{color:var(--graphite);background:var(--lime)}.tag.off{color:var(--grey);border:1px solid var(--line);padding:1px 5px}.tag.na{color:var(--grey);border:1px dashed var(--line);padding:1px 5px}
+.pad{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 6px 0 6px;border-radius:7px;border:1px solid var(--line);font-size:11.5px;font-weight:600}
+.bat{position:relative;width:34px;height:17px;border-radius:5px;border:1.3px solid rgba(245,245,242,.55);overflow:hidden;display:grid;place-items:center;background:rgba(245,245,242,.18)}
+.bat i{position:absolute;left:0;top:0;bottom:0;width:var(--p);background:var(--white)}
+.bat.low i{background:var(--lost)}
+.bat span{position:relative;font-size:10.5px;font-weight:800}
+.ib{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:var(--dim);font-size:14px}
+.ib.pw-on{color:var(--lime)}
+.vid{flex:1;position:relative;margin:0 4px 4px;border-radius:7px;overflow:hidden;background:linear-gradient(180deg,#4f5866 0%,#3e434c 55%,#4d3c2e 56%,#3a2d22 100%)}
+.vid .tb{position:absolute;left:8px;top:8px;height:28px;display:flex;align-items:center;gap:4px;padding:0 4px 0 10px;border-radius:7px;background:rgba(23,25,29,.85);font-size:12.5px}
+.vid .tb span.i{width:22px;height:22px;border-radius:5px;display:grid;place-items:center;color:var(--dim)}
+.vid .hint{position:absolute;left:8px;bottom:8px;font-size:12px;color:var(--dim);background:rgba(23,25,29,.85);padding:5px 9px;border-radius:7px}
+.vid .fps{position:absolute;right:8px;bottom:8px;font-size:11.5px;color:var(--dim);background:rgba(23,25,29,.85);padding:3px 8px;border-radius:6px}
+.person{position:absolute;width:26px;height:84px;border-radius:12px 12px 5px 5px;background:#c8968a}
+.box{position:absolute}
+/* сводка / положение */
+.svc{flex:1;padding:4px 12px 10px;min-height:0}
+.sum{width:100%;border-collapse:collapse;font-size:12.5px}
+.sum td{padding:8px 6px;border-bottom:1px solid var(--line);color:var(--dim);white-space:nowrap}
+.sum td:first-child{color:var(--white);font-weight:600}
+.sm{font-size:10.5px;font-weight:700;padding:1px 5px;border-radius:4px}.sm.pgm{background:var(--pgm);color:var(--white)}.sm.pvw{color:var(--pvw);border:1px solid var(--pvw)}
+/* правая колонка */
+.side{border-left:1px solid var(--line);padding:12px 16px;display:flex;flex-direction:column;gap:11px;min-height:0}
+.selhead{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.selhead .num{background:var(--white);color:var(--graphite)}
+.lbl{color:var(--grey);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;display:flex;justify-content:space-between}
+.lbl span{letter-spacing:0;text-transform:none;font-weight:400}
+.figs{display:flex;justify-content:space-between}
+.figs div{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11.5px;color:var(--dim)}
+.figs .act{color:var(--white)}.figs .act svg rect{stroke:var(--lime)}
+.sl{position:relative;height:18px;flex:1}
+.sl i{position:absolute;left:0;right:0;top:8px;height:3px;border-radius:2px;background:var(--raised-hi)}
+.sl s{position:absolute;left:0;top:8px;height:3px;border-radius:2px;background:var(--lime)}
+.sl b{position:absolute;top:5px;width:2px;height:9px;background:var(--grey-brand)}
+.sl u{position:absolute;top:1px;width:16px;height:16px;border-radius:50%;background:var(--white);box-shadow:0 0 0 3px var(--graphite)}
+.row{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dim)}
+.row .val{color:var(--white);min-width:40px;text-align:right}
+.warn{font-size:12px;color:var(--lost)}
+.stickwrap{display:flex;align-items:center;gap:18px;justify-content:center;padding:2px 0}
+.stick{width:150px;height:150px;border-radius:50%;border:1px solid var(--line);background:var(--surface);position:relative}
+.stick:before{content:"";position:absolute;inset:40px;border-radius:50%;border:1px dashed var(--line)}
+.stick .k{position:absolute;left:57px;top:57px;width:36px;height:36px;border-radius:50%;background:var(--raised-hi);border:1px solid var(--grey-brand)}
+.zoom{display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--grey);font-size:11px}
+.zoom .rail{width:4px;height:100px;border-radius:2px;background:var(--raised-hi);position:relative}
+.zoom .rail i{position:absolute;left:-6px;top:42px;width:16px;height:16px;border-radius:50%;background:var(--white)}
+.chk{width:15px;height:15px;border-radius:4px;border:1px solid var(--grey-brand);flex:none}.chk.on{background:var(--lime);border-color:var(--lime)}
+.btn{height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--raised);display:inline-flex;align-items:center;color:var(--white);font-size:12.5px}
+.combo{height:28px;padding:0 8px;border-radius:8px;border:1px solid var(--line);background:var(--raised);display:inline-flex;align-items:center;gap:14px;font-size:12.5px;color:var(--white)}
+.stop{margin-top:auto;height:42px;border-radius:8px;border:1px solid var(--fault);color:var(--fault);display:flex;align-items:center;justify-content:center;font-weight:700;letter-spacing:.5px;position:relative;flex:none}
+.kc{font-size:10.5px;font-weight:600;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 5px;background:var(--raised)}
+.stop .kc{position:absolute;right:8px}
+/* пресеты */
+.drawer{border-top:1px solid var(--line);background:var(--surface);padding:6px 10px 10px;position:relative;flex:none}
+.grip{position:absolute;top:-3px;left:50%;transform:translateX(-50%);width:44px;height:5px;border-radius:3px;background:var(--grey-brand)}
+.dh{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--grey);height:22px}.dh b{color:var(--white);font-weight:600}
+.prow{display:flex;align-items:center;gap:8px;margin-top:6px;padding:4px;border-radius:8px}
+.prow.sel{background:rgba(245,245,242,.04)}
+.cam{width:70px;flex:none;font-size:11.5px;color:var(--dim);line-height:1.3}.cam b{display:block;color:var(--white);font-size:12px}
+.pg{display:inline-block;margin-top:2px;font-size:9.5px;font-weight:700;padding:0 5px;border-radius:3px;background:var(--pgm);color:var(--white)}
+.th{flex:1;min-width:0;display:grid;grid-template-columns:repeat(8,1fr);gap:7px}
+.p{aspect-ratio:16/9;border-radius:7px;border:1px solid var(--line);position:relative;overflow:hidden;background:linear-gradient(180deg,#4f5866 0%,#3e434c 55%,#4d3c2e 56%,#3a2d22 100%)}
+.p .fig{position:absolute;bottom:22%;width:8%;height:46%;border-radius:40% 40% 15% 15%;background:#c8968a}
+.p .k{position:absolute;left:4px;top:4px;font-size:10px;font-weight:700;background:rgba(23,25,29,.8);padding:0 4px;border-radius:3px}
+.p .nm{position:absolute;left:0;right:0;bottom:0;font-size:10px;padding:2px 6px;background:linear-gradient(transparent,rgba(23,25,29,.9))}
+.p.empty{background:var(--graphite);border-style:dashed;display:grid;place-items:center;color:var(--grey);font-size:10.5px;text-align:center;line-height:1.25}
+.p.last{border:2px solid var(--lime)}
+.foot{border-top:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 14px;font-size:12px;background:var(--surface);color:var(--dim)}
+.fbtn{height:24px;padding:0 10px;border-radius:6px;border:1px solid var(--line);display:flex;align-items:center;gap:6px;color:var(--white)}
+.fbtn.on{border-color:var(--white)}
+.faint{color:var(--grey)}
+.hidden{display:none!important}
+</style></head><body>
+<h1>Окно целиком — с учётом всех правок</h1>
+<p class="sub">Реальный размер окна 1640×850, уменьшено под экран. Переключатели ниже показывают разные состояния. Кадр с силуэтами и ползунком — как будет вместе с зонами мышью (1.2).</p>
+<div class="tabs">
+  <span class="tbtn on" data-v="open">Пресеты открыты (2 камеры)</span>
+  <span class="tbtn" data-v="one">Пресеты: одна строка</span>
+  <span class="tbtn" data-v="closed">Пресеты скрыты</span>
+</div>
+<div class="scaler" id="sc"><div class="win" id="win">
+  <div class="top">
+    <svg width="24" height="24" viewBox="0 0 120 120"><g fill="none" stroke="#F5F5F2" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"><path d="M31 58V42c0-6.075 4.925-11 11-11h16"/><path d="M62 89h16c6.075 0 11-4.925 11-11V62"/></g><circle cx="60" cy="60" r="11" fill="#B7F34A"/></svg>
+    <b style="letter-spacing:.5px;font-size:14px">PTZ</b><span class="faint" style="font-size:10px;letter-spacing:3px">TRACKER</span>
+    <div class="sp"></div>
+    <span class="pill"><span class="dot" style="background:var(--pvw)"></span><b>ATEM</b> 10.0.0.20</span>
+    <span class="pill">🎮︎ <b>2</b> <span class="bat low"><i style="--p:18%"></i><span>18</span></span></span>
+    <span class="pill">⟲ <b>Журнал</b> <span class="kc">F9</span></span>
+    <span class="vl"></span>
+    <span class="pill" style="font-size:17px;position:relative">☰<span class="dot" style="background:var(--lime);position:absolute;right:6px;top:5px;width:7px;height:7px"></span></span>
+    <span class="track">TRACK ON<span class="cams"><span class="c sel">1</span></span></span>
+  </div>
+  <div class="mid">
+    <div class="left">
+      <div class="grid">
+        <div class="cell sel">
+          <div class="ch"><span class="num">1</span><span class="cname">Сцена · центр <i>▾</i></span><span class="tag pgm">PGM</span><span class="tag on">ВЕДУ</span>
+            <div class="sp"></div><span class="pad">🎮︎1 <span class="bat"><i style="--p:83%"></i><span style="color:#17191D">83</span></span></span><span class="ib pw-on">⏻</span><span class="ib">⋯</span></div>
+          <div class="vid"><div class="person" style="left:47%;top:30%"></div>
+            <svg class="box" style="left:calc(47% - 10px);top:calc(30% - 10px)" width="46" height="104" viewBox="0 0 46 104"><g fill="none" stroke="#B7F34A" stroke-width="2.6" stroke-linecap="round"><path d="M2 20V7a5 5 0 0 1 5-5h13"/><path d="M26 102h13a5 5 0 0 0 5-5V84"/></g></svg>
+            <div class="tb">Цель №1 · веду <span class="i">⊘</span><span class="i">⚲</span></div>
+            <span class="fps">640×360 · 25 · анализ 15</span></div>
+        </div>
+        <div class="cell">
+          <div class="ch"><span class="num">2</span><span class="cname">Зал · общий <i>▾</i></span><span class="tag pvw">PVW</span><span class="tag na">БЕЗ АНАЛИЗА</span>
+            <div class="sp"></div><span class="pad">🎮︎2 <span class="bat low"><i style="--p:18%"></i><span>18</span></span></span><span class="ib pw-on">⏻</span><span class="ib">⋯</span></div>
+          <div class="vid"><div class="person" style="left:30%;top:52%;width:12px;height:38px"></div><div class="person" style="left:62%;top:50%;width:12px;height:40px"></div>
+            <span class="fps">1280×720 · 12</span></div>
+        </div>
+        <div class="cell">
+          <div class="ch"><span class="num">3</span><span class="cname">Сводка <i>▾</i></span></div>
+          <div class="svc"><table class="sum">
+            <tr><td>1 · Сцена</td><td><span class="sm pgm">PGM</span></td><td><span class="tag on">ВЕДУ</span></td><td>🎮︎1 · 83 %</td><td>25 к/с · анализ 15</td><td><span class="dot" style="background:var(--lime);margin-right:5px"></span>калибровка</td></tr>
+            <tr><td>2 · Зал</td><td><span class="sm pvw">PVW</span></td><td><span class="tag na">БЕЗ АНАЛ.</span></td><td>🎮︎2 · 18 %</td><td>12 к/с</td><td><span class="dot" style="background:var(--lost);margin-right:5px"></span>нет калибровки</td></tr>
+          </table><div style="margin-top:12px;font-size:12px;color:var(--grey)">ATEM на связи · журнал помнит 5 мин · агент выключен</div></div>
+        </div>
+        <div class="cell">
+          <div class="ch"><span class="num">4</span><span class="cname">Положение камер <i>▾</i></span></div>
+          <div class="svc"><svg width="100%" height="100%" viewBox="0 0 640 230" preserveAspectRatio="xMidYMid meet">
+            <defs><radialGradient id="g1" cx=".5" cy="1" r="1"><stop offset="0" stop-color="#B7F34A" stop-opacity=".3"/><stop offset="1" stop-color="#B7F34A" stop-opacity="0"/></radialGradient></defs>
+            <rect x="20" y="10" width="600" height="210" rx="10" fill="none" stroke="#33373E" stroke-dasharray="4 5"/>
+            <text x="320" y="28" fill="#858A91" font-size="11" text-anchor="middle" font-family="Inter">сцена</text>
+            <path d="M220 205 L170 45 L270 45 Z" fill="url(#g1)"/><path d="M220 205 L170 45 M220 205 L270 45" stroke="#B7F34A" stroke-opacity=".6"/>
+            <circle cx="220" cy="205" r="11" fill="#17191D" stroke="#F5F5F2" stroke-width="2"/><text x="220" y="209" fill="#F5F5F2" font-size="11" font-weight="700" text-anchor="middle" font-family="Inter">1</text>
+            <path d="M420 207 L320 55 L520 55 Z" fill="#F5F5F2" fill-opacity=".05"/><path d="M420 207 L320 55 M420 207 L520 55" stroke="#777C83"/>
+            <circle cx="420" cy="207" r="11" fill="#17191D" stroke="#777C83" stroke-width="2"/><text x="420" y="211" fill="#B4B8BD" font-size="11" font-weight="700" text-anchor="middle" font-family="Inter">2</text>
+            <circle cx="218" cy="60" r="4" fill="#B7F34A"/>
+          </svg></div>
+        </div>
+      </div>
+      <div class="drawer" id="drawer"><span class="grip"></span>
+        <div class="dh"><b>Пресеты</b> · тяните край вверх, чтобы показать другие камеры · Shift+клик — записать</div>
+        <div id="rows"></div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="selhead"><span class="num">1</span>Сцена · центр<span class="sp"></span><span class="tag pgm">PGM</span></div>
+      <div class="lbl">Кадр</div>
+      <div class="figs">
+        <div class="act"><svg width="62" height="46" viewBox="0 0 62 46"><rect x="1" y="1" width="60" height="44" rx="6" fill="none" stroke="#777C83" stroke-width="1.5"/><circle cx="31" cy="17" r="7.5" fill="#F5F5F2"/><path d="M14 46c0-11 7-18 17-18s17 7 17 18z" fill="#F5F5F2"/></svg>Пояс · 1</div>
+        <div><svg width="62" height="46" viewBox="0 0 62 46"><rect x="1" y="1" width="60" height="44" rx="6" fill="none" stroke="#777C83" stroke-width="1.5"/><circle cx="31" cy="9" r="4" fill="#F5F5F2"/><path d="M25 15h12v13h-2.5v12h-7v-12H25z" fill="#F5F5F2"/></svg>Рост · 2</div>
+        <div><svg width="62" height="46" viewBox="0 0 62 46"><rect x="1" y="1" width="60" height="44" rx="6" fill="none" stroke="#777C83" stroke-width="1.5"/><path d="M5 37h52" stroke="#777C83"/><circle cx="31" cy="21" r="2.2" fill="#F5F5F2"/><path d="M29 24h4v6h-1v6h-2v-6h-1z" fill="#F5F5F2"/></svg>Общий · 3</div>
+      </div>
+      <div class="sl" style="flex:none"><i></i><s style="width:12%"></s><b style="left:9%"></b><b style="left:50%"></b><b style="left:91%"></b><u style="left:8%"></u></div>
+      <div class="row"><span>Мягко</span><div class="sl"><i></i><s style="width:55%"></s><u style="left:52%"></u></div><span>Резко</span></div>
+      <div class="warn">Камера 1 не откалибрована: ⋯ → Калибровка (2 мин)</div>
+      <div class="lbl" style="margin-top:2px">Камера <span>движение выключает слежение</span></div>
+      <div class="stickwrap"><div class="stick"><div class="k"></div></div><div class="zoom">Ближе<div class="rail"><i></i></div>Шире</div></div>
+      <div class="row"><span>Чувствительность</span><div class="sl"><i></i><s style="width:40%"></s><u style="left:37%"></u></div></div>
+      <div class="row"><span class="chk on"></span>Медленнее на крупном плане</div>
+      <div class="lbl" style="margin-top:2px">Изображение <span>не выключает слежение</span></div>
+      <div class="row"><span style="width:44px">Ирис</span><span class="chk on"></span>Авто<div class="sl"><i></i><s style="width:58%"></s><u style="left:55%"></u></div></div>
+      <div class="row"><span style="width:44px">Gain</span><span class="chk"></span>Авто<div class="sl"><i></i><s style="width:15%"></s><u style="left:12%"></u></div><span class="val">3 dB</span></div>
+      <div class="row"><span style="width:44px">Фокус</span><span class="chk on"></span>AF<span class="sp"></span><span class="btn" style="padding:0 8px">Разовый</span><span class="btn" style="padding:0 8px">Ближе</span><span class="btn" style="padding:0 8px">Дальше</span></div>
+      <div class="row"><span style="width:44px">WB</span><span class="combo">ATW <span class="faint">▾</span></span><div class="sl"><i></i><s style="width:40%"></s><u style="left:37%"></u></div></div>
+      <div class="stop">СТОП КАМЕРЫ <span class="kc">Esc</span></div>
+    </div>
+  </div>
+  <div class="foot">
+    <span>анализ: 1 из 1 камер</span><div class="sp"></div>
+    <span class="fbtn on" id="pbtn">▾ Пресеты <span class="kc">P</span></span><span class="fbtn"><span class="kc">F1</span> Справка</span><span class="faint">v1.1.0 · by funpin.ru &amp; Claude</span>
+  </div>
+</div></div>
+<script>
+const names=["Трибуна","Пояс центр","Общий","Слева","Справа","Зал","",""];
+const pos=[46,50,48,28,70,50];
+function pres(sel){let h='';for(let i=0;i<8;i++){
+  if(i<6)h+=`<div class="p${sel&&i==1?' last':''}"><span class="fig" style="left:${pos[i]}%;${i==2||i==5?'height:22%;width:4%;bottom:32%':''}"></span><span class="k">${i+1}</span><span class="nm">${names[i]}</span></div>`;
+  else h+=`<div class="p empty">${i+1}<br>Shift+клик</div>`}return h}
+const row=(c,nm,sel,pgm)=>`<div class="prow${sel?' sel':''}"><div class="cam"><b>${c} · ${nm}</b>${pgm?'<span class="pg">PGM</span>':''}</div><div class="th">${pres(sel)}</div></div>`;
+function view(v){document.querySelectorAll('.tbtn').forEach(t=>t.classList.toggle('on',t.dataset.v==v));
+ const d=document.getElementById('drawer');d.classList.toggle('hidden',v=='closed');
+ document.getElementById('pbtn').classList.toggle('on',v!='closed');
+ document.getElementById('pbtn').firstChild.textContent=v=='closed'?'▴ Пресеты ':'▾ Пресеты ';
+ document.getElementById('rows').innerHTML=row(1,'Сцена',true,true)+(v=='open'?row(2,'Зал',false,false):'');}
+document.querySelectorAll('.tbtn').forEach(t=>t.onclick=()=>view(t.dataset.v));
+function fit(){const sc=document.getElementById('sc'),w=document.getElementById('win');const k=Math.min(1,sc.clientWidth/1640);w.style.transform=`scale(${k})`;sc.style.height=(850*k+2)+'px'}
+addEventListener('resize',fit);view('open');fit();
+</script>
+</body></html>

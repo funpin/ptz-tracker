@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>PTZ Tracker — справка</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--graphite:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;
+ --white:#F5F5F2;--dim:#B4B8BD;--grey:#858A91;--grey-brand:#777C83;--lime:#B7F34A;--fault:#EF4444}
+*{box-sizing:border-box}
+body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:24px 28px 60px}
+h1{font-size:22px;margin:0 0 4px}
+p.sub{color:var(--dim);margin:0 0 16px;font-size:14px;line-height:1.5;max-width:1000px}
+.dlg{width:1040px;background:var(--graphite);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.dh{display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.dh h3{margin:0;font-size:15px}
+.tabs{display:flex;gap:4px;margin-left:16px;background:var(--surface);padding:3px;border-radius:9px}
+.tab{padding:6px 14px;border-radius:7px;font-size:13px;color:var(--dim);cursor:pointer}
+.tab.on{background:var(--raised-hi);color:var(--white)}
+.x{margin-left:auto;color:var(--grey);font-size:18px}
+.body{display:grid;grid-template-columns:1fr 360px;min-height:470px}
+.stage{display:grid;place-items:center;padding:20px;position:relative}
+.list{border-left:1px solid var(--line);padding:10px 8px;display:flex;flex-direction:column;gap:2px;overflow:auto}
+.grp{color:var(--grey);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:10px 10px 4px}
+.it{display:flex;gap:10px;align-items:center;padding:7px 10px;border-radius:8px;cursor:default;font-size:13px;color:var(--dim)}
+.it .kc{flex:none;min-width:56px;text-align:center;font-size:11px;font-weight:600;color:var(--white);border:1px solid var(--line);border-radius:5px;padding:2px 6px;background:var(--raised)}
+.it.hl{background:rgba(183,243,74,.10);color:var(--white)}
+.it.hl .kc{border-color:var(--lime);color:var(--lime)}
+.pane{display:none}.pane.on{display:block}
+/* геймпад */
+#pad .part{fill:var(--raised);stroke:var(--grey-brand);stroke-width:1.5;transition:fill .15s,stroke .15s;cursor:pointer}
+#pad .part.hl{fill:rgba(183,243,74,.22);stroke:var(--lime)}
+#pad .sym{fill:none;stroke:var(--dim);stroke-width:1.6;pointer-events:none}
+#pad .lbl{fill:var(--grey);font-size:11px;font-family:Inter;pointer-events:none}
+#pad .body{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+.knob{transition:transform .2s}
+@keyframes circ{0%{transform:translate(10px,0)}25%{transform:translate(0,10px)}50%{transform:translate(-10px,0)}75%{transform:translate(0,-10px)}100%{transform:translate(10px,0)}}
+@keyframes lr{0%,100%{transform:translate(0,0)}30%{transform:translate(-10px,0)}70%{transform:translate(10px,0)}}
+@keyframes press{0%,100%{transform:scale(1)}50%{transform:scale(.82)}}
+.anim-circ{animation:circ 1.6s linear infinite}
+.anim-lr{animation:lr 1.4s ease-in-out infinite}
+.anim-press{animation:press .9s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
+/* эффект */
+.fx{position:absolute;left:20px;bottom:16px;display:flex;gap:12px;align-items:center;color:var(--dim);font-size:12.5px;min-height:62px}
+.fx .scr{width:96px;height:54px;border-radius:6px;border:1px solid var(--line);background:linear-gradient(180deg,#4a5260 0%,#3b4049 55%,#4a3a2c 56%,#3a2d22 100%);position:relative;overflow:hidden}
+.fx .scr i{position:absolute;left:44px;top:16px;width:8px;height:26px;border-radius:4px 4px 2px 2px;background:#c8968a}
+.fx b{color:var(--white);display:block;font-size:13px}
+/* клавиатура */
+.kb{display:grid;gap:6px}
+.kb .r{display:flex;gap:6px;justify-content:center}
+.key{min-width:40px;height:40px;padding:0 8px;border-radius:7px;border:1px solid var(--grey-brand);background:var(--raised);display:grid;place-items:center;font-size:12px;color:var(--dim);transition:.15s}
+.key.used{color:var(--white);border-color:var(--dim)}
+.key.hl{background:rgba(183,243,74,.22);border-color:var(--lime);color:var(--lime)}
+.key.dimk{opacity:.35}
+/* мышь */
+.ms{display:flex;gap:40px;align-items:center}
+.vid{width:380px;height:214px;border-radius:10px;border:1px solid var(--line);background:linear-gradient(180deg,#4a5260 0%,#3b4049 55%,#4a3a2c 56%,#3a2d22 100%);position:relative}
+.vid .p{position:absolute;left:175px;top:60px;width:22px;height:90px;border-radius:10px 10px 4px 4px;background:#c8968a}
+.vid .cur{position:absolute;left:190px;top:110px;font-size:20px;transition:.3s;opacity:0}
+.vid .bx{position:absolute;left:166px;top:52px;width:40px;height:106px;opacity:0;transition:.3s}
+.vid .zone{position:absolute;left:120px;top:20px;width:134px;height:170px;border:1.5px dashed rgba(245,245,242,.7);border-radius:8px;opacity:0;transition:.3s}
+.vid.click .cur{opacity:1}.vid.click .bx{opacity:1}
+.vid.drag .zone{opacity:1;animation:lr 1.6s ease-in-out infinite}
+.note{color:var(--grey);font-size:12.5px;margin-top:14px;max-width:1040px;line-height:1.5}
+ul.notes{color:var(--dim);font-size:13.5px;line-height:1.6;max-width:1040px;padding-left:18px}ul.notes b{color:var(--white)}
+.choice{display:inline-flex;margin:12px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:var(--dim);font-size:13px}
+.choice.selected{border-color:var(--lime);color:var(--lime)}
+</style></head><body>
+<h1>Справка (F1) — живая</h1>
+<p class="sub">Это рабочий макет — <b>попробуйте</b>: наведите мышь на строку справа — на рисунке подсветится кнопка, а стик или курок покажут движение; наведите на кнопку геймпада — подсветится строка. Внизу слева — что произойдёт с камерой. Вкладки: геймпад, клавиатура, мышь.</p>
+
+<div class="dlg">
+  <div class="dh"><svg width="22" height="22" viewBox="0 0 120 120"><g fill="none" stroke="#F5F5F2" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"><path d="M31 58V42c0-6.075 4.925-11 11-11h16"/><path d="M62 89h16c6.075 0 11-4.925 11-11V62"/></g><circle cx="60" cy="60" r="11" fill="#B7F34A"/></svg>
+    <h3>Справка</h3>
+    <div class="tabs"><span class="tab on" data-t="g">Геймпад</span><span class="tab" data-t="k">Клавиатура</span><span class="tab" data-t="m">Мышь</span></div>
+    <span class="x">×</span></div>
+  <div class="body">
+    <div class="stage">
+      <div class="pane on" id="p-g">
+<svg id="pad" width="560" height="360" viewBox="0 0 560 360">
+  <!-- курки и бамперы -->
+  <rect class="part" data-a="zoom" x="96" y="30" width="86" height="26" rx="10"/><text class="lbl" x="139" y="22" text-anchor="middle">L2</text>
+  <rect class="part" data-a="zoom" x="378" y="30" width="86" height="26" rx="10"/><text class="lbl" x="421" y="22" text-anchor="middle">R2</text>
+  <rect class="part" data-a="size" x="100" y="62" width="80" height="14" rx="6"/><text class="lbl" x="88" y="74" text-anchor="end">L1</text>
+  <rect class="part" data-a="size" x="380" y="62" width="80" height="14" rx="6"/><text class="lbl" x="472" y="74">R1</text>
+  <!-- корпус -->
+  <path class="body" d="M140 80h280c40 0 62 26 70 70l26 130c6 34-24 54-48 34l-52-48c-10-9-22-14-36-14H180c-14 0-26 5-36 14l-52 48c-24 20-54 0-48-34l26-130c8-44 30-70 70-70z"/>
+  <!-- тачпад -->
+  <rect class="part" data-a="stop" x="206" y="92" width="148" height="78" rx="12"/><text class="lbl" x="280" y="135" text-anchor="middle">тачпад</text>
+  <rect class="part" data-a="next" x="180" y="96" width="14" height="22" rx="5"/><text class="lbl" x="170" y="92" text-anchor="end">Create</text>
+  <rect class="part" data-a="menu" x="366" y="96" width="14" height="22" rx="5"/><text class="lbl" x="390" y="92">Options</text>
+  <!-- крестовина -->
+  <g data-a="dpad">
+   <rect class="part" data-a="dpad-ud" x="118" y="118" width="26" height="30" rx="5"/>
+   <rect class="part" data-a="dpad-ud" x="118" y="178" width="26" height="30" rx="5"/>
+   <rect class="part" data-a="dpad-lr" x="86" y="150" width="30" height="26" rx="5"/>
+   <rect class="part" data-a="dpad-lr" x="146" y="150" width="30" height="26" rx="5"/>
+  </g>
+  <!-- кнопки -->
+  <circle class="part" data-a="presets" cx="420" cy="130" r="15"/><path class="sym" d="M412 136l8-13 8 13z"/>
+  <circle class="part" data-a="presets" cx="452" cy="162" r="15"/><circle class="sym" cx="452" cy="162" r="7"/>
+  <circle class="part" data-a="presets" cx="420" cy="194" r="15"/><path class="sym" d="M414 188l12 12M426 188l-12 12"/>
+  <circle class="part" data-a="presets" cx="388" cy="162" r="15"/><rect class="sym" x="382" y="156" width="12" height="12"/>
+  <!-- стики -->
+  <circle class="part" data-a="lstick" cx="200" cy="230" r="34"/>
+  <circle id="lk" class="part knob" data-a="lstick" cx="200" cy="230" r="20" style="transform-box:fill-box;transform-origin:center"/>
+  <text class="lbl" x="200" y="282" text-anchor="middle">L-стик · L3</text>
+  <circle class="part" data-a="rstick" cx="360" cy="230" r="34"/>
+  <circle id="rk" class="part knob" data-a="rstick" cx="360" cy="230" r="20" style="transform-box:fill-box;transform-origin:center"/>
+  <text class="lbl" x="360" y="282" text-anchor="middle">R-стик · R3</text>
+</svg>
+      </div>
+      <div class="pane" id="p-k">
+        <div class="kb">
+          <div class="r"><span class="key used" data-a="k-stop">Esc</span><span class="key used" data-a="k-help">F1</span><span class="key dimk">F2</span><span class="key dimk">…</span><span class="key used" data-a="k-moment">F9</span></div>
+          <div class="r"><span class="key used" data-a="k-size">1</span><span class="key used" data-a="k-size">2</span><span class="key used" data-a="k-size">3</span><span class="key dimk">4</span><span class="key dimk">5</span><span class="key dimk">…</span><span class="key used" data-a="k-zoom">−</span><span class="key used" data-a="k-zoom">+</span></div>
+          <div class="r"><span class="key dimk">Q</span><span class="key dimk">W</span><span class="key dimk">E</span><span class="key dimk">R</span><span class="key dimk">T</span><span class="key dimk">…</span><span class="key used" data-a="k-presets">P</span></div>
+          <div class="r"><span class="key dimk">A</span><span class="key dimk">S</span><span class="key dimk">…</span><span class="key used" data-a="k-menu">M</span></div>
+          <div class="r"><span class="key used" data-a="k-track" style="min-width:260px">Пробел</span><span class="key used" data-a="k-pan">←</span><span class="key used" data-a="k-pan">↑</span><span class="key used" data-a="k-pan">↓</span><span class="key used" data-a="k-pan">→</span></div>
+        </div>
+      </div>
+      <div class="pane" id="p-m">
+        <div class="ms"><div class="vid" id="mv"><div class="zone"></div><div class="p"></div>
+          <svg class="bx" viewBox="0 0 40 106"><g fill="none" stroke="#B7F34A" stroke-width="2.4" stroke-linecap="round"><path d="M2 18V6a4 4 0 0 1 4-4h12"/><path d="M22 104h12a4 4 0 0 0 4-4V88"/></g></svg>
+          <span class="cur">🖱︎</span></div></div>
+      </div>
+      <div class="fx" id="fx"><div class="scr"><i id="fxp"></i></div><div><b id="fxt">Наведите на действие</b><span id="fxd">— здесь будет видно, что сделает камера</span></div></div>
+    </div>
+    <div class="list" id="list"></div>
+  </div>
+</div>
+<p class="note">Геймпад нарисован своими линиями в стиле брендбука (не фото): одинаково смотрится в тёмной теме и не требует чужих картинок. Список действий берётся из той же таблицы, что и сам геймпад, — поменяется раскладка, поменяется и справка.</p>
+
+<ul class="notes">
+  <li><b>3D-модель камеры:</b> поискал бы у Panasonic (у них бывают CAD-файлы), но их лицензия, скорее всего, не разрешает класть файл в открытую программу. Предлагаю свой простой рисунок камеры (голова на подставке) в тех же линиях — например, на экране «нет камеры» и в окне «Камеры». Скажите, если всё же поискать.</li>
+</ul>
+<div><span class="choice" data-choice="ok">Так нравится</span><span class="choice" data-choice="change">Поменять (напишу)</span></div>
+
+<script>
+const G=[["Камера",[["lstick","L-стик","поворот и наклон","Камера поворачивается — скорость по отклонению стика","circ"],
+  ["zoom","L2 / R2","зум шире / ближе","Плавный зум, сила нажатия — скорость","zoom"],
+  ["lstick3","L3","разовая автофокусировка","Нажмите левый стик — камера наведёт резкость","pressL"],
+  ["stop","Тачпад","СТОП КАМЕРЫ","Камера сразу останавливается, слежение выключается","stop"]]],
+ ["Слежение",[["rstick3","R3","слежение вкл / выкл","Нажмите правый стик","pressR"],
+  ["rstick","R-стик ← →","цель — сосед слева / справа","Рамка «ВЕДУ» переходит на соседнего человека","lr"],
+  ["size","L1 / R1","крупность ближе / шире","Пояс ↔ в рост ↔ общий","size"]]],
+ ["Пресеты и меню",[["presets","✕ ○ □ △","пресеты 1–4","Нажать — вызвать, держать 1 с — записать","press"],
+  ["dpad-lr","Крестовина ← →","ирис закрыть / открыть","",""],["dpad-ud","Крестовина ↑ ↓","gain ±3 dB","",""],
+  ["menu","Options","меню камеры","",""],["next","Create","следующая камера (держать — сохранить момент)","",""]]]];
+const K=[["Камера",[["k-pan","← ↑ ↓ →","поворот и наклон"],["k-zoom","+ −","зум"],["k-stop","Esc","СТОП КАМЕРЫ"]]],
+ ["Слежение",[["k-track","Пробел","слежение вкл / выкл"],["k-size","1 2 3","кадр: пояс / рост / общий"]]],
+ ["Прочее",[["k-presets","P","пресеты"],["k-menu","M","меню камеры"],["k-moment","F9","сохранить момент"],["k-help","F1","эта справка"]]]];
+const M=[["Видео",[["m-click","Клик","выбрать цель (рамка «ВЕДУ»)"],["m-drag","Перетащить","сдвинуть зону кадра (1.2)"],["m-cell","Клик по клетке","выбрать камеру"]]]];
+let cur='g';
+function render(){const data=cur=='g'?G:cur=='k'?K:M;const l=document.getElementById('list');l.innerHTML='';
+ data.forEach(([g,items])=>{l.insertAdjacentHTML('beforeend',`<div class="grp">${g}</div>`);
+  items.forEach(it=>{const d=document.createElement('div');d.className='it';d.dataset.a=it[0];d.innerHTML=`<span class="kc">${it[1]}</span>${it[2]}`;
+   d.onmouseenter=()=>hl(it[0],it);d.onmouseleave=()=>hl(null);l.appendChild(d)})})}
+function base(a){return a.replace(/3$/,'')}
+function hl(a,it){document.querySelectorAll('.hl').forEach(e=>e.classList.remove('hl'));
+ ['lk','rk'].forEach(id=>document.getElementById(id).setAttribute('class','part knob'));
+ document.querySelectorAll('#pad .part').forEach(p=>p.classList.remove('anim-press'));
+ const mv=document.getElementById('mv');mv.className='vid';
+ if(!a){fx('Наведите на действие','— здесь будет видно, что сделает камера','');return}
+ document.querySelectorAll(`[data-a="${a}"]`).forEach(e=>e.classList.add('hl'));
+ document.querySelectorAll(`#pad [data-a="${base(a)}"]`).forEach(e=>e.classList.add('hl'));
+ if(it){const an=it[4];
+  if(an=='circ')document.getElementById('lk').classList.add('anim-circ');
+  if(an=='lr')document.getElementById('rk').classList.add('anim-lr');
+  if(an=='pressL')document.getElementById('lk').classList.add('anim-press');
+  if(an=='pressR')document.getElementById('rk').classList.add('anim-press');
+  if(an=='press'||an=='zoom'||an=='size'||an=='stop')document.querySelectorAll(`#pad [data-a="${a}"]`).forEach(e=>e.classList.add('anim-press'));
+  if(a=='m-click')mv.className='vid click'; if(a=='m-drag')mv.className='vid drag';
+  fx(it[2],it[3]||'',an)}}
+function fx(t,d,an){document.getElementById('fxt').textContent=t;document.getElementById('fxd').textContent=d;
+ const p=document.getElementById('fxp');p.style.animation=an=='circ'||an=='lr'?'lr 1.6s ease-in-out infinite':'';
+ p.style.transform=an=='zoom'?'scale(1.6)':an=='size'?'scale(.6)':'';p.style.transition='.4s'}
+document.querySelectorAll('#pad .part, .key.used').forEach(el=>{el.addEventListener('mouseenter',()=>{
+  const a=el.dataset.a;const row=[...document.querySelectorAll('.it')].find(r=>base(r.dataset.a)==a||r.dataset.a==a);
+  const data=(cur=='g'?G:K).flatMap(x=>x[1]);hl(row?row.dataset.a:a,data.find(i=>i[0]==(row?row.dataset.a:a)))});
+ el.addEventListener('mouseleave',()=>hl(null))});
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');
+ cur=t.dataset.t;document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));document.getElementById('p-'+cur).classList.add('on');render()});
+render();
+</script>
+</body></html>

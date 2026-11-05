@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>PTZ Tracker — детали</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--graphite:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;
+ --white:#F5F5F2;--dim:#B4B8BD;--grey:#858A91;--grey-brand:#777C83;--lime:#B7F34A;--fault:#EF4444;--pgm:#E8202A;--pvw:#2FB65E;--lost:#F0A020}
+*{box-sizing:border-box}
+body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:24px 28px 60px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:40px 0 6px}
+p.sub{color:var(--dim);margin:0 0 14px;font-size:14px;line-height:1.5;max-width:1100px}
+.panel{background:var(--graphite);border:1px solid var(--line);border-radius:12px;padding:18px;display:inline-flex;flex-direction:column;gap:14px}
+.row{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--dim)}
+.row .what{width:230px;color:var(--grey);font-size:12.5px}
+/* батарейка */
+.pad{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 6px 0 5px;border-radius:7px;border:1px solid var(--line);background:var(--surface);font-size:11.5px;font-weight:600}
+.pad svg{flex:none}
+.bat{position:relative;width:36px;height:18px;border-radius:4.5px;border:1.3px solid rgba(245,245,242,.55);overflow:hidden;display:grid;place-items:center}
+.bat:after{content:"";position:absolute;right:-4px;top:4px;width:2px;height:5px;border-radius:0 1px 1px 0;background:rgba(245,245,242,.55)}
+.bat i{position:absolute;left:0;top:0;bottom:0;width:var(--p);background:var(--white)}
+.bat span{position:relative;font-size:11px;font-weight:800;color:var(--graphite);mix-blend-mode:normal;z-index:1}
+.bat.low i{background:var(--lost)}.bat.crit i{background:var(--fault)}
+.bat.chg i{background:var(--lime)}
+.bat.dark span{color:var(--white)}
+.batwrap{position:relative;padding-right:3px}
+.stack{display:inline-flex;gap:4px}
+.more{height:24px;padding:0 7px;border-radius:7px;border:1px solid var(--line);display:inline-flex;align-items:center;font-size:11.5px;color:var(--dim)}
+/* трек */
+.track{height:36px;border-radius:9px;display:inline-flex;align-items:center;gap:10px;padding:0 6px 0 14px;font-weight:700;letter-spacing:.3px;font-size:13.5px}
+.track.on{background:var(--lime);color:var(--graphite)}
+.track.off{background:var(--raised);border:1px solid var(--line);color:var(--white)}
+.track.lost{background:var(--lost);color:var(--graphite)}
+.track .cams{display:flex;gap:3px;padding:3px;border-radius:7px;background:rgba(23,25,29,.22)}
+.track.off .cams{background:var(--graphite)}
+.c{width:22px;height:22px;border-radius:5px;display:grid;place-items:center;font-size:11px;font-weight:800}
+.c.ved{background:var(--graphite);color:var(--lime)}
+.c.an{border:1.5px solid currentColor;opacity:.75}
+.c.no{opacity:.35}
+.c.ls{background:var(--graphite);color:var(--lost)}
+.c.sel{outline:2px solid currentColor;outline-offset:1px}
+.tag{font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:5px}
+.tag.on{color:var(--graphite);background:var(--lime)}.tag.off{color:var(--grey);border:1px solid var(--line);padding:1px 5px}.tag.na{color:var(--grey);border:1px dashed var(--line);padding:1px 5px}
+.tag.lost{color:var(--graphite);background:var(--lost)}
+/* пустые клетки */
+.cells{display:grid;grid-template-columns:repeat(2,540px);gap:12px}
+.cell{height:310px;border-radius:10px;border:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
+.ch{height:36px;display:flex;align-items:center;gap:6px;padding:0 8px;border-bottom:1px solid var(--line)}
+.num{width:22px;height:22px;border-radius:6px;background:var(--raised-hi);display:grid;place-items:center;font-weight:700;font-size:12px}
+.ch .nm{font-weight:600;font-size:13px}.ch i{font-style:normal;color:var(--grey);font-size:10px;margin-left:6px}
+.cb{flex:1;position:relative;padding:12px}
+.sum{width:100%;border-collapse:collapse;font-size:12.5px}
+.sum td{padding:7px 6px;border-bottom:1px solid var(--line);color:var(--dim);white-space:nowrap}
+.sum td:first-child{color:var(--white);font-weight:600}
+.sum tr:last-child td{border-bottom:none}
+.sm{font-size:10.5px;font-weight:700;padding:1px 5px;border-radius:4px}
+.sm.pgm{background:var(--pgm);color:var(--white)}.sm.pvw{color:var(--pvw);border:1px solid var(--pvw)}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--dim);font-size:13px}
+.btn{height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--line);background:var(--raised);display:inline-flex;align-items:center;color:var(--white);font-size:13px}
+.btn.pri{background:var(--white);color:var(--graphite);border-color:var(--white);font-weight:600}
+/* аудит */
+table.audit{border-collapse:collapse;font-size:13px;max-width:1100px;width:100%}
+.audit td,.audit th{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.audit th{color:var(--grey);font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:600}
+.audit td:first-child{color:var(--white);width:300px}
+.audit td{color:var(--dim)}
+.new{color:var(--lime);font-weight:600}
+.choice{display:inline-flex;margin:12px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:var(--dim);font-size:13px}
+.choice.selected{border-color:var(--lime);color:var(--lime)}
+</style></head><body>
+<h1>Геймпады, TRACK, пустые клетки и проверка функций</h1>
+
+<h2>1. Геймпады с зарядом в батарейке</h2>
+<p class="sub">Процент — прямо внутри батарейки, как в iOS. Белая заливка — обычно; ≤ 20 % — оранжевая; ≤ 10 % — красная; заряжается — лаймовая. Номер рядом совпадает с огоньками на геймпаде. На одной камере может быть несколько геймпадов: до двух — показываем оба, больше — первый и «+2» (наведите — список).</p>
+<div class="panel">
+  <div class="row"><span class="what">Один геймпад, 83 %</span>
+    <span class="pad"><svg width="18" height="12" viewBox="0 0 24 16"><path d="M6 2h12c3 0 5 3 5.6 7l.4 3c.3 2.4-2.2 3.4-3.7 1.8L18 11H6l-2.3 2.8C2.2 15.4-.3 14.4 0 12l.4-3C1 5 3 2 6 2z" fill="none" stroke="#B4B8BD" stroke-width="1.6"/></svg>1
+      <span class="batwrap"><span class="bat" style="--p:83%"><span>83</span></span></span></span></div>
+  <div class="row"><span class="what">Мало заряда, 18 %</span>
+    <span class="pad"><svg width="18" height="12" viewBox="0 0 24 16"><path d="M6 2h12c3 0 5 3 5.6 7l.4 3c.3 2.4-2.2 3.4-3.7 1.8L18 11H6l-2.3 2.8C2.2 15.4-.3 14.4 0 12l.4-3C1 5 3 2 6 2z" fill="none" stroke="#B4B8BD" stroke-width="1.6"/></svg>2
+      <span class="batwrap"><span class="bat low dark" style="--p:18%"><span>18</span></span></span></span></div>
+  <div class="row"><span class="what">Заряжается, 46 %</span>
+    <span class="pad"><svg width="18" height="12" viewBox="0 0 24 16"><path d="M6 2h12c3 0 5 3 5.6 7l.4 3c.3 2.4-2.2 3.4-3.7 1.8L18 11H6l-2.3 2.8C2.2 15.4-.3 14.4 0 12l.4-3C1 5 3 2 6 2z" fill="none" stroke="#B4B8BD" stroke-width="1.6"/></svg>3
+      <span class="batwrap"><span class="bat chg" style="--p:46%"><span>⚡46</span></span></span></span></div>
+  <div class="row"><span class="what">Два геймпада на одной камере</span>
+    <span class="stack"><span class="pad">🎮︎1 <span class="batwrap"><span class="bat" style="--p:83%"><span>83</span></span></span></span><span class="pad">🎮︎3 <span class="batwrap"><span class="bat" style="--p:52%"><span>52</span></span></span></span></span></div>
+  <div class="row"><span class="what">Четыре на одной камере (редко)</span>
+    <span class="stack"><span class="pad">🎮︎1 <span class="batwrap"><span class="bat" style="--p:83%"><span>83</span></span></span></span><span class="more">+3</span></span></div>
+  <div class="row"><span class="what">Верхняя строка: всего геймпадов</span>
+    <span class="pad" style="border-color:transparent">🎮︎ 3 <span class="batwrap"><span class="bat low dark" style="--p:18%"><span>18</span></span></span></span><span style="font-size:12px;color:var(--grey)">— показываем самый разряженный</span></div>
+</div>
+
+<h2>2. Кнопка TRACK при нескольких камерах</h2>
+<p class="sub">Кнопка всегда про <b>выбранную</b> камеру (Пробел), её цвет — состояние выбранной. Справа внутри кнопки — маленькие квадратики только тех камер, у которых <b>включён анализ</b> (по умолчанию одна — тогда квадратик один и кнопка выглядит как сейчас). Квадратик: лаймовая цифра — ведёт; оранжевая — потерял цель; контур — анализ идёт, но слежение выключено. Клик по квадратику — включить/выключить слежение той камеры, не переключая выбор. Esc — стоп всех.</p>
+<div class="panel">
+  <div class="row"><span class="what">База: одна камера с анализом, ведёт</span><span class="track on">TRACK ON<span class="cams"><span class="c ved sel">1</span></span></span></div>
+  <div class="row"><span class="what">Одна камера, выключено</span><span class="track off">TRACK OFF<span class="cams"><span class="c an sel">1</span></span></span></div>
+  <div class="row"><span class="what">Две с анализом: выбрана 1 (ведёт), 3 ведёт</span><span class="track on">TRACK ON<span class="cams"><span class="c ved sel">1</span><span class="c ved">3</span></span></span></div>
+  <div class="row"><span class="what">Выбрана 2 (выкл), 1 ведёт, 3 потеряла</span><span class="track off">TRACK OFF<span class="cams"><span class="c ved">1</span><span class="c an sel">2</span><span class="c ls">3</span></span></span></div>
+  <div class="row"><span class="what">Выбрана 1, цель потеряна</span><span class="track lost">ИЩУ ЦЕЛЬ<span class="cams"><span class="c sel" style="background:var(--graphite);color:var(--lost)">1</span></span></span></div>
+  <div class="row"><span class="what">Выбрана камера без анализа</span><span class="track off" style="opacity:.6">TRACK —<span class="cams"><span class="c ved">1</span></span></span><span style="font-size:12px;color:var(--grey)">подсказка: «анализ занят камерой 1 — ☰ → Анализировать одновременно»</span></div>
+  <div class="row"><span class="what">То же — в шапке каждой клетки</span><span class="tag on">ВЕДУ</span><span class="tag lost">ИЩУ</span><span class="tag off">ВЫКЛ</span><span class="tag na">БЕЗ АНАЛИЗА</span></div>
+</div>
+
+<h2>3. Пустые клетки</h2>
+<p class="sub">Пустая клетка сама показывает полезный служебный вид (выбор — в ▾ шапки): при 3 камерах — «Сводка», при 2 — «Сводка» и «Положение камер». Если камер нет совсем — приветствие с логотипом. «Графики PTZ» остаются в списке для разбора.</p>
+<div class="cells">
+  <div class="cell"><div class="ch"><span class="num">3</span><span class="nm">Сводка</span><i>▾</i></div>
+    <div class="cb"><table class="sum">
+      <tr><td>1 · Сцена</td><td><span class="sm pgm">PGM</span></td><td><span class="tag on">ВЕДУ</span></td><td>🎮︎1 · 83 %</td><td>25 к/с · анализ 15</td><td><span class="dot" style="background:var(--lime)"></span>калибр.</td></tr>
+      <tr><td>2 · Зал</td><td><span class="sm pvw">PVW</span></td><td><span class="tag na">БЕЗ АНАЛ.</span></td><td>🎮︎2 · 18 %</td><td>25 к/с</td><td><span class="dot" style="background:var(--lost)"></span>нет калибр.</td></tr>
+      <tr><td>3 · Трибуна</td><td></td><td><span class="tag off">ОЖИД.</span></td><td>—</td><td>—</td><td><span class="dot" style="background:var(--lime)"></span>калибр.</td></tr>
+    </table>
+    <div style="margin-top:12px;font-size:12px;color:var(--grey);line-height:1.6">ATEM на связи · журнал пишет последние 5 мин · агент выключен</div></div></div>
+  <div class="cell"><div class="ch"><span class="num">4</span><span class="nm">Положение камер</span><i>▾</i></div>
+    <div class="cb"><svg width="100%" height="100%" viewBox="0 0 516 260">
+      <defs><radialGradient id="g1"><stop offset="0" stop-color="#B7F34A" stop-opacity=".28"/><stop offset="1" stop-color="#B7F34A" stop-opacity="0"/></radialGradient></defs>
+      <rect x="20" y="16" width="476" height="226" rx="10" fill="none" stroke="#33373E" stroke-dasharray="4 5"/>
+      <text x="258" y="34" fill="#858A91" font-size="11" text-anchor="middle" font-family="Inter">сцена</text>
+      <path d="M150 220 L105 60 L195 60 Z" fill="url(#g1)"/><path d="M150 220 L105 60 M150 220 L195 60" stroke="#B7F34A" stroke-opacity=".6"/>
+      <circle cx="150" cy="220" r="11" fill="#17191D" stroke="#F5F5F2" stroke-width="2"/><text x="150" y="224" fill="#F5F5F2" font-size="11" font-weight="700" text-anchor="middle" font-family="Inter">1</text>
+      <path d="M330 222 L250 70 L430 70 Z" fill="#F5F5F2" fill-opacity=".06"/><path d="M330 222 L250 70 M330 222 L430 70" stroke="#777C83"/>
+      <circle cx="330" cy="222" r="11" fill="#17191D" stroke="#777C83" stroke-width="2"/><text x="330" y="226" fill="#B4B8BD" font-size="11" font-weight="700" text-anchor="middle" font-family="Inter">2</text>
+      <circle cx="148" cy="76" r="4" fill="#B7F34A"/>
+      <text x="38" y="236" fill="#858A91" font-size="11" font-family="Inter">P +12°  T −8°  Z 3.2×</text>
+    </svg></div></div>
+  <div class="cell"><div class="ch"><span class="num">1</span><span class="nm" style="color:var(--grey)">нет камеры</span><i>▾</i></div>
+    <div class="welcome">
+      <svg width="64" height="64" viewBox="0 0 120 120"><g fill="none" stroke="#F5F5F2" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M31 58V42c0-6.075 4.925-11 11-11h16"/><path d="M62 89h16c6.075 0 11-4.925 11-11V62"/></g><circle cx="60" cy="60" r="10" fill="#B7F34A"/></svg>
+      <div style="color:var(--white);font-weight:600;font-size:15px">Добавьте первую камеру</div>
+      <div style="display:flex;gap:8px"><span class="btn pri">+ Добавить камеру</span><span class="btn">Открыть симулятор</span></div>
+      <div style="font-size:12px;color:var(--grey)">Камера и компьютер должны быть в одной сети</div></div></div>
+</div>
+
+<h2>4. Проверка: всё ли из программы учтено</h2>
+<p class="sub">Прошёлся по журналу изменений и коду. Всё, что есть сейчас, — получает место в новом окне. Лаймовым — то, что меняется.</p>
+<table class="audit">
+<tr><th>Функция</th><th>Где будет</th></tr>
+<tr><td>Выбор камеры в клетке, служебные виды</td><td>▾ в шапке клетки</td></tr>
+<tr><td>Камеры: добавить / изменить / удалить, вкладка «Сведения»</td><td><span class="new">☰ → Камеры…</span>; «Изменить» — ещё и в ⋯ клетки</td></tr>
+<tr><td>Видеопоток (MJPEG 1/2, H.264), разрешение и к/с</td><td><span class="new">⋯ клетки → Видеопоток</span>; цифры — в углу видео</td></tr>
+<tr><td>Скорость анализа, сколько камер анализировать</td><td>в углу видео; <span class="new">общая нагрузка — внизу слева</span>; число — ☰</td></tr>
+<tr><td>Слежение: TRACK, причина выключения, цель, сброс цели, скелет</td><td>TRACK вверху; причина — внизу видео; цель/сброс/скелет — плашка сверху видео (в новом стиле)</td></tr>
+<tr><td>Кадр, «Мягко ↔ Резко», предупреждение «не откалибрована»</td><td>справа: <span class="new">силуэты + ползунок</span>; предупреждение — под ними</td></tr>
+<tr><td>Стик, зум, чувствительность (идёт в main), ирис, gain, фокус, WB</td><td>справа</td></tr>
+<tr><td>Пресеты 1–9 (и больше)</td><td><span class="new">нижняя панель с миниатюрами</span></td></tr>
+<tr><td>Меню камеры поверх видео (M / Options)</td><td>то же; <span class="new">ещё пункт в ⋯</span>; оформление — в стиле</td></tr>
+<tr><td>Питание: ожидание / включение</td><td><span class="new">⏻ в шапке клетки</span>; большая кнопка в спящей клетке</td></tr>
+<tr><td>Калибровка (с живым графиком), диагностика</td><td><span class="new">⋯ клетки</span> (для этой камеры)</td></tr>
+<tr><td>ATEM: связь, PGM/PVW по каждой камере, настройки</td><td>вверху — связь; в шапке клетки — PGM/PVW; рамка клетки остаётся белой/обычной</td></tr>
+<tr><td>Геймпады: какой на какой клетке, заряд, сколько осталось, Create</td><td><span class="new">шапка клетки + верх + окно «Геймпады…»</span></td></tr>
+<tr><td>Журнал для разбора: F9, открыть, настройки, «Показать в папке»</td><td>вверху «Журнал»; «Показать в папке» — всплывашка после F9</td></tr>
+<tr><td>Агент: окно, значок AGENT</td><td>☰ → Агент…; значок вверху</td></tr>
+<tr><td>Симулятор, метка «СИМУЛЯТОР»</td><td>☰; метка — в шапке клетки (не поверх видео)</td></tr>
+<tr><td>Обновления: «Доступна X.Y.Z»</td><td>лаймовая точка на ☰ + пункт в меню</td></tr>
+<tr><td>«Нет видео» с понятной причиной</td><td>в клетке, вместо видео, в стиле</td></tr>
+<tr><td>Справка F1</td><td><span class="new">живая справка</span></td></tr>
+<tr><td>Окна: камера, калибровка, диагностика, ATEM, журнал, агент, просмотр записи (--replay)</td><td><span class="new">все — в общий стиль</span> (цвета, кнопки, поля, отступы)</td></tr>
+<tr><td>Иконка приложения</td><td><span class="new">новый знак (скобки + точка)</span> для Windows и Mac</td></tr>
+</table>
+<div><span class="choice" data-choice="ok">Так нравится</span><span class="choice" data-choice="change">Поменять (напишу)</span></div>
+<script>
+document.querySelectorAll('.bat').forEach(b=>{b.insertAdjacentHTML('afterbegin','<i></i>');b.style.background='rgba(245,245,242,.18)';
+ const p=parseInt(b.style.getPropertyValue('--p'));b.querySelector('span').style.color=p>=50?'#17191D':'#F5F5F2';});
+</script>
+</body></html>
