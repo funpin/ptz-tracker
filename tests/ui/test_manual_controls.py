@@ -254,3 +254,18 @@ def test_iris_and_wb_show_values(qtbot):
     assert labels[0] == "авто" and labels[1] == "память"
     assert labels[4] == "3200 K" and labels[5] == "5600 K"
     assert labels[P.WB_VAR].startswith("≈") and labels[P.WB_VAR].endswith("K")
+
+
+def test_sensitivity_texts_do_not_widen_panel(qtbot):
+    # Windows (шрифт шире): «Чувствительность» и «Медленнее на крупном плане» раздвигали панель до 407 px
+    from PySide6.QtWidgets import QLabel
+
+    from ptztracker.ui.main_window import SIDE_WIDTH
+
+    c, _ = make(qtbot)
+    c.slow_tele_check.setText("Медленнее на крупном плане " * 4)
+    for lab in c.findChildren(QLabel):
+        if lab.text() == "Чувствительность":
+            lab.setText("Чувствительность " * 4)
+    c.layout().invalidate()
+    assert c.minimumSizeHint().width() <= SIDE_WIDTH - 16

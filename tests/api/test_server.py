@@ -400,8 +400,8 @@ def test_unknown_camera_404(qtbot, tmp_path):
     analyze_both(w)
     allow_cell(w, 0)
     allow_cell(w, 1)
-    def moves():  # опросы камеры (Q…) идут сами; считаем только команды движения
-        return [[x for x in c.session.sim.received if x.startswith('#') and x != '#O'] for c in w.grid.cells[:2]]
+    def moves():  # опросы камеры (#G…, #O) идут сами; считаем только команды
+        return [[x for x in c.session.sim.received if x.startswith('#') and not x.startswith('#G') and x != '#O'] for c in w.grid.cells[:2]]
 
     sent = moves()
     for bad in ("nope", "3", "9", "0"):
