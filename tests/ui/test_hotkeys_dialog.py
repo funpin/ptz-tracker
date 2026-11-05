@@ -97,7 +97,7 @@ def test_hover_row_highlights_drawing(qtbot):
 def test_hover_drawing_highlights_row(qtbot):
     d = HotkeysDialog()
     qtbot.addWidget(d)
-    d.pad.hovered.emit("touchpad")
+    d.pad.hovered.emit("touchpad")  # тачпад: нажатие — стоп, свайп — крупность; стоп важнее
     lit = [r for r in d.rows if r.lit]
     assert len(lit) == 1 and "СТОП КАМЕРЫ" in lit[0].what_label.text()
     d.pad.hovered.emit("dpad_left")

@@ -59,7 +59,7 @@ def pad_elements(label: str) -> str | None:
     for prefix, key in (("левый стик", "lstick"), ("l3", "l3"), ("правый стик", "rstick"), ("r3", "r3"),
                         ("l2", "l2,r2"), ("r1", "r1,l1"), ("l1", "l1,r1"), ("✕", "cross,circle,square,triangle"),
                         ("крестовина ← ", "dpad_lr"),
-                        ("крестовина ↑", "dpad_ud"), ("крестовина", "dpad_lr"), ("тачпад", "touchpad"),
+                        ("крестовина ↑", "dpad_ud"), ("крестовина", "dpad_lr"), ("тачпад", "touchpad"), ("свайп", "touchpad"),
                         ("options", "options"), ("create", "create")):
         if low.startswith(prefix):
             return key
@@ -248,13 +248,10 @@ class HotkeysDialog(QDialog):
         data = self._data[tab]
         match = None
         if key is not None:
-            for n, (_k, _v, keys) in enumerate(data):
-                if not keys:
-                    continue
-                own = self.pad.elements_for(keys) if tab == 0 else set(keys.split(","))
-                if key in own:
-                    match = n
-                    break
+            found = [n for n, (_k, _v, keys) in enumerate(data)
+                     if keys and key in (self.pad.elements_for(keys) if tab == 0 else set(keys.split(",")))]
+            # у одного элемента бывает два действия (тачпад: нажать — стоп, свайп — крупность): стоп важнее
+            match = next((n for n in found if "СТОП" in data[n][1]), found[0] if found else None)
         self.highlight(match)
         if match is None and key is not None:
             self.drawing.set_highlight(None)

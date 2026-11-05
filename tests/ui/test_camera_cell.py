@@ -74,7 +74,7 @@ def test_pads_badges(qtbot):
     c.set_pads([(1, 83, False), (2, 50, False), (3, None, False), (4, 10, True)])
     assert [b.isVisible() for b in c.pad_badges] == [True, False, False, False]
     assert c.more_pads.isVisible() and c.more_pads.text() == "+3"
-    assert "3" in c.more_pads.toolTip() and "10%" in c.more_pads.toolTip()
+    assert "Геймпад 3" in c.more_pads.toolTip() and "заряжается" in c.more_pads.toolTip() and "%" not in c.more_pads.toolTip()
     c.set_pads([])
     assert not any(b.isVisible() for b in c.pad_badges) and c.more_pads.isHidden()
 
