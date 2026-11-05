@@ -49,13 +49,14 @@ def test_side_panel_fits_without_scroll(qtbot, tmp_path):
         assert w.side_scroll.verticalScrollBar().maximum() == 0, _heights(w)  # на Windows видно, что выросло
         for wd in (w.controls.gain_slider, w.controls.wb_combo, w.controls.preset_buttons[-1],
                    w.controls.near_btn, w.controls.iris_slider):
-            # по высоте не обрезано (панель не прокручивается); по ширине допускаем 1–2 px округления
-            r = wd.visibleRegion().boundingRect()
-            scr = w.screen().availableGeometry()
-            where = (f"{type(wd).__name__} {getattr(wd, 'text', lambda: '')()!r} видно {r} размер {wd.size()}"
-                     f" y в области {wd.mapTo(w.side_scroll.viewport(), wd.rect().topLeft()).y()};"
-                     f" экран {scr.width()}x{scr.height()}, окно {w.geometry()}\n{_heights(w)}")
-            assert wd.isVisible() and r.height() == wd.height() and r.width() >= wd.width() - 2, where
+            # целиком внутри видимой области панели; по ширине допускаем 1–2 px округления.
+            # visibleRegion() тут не годится: на сервере сборки Windows (экран 800×800, окно больше экрана)
+            # он бывает пустым у виджета в границах панели
+            vp = w.side_scroll.viewport()
+            top_left = wd.mapTo(vp, wd.rect().topLeft())
+            r = wd.rect().translated(top_left)
+            where = f"{type(wd).__name__} {getattr(wd, 'text', lambda: '')()!r} {r} в области {vp.rect()}\n{_heights(w)}"
+            assert wd.isVisible() and vp.rect().adjusted(0, 0, 2, 0).contains(r), where
     finally:
         w.close()
         app.setStyleSheet(old_style)
