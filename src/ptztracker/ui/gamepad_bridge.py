@@ -68,7 +68,9 @@ class GamepadBridge(QObject):
     _limit = Signal()  # из потока LimitWatch
 
     def __init__(self, backend=None, menu_open: Callable[[], bool] | None = None, hz: float = 100.0,
-                 parent=None) -> None:
+                 parent=None, driver: Callable[..., GamepadThread] | None = None) -> None:
+        """`driver` — фабрика (mapper, on_intents, on_connection, on_battery) → GamepadThread, который зарегистрирован
+        в MultiPadThread: он опрашивается общим потоком, мост свой поток не создаёт и не останавливает."""
         super().__init__(parent)
         self.connected = False
         self.info: dict | None = None
@@ -80,11 +82,15 @@ class GamepadBridge(QObject):
         self._battery = BatteryEstimator()
         self._mapper = _LockedMapper(Mapper(menu_open or (lambda: False)))
         self._thread: GamepadThread | None = None
+        self._external = driver is not None
         self._raw.connect(self._on_raw, Qt.QueuedConnection)
         self._conn.connect(self._on_conn, Qt.QueuedConnection)
         self._batt.connect(self._on_batt, Qt.QueuedConnection)
         self._follow.connect(self._on_follow, Qt.QueuedConnection)
         self._limit.connect(self._on_limit, Qt.QueuedConnection)
+        if driver is not None:
+            self._thread = driver(self._mapper, self._emit_raw, self._conn.emit, self._batt.emit)
+            return
         if backend is None:
             backend = SdlBackend()
         try:
@@ -200,5 +206,5 @@ class GamepadBridge(QObject):
 
     def stop(self, timeout: float = 1.0) -> None:
         self._vel = (0.0, 0.0, 0.0)
-        if self._thread is not None:
+        if self._thread is not None and not self._external:
             self._thread.stop(timeout)

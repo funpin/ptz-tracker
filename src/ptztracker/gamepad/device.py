@@ -43,10 +43,135 @@ BATTERY_PERIOD_S = 5.0
 TOUCHPAD_BUTTON = 20  # SDL_CONTROLLER_BUTTON_TOUCHPAD в SDL2; в pygame-ce 2.5 константы нет (15 — это MISC1, кнопка микрофона)
 
 
-class SdlBackend:
-    def __init__(self) -> None:
-        self._pg = None
+MAX_PADS = 4
+SCAN_PERIOD_S = 0.5  # как часто искать новые контроллеры
+
+
+class SdlHub:
+    """Один SDL на процесс: init/quit, event.pump и список подключённых контроллеров (до 4).
+
+    Все вызовы — из одного потока опроса. Новый контроллер занимает первый свободный индекс, отключённый
+    освобождает свой. Индекс хаба стабилен, пока контроллер подключён."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self.pg = None
+        self.mapping: dict[str, int] = {}
         self._controller = None
+        self._clock = clock
+        self._slots: list = [None] * MAX_PADS
+        self._scan_next = 0.0
+
+    def backend(self, index: int) -> SdlBackend:
+        return SdlBackend(self, index)
+
+    def open(self) -> bool:
+        """Запускает joystick/controller и пустое видео dummy (без окон и звука). Любой сбой SDL — False и одна строка в лог."""
+        if self.pg is not None:
+            return True
+        try:
+            import pygame
+            import pygame._sdl2.controller as controller
+
+            pygame.display.init()  # драйвер dummy: ни окна, ни Cocoa
+            pygame.joystick.init()
+            controller.init()
+            p = pygame
+            self.mapping = {
+                "cross": p.CONTROLLER_BUTTON_A, "circle": p.CONTROLLER_BUTTON_B, "square": p.CONTROLLER_BUTTON_X,
+                "triangle": p.CONTROLLER_BUTTON_Y, "l1": p.CONTROLLER_BUTTON_LEFTSHOULDER,
+                "r1": p.CONTROLLER_BUTTON_RIGHTSHOULDER, "l3": p.CONTROLLER_BUTTON_LEFTSTICK,
+                "r3": p.CONTROLLER_BUTTON_RIGHTSTICK, "dpad_up": p.CONTROLLER_BUTTON_DPAD_UP,
+                "dpad_down": p.CONTROLLER_BUTTON_DPAD_DOWN, "dpad_left": p.CONTROLLER_BUTTON_DPAD_LEFT,
+                "dpad_right": p.CONTROLLER_BUTTON_DPAD_RIGHT, "touchpad": TOUCHPAD_BUTTON,
+                "options": p.CONTROLLER_BUTTON_START, "create": p.CONTROLLER_BUTTON_BACK,
+            }
+            self.pg, self._controller = pygame, controller
+            return True
+        except Exception as e:
+            log.warning("Геймпад недоступен: SDL не запустился (%s: %s)", type(e).__name__, e)
+            self.pg = None
+            return False
+
+    def controller(self, index: int):
+        return self._slots[index] if 0 <= index < MAX_PADS else None
+
+    def pump(self) -> None:
+        """Раз за такт: события SDL, снятие отключённых, раз в 0,5 с поиск новых (в первый свободный индекс)."""
+        if self.pg is None:
+            return
+        self.pg.event.pump()
+        for i, ctl in enumerate(self._slots):
+            if ctl is not None and not self._attached(ctl):
+                self._slots[i] = None
+                try:
+                    ctl.quit()
+                except Exception:
+                    pass
+        now = self._clock()
+        if None in self._slots and now >= self._scan_next:
+            self._scan_next = now + SCAN_PERIOD_S
+            self._scan()
+
+    @staticmethod
+    def _attached(ctl) -> bool:
+        try:
+            return bool(ctl.attached())
+        except Exception:
+            return False
+
+    def _scan(self) -> None:
+        c = self._controller
+        known = set()
+        for ctl in self._slots:
+            if ctl is not None:
+                try:
+                    known.add(ctl.as_joystick().get_instance_id())
+                except Exception:
+                    pass
+        for i in range(c.get_count()):
+            if None not in self._slots:
+                return
+            if not c.is_controller(i):
+                continue
+            try:
+                ctl = c.Controller(i)
+                iid = ctl.as_joystick().get_instance_id()
+            except Exception as e:
+                log.debug("Контроллер %s не открыт: %s: %s", i, type(e).__name__, e)
+                continue
+            if iid in known:
+                try:
+                    ctl.quit()  # тот же контроллер уже в списке
+                except Exception:
+                    pass
+                continue
+            known.add(iid)
+            self._slots[self._slots.index(None)] = ctl
+
+    def close(self) -> None:
+        try:
+            for ctl in self._slots:
+                if ctl is not None:
+                    ctl.quit()
+            if self._controller is not None:
+                self._controller.quit()
+            if self.pg is not None:
+                self.pg.joystick.quit()
+                self.pg.display.quit()
+        except Exception:
+            pass
+        self._slots = [None] * MAX_PADS
+        self.pg = self._controller = None
+
+
+class SdlBackend:
+    """Один контроллер хаба по индексу. Без аргументов — одиночный геймпад со своим хабом (как раньше)."""
+
+    def __init__(self, hub: SdlHub | None = None, index: int = 0) -> None:
+        self._own_hub = hub is None
+        self._hub = SdlHub() if hub is None else hub
+        self._index = index
+        self._pg = None
         self._ctl = None
         self._pump_error_logged = False
         self._warned: set[str] = set()
@@ -57,42 +182,18 @@ class SdlBackend:
         self._last_battery: tuple[int | None, bool | None] = (None, None)
 
     def open(self) -> bool:
-        """Запускает joystick/controller и пустое видео dummy (без окон и звука). Любой сбой SDL — False и одна строка в лог."""
-        try:
-            import pygame
-            import pygame._sdl2.controller as controller
-
-            pygame.display.init()  # драйвер dummy: ни окна, ни Cocoa
-            pygame.joystick.init()
-            controller.init()
-            p = pygame
-            self._mapping = {
-                "cross": p.CONTROLLER_BUTTON_A, "circle": p.CONTROLLER_BUTTON_B, "square": p.CONTROLLER_BUTTON_X,
-                "triangle": p.CONTROLLER_BUTTON_Y, "l1": p.CONTROLLER_BUTTON_LEFTSHOULDER,
-                "r1": p.CONTROLLER_BUTTON_RIGHTSHOULDER, "l3": p.CONTROLLER_BUTTON_LEFTSTICK,
-                "r3": p.CONTROLLER_BUTTON_RIGHTSTICK, "dpad_up": p.CONTROLLER_BUTTON_DPAD_UP,
-                "dpad_down": p.CONTROLLER_BUTTON_DPAD_DOWN, "dpad_left": p.CONTROLLER_BUTTON_DPAD_LEFT,
-                "dpad_right": p.CONTROLLER_BUTTON_DPAD_RIGHT, "touchpad": TOUCHPAD_BUTTON,
-                "options": p.CONTROLLER_BUTTON_START, "create": p.CONTROLLER_BUTTON_BACK,
-            }
-            self._pg, self._controller = pygame, controller
-            return True
-        except Exception as e:
-            log.warning("Геймпад недоступен: SDL не запустился (%s: %s)", type(e).__name__, e)
+        if not self._hub.open():
             self._pg = None
             return False
+        self._pg, self._mapping = self._hub.pg, self._hub.mapping
+        return True
 
     def _attach(self) -> bool:
-        if self._ctl is not None and self._ctl.attached():
-            return True
-        self._ctl = None
-        self._close_hid()
-        c = self._controller
-        for i in range(c.get_count()):
-            if c.is_controller(i):
-                self._ctl = c.Controller(i)
-                return True
-        return False
+        ctl = self._hub.controller(self._index)
+        if ctl is not self._ctl:
+            self._close_hid()
+            self._ctl = ctl
+        return ctl is not None
 
     def poll(self) -> RawPad | None:
         if self._pg is None:
@@ -107,7 +208,8 @@ class SdlBackend:
             return None
 
     def _poll(self) -> RawPad | None:
-        self._pg.event.pump()
+        if self._own_hub:
+            self._hub.pump()  # у общего хаба pump делает MultiPadThread раз за такт
         if not self._attach():
             return None
         c, ctl = self._pg.CONTROLLER_AXIS_LEFTX, self._ctl
@@ -250,17 +352,9 @@ class SdlBackend:
 
     def close(self) -> None:
         self._close_hid()
-        try:
-            if self._ctl is not None:
-                self._ctl.quit()
-            if self._controller is not None:
-                self._controller.quit()
-            if self._pg is not None:
-                self._pg.joystick.quit()
-                self._pg.display.quit()
-        except Exception:
-            pass
-        self._ctl = self._pg = self._controller = None
+        self._ctl = self._pg = None
+        if self._own_hub:
+            self._hub.close()
 
 
 log_thread = logging.getLogger(__name__ + ".thread")
@@ -456,3 +550,67 @@ class GamepadThread:
                 log_thread.debug("Заряд геймпада не прочитан: %s: %s", type(e).__name__, e)
             val = (None, None)
         self._publish_battery(val)
+
+
+class MultiPadThread:
+    """Один поток на все геймпады: за такт hub.pump() один раз, затем tick() каждого GamepadThread.
+
+    Потоки GamepadThread создаются, но не запускаются: SDL однопоточный, все его вызовы идут отсюда."""
+
+    def __init__(self, hub, threads: list[GamepadThread], hz: float = 100.0,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self._hub, self._threads = hub, threads
+        self._period = 1.0 / hz
+        self._clock = clock
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._pump_warned = False
+        self._shut = False
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._run, name="gamepads", daemon=True)
+            self._thread.start()
+
+    def tick(self) -> None:
+        try:
+            self._hub.pump()
+        except Exception as e:
+            if not self._pump_warned:
+                self._pump_warned = True
+                log_thread.debug("Опрос SDL: %s: %s", type(e).__name__, e)
+        for t in self._threads:
+            t.tick()
+
+    def _run(self) -> None:
+        try:
+            while not self._stop.is_set():
+                t0 = self._clock()
+                self.tick()
+                self._stop.wait(max(0.0, self._period - (self._clock() - t0)))
+        finally:
+            self.shutdown()
+
+    def shutdown(self) -> None:
+        with self._lock:
+            if self._shut:
+                return
+            self._shut = True
+        for t in self._threads:
+            t.shutdown()
+        try:
+            self._hub.close()
+        except Exception:
+            log_thread.exception("Геймпады: сбой закрытия SDL")
+
+    def stop(self, timeout: float = 1.0) -> None:
+        self._stop.set()
+        th = self._thread
+        if th is None:
+            self.shutdown()
+            return
+        th.join(timeout)
+        if th.is_alive():
+            for t in self._threads:  # завис в SDL: оператору всё равно сообщаем об отключении, без обращения к SDL
+                t._send_disconnected()

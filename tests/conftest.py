@@ -48,3 +48,4 @@ def _no_real_gamepad(request, monkeypatch):
     from ptztracker.ui import main_window
 
     monkeypatch.setattr(main_window, "make_pad_backend", _NoPad)
+    monkeypatch.setattr(main_window, "make_pad_hub", lambda: None)

@@ -157,3 +157,122 @@ def test_badges_count(qtbot, tmp_path):
     w.pad_disconnected(2)
     assert [not b.isHidden() for b in w.cells[0].pad_badges][:2] == [True, False]
     w.close()
+
+
+# --- несколько физических геймпадов через общий хаб (подставной, без SDL) ---
+
+import threading  # noqa: E402
+
+from ptztracker.gamepad.device import RawPad  # noqa: E402
+
+
+class FakeBackend:
+    def __init__(self):
+        self.pad = None  # None — не подключён
+        self.calls = []
+        self._lock = threading.Lock()
+
+    def open(self):
+        return True
+
+    def poll(self):
+        return self.pad
+
+    def info(self):
+        return {"name": "DualSense", "type": "ps5", "has_led": True, "has_rumble": True, "power": None}
+
+    def set_led(self, rgb):
+        pass
+
+    def set_player_index(self, n):
+        with self._lock:
+            self.calls.append(("player", n))
+
+    def rumble(self, low, high, ms):
+        pass
+
+    def battery(self):
+        return (None, None)
+
+    def close(self):
+        pass
+
+
+class FakeHub:
+    def __init__(self):
+        self.backends = [FakeBackend() for _ in range(4)]
+        self.closed = False
+
+    def open(self):
+        return True
+
+    def backend(self, i):
+        return self.backends[i]
+
+    def pump(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+
+def make_hub(qtbot, tmp_path):
+    hub = FakeHub()
+    w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True, gamepad_hub=hub)
+    qtbot.addWidget(w)
+    w.show()
+    fb = []
+    w.on_pad_feedback = fb.append
+    return w, hub, fb
+
+
+def test_two_pads_get_numbers_1_2(qtbot, tmp_path):
+    w, hub, _ = make_hub(qtbot, tmp_path)
+    hub.backends[0].pad = RawPad()
+    hub.backends[1].pad = RawPad()
+    qtbot.waitUntil(lambda: len(w.pads) == 2, timeout=3000)
+    assert sorted(w.pads) == [1, 2]
+    assert w.pads[1] is w.pad and w.pads[2] is not w.pad
+    assert [w.pad_router.slot_of(1), w.pad_router.slot_of(2)] == [0, 1]
+    w.close()
+    assert hub.closed
+
+
+def test_second_pad_drives_second_cell(qtbot, tmp_path):
+    w, hub, _ = make_hub(qtbot, tmp_path)
+    hub.backends[0].pad = RawPad()
+    hub.backends[1].pad = RawPad()
+    qtbot.waitUntil(lambda: len(w.pads) == 2, timeout=3000)
+    qtbot.waitUntil(lambda: w.grid.cells[1].session.online, timeout=6000)  # иначе камера ответит er2
+    qtbot.wait(300)  # автомат нового геймпада заперт, пока стик не замечен в центре
+    hub.backends[1].pad = RawPad(axes={"leftx": 1.0})
+    qtbot.waitUntil(lambda: bool(pts(w, 1)) and pts(w, 1)[-1] != "#PTS5050", timeout=6000)
+    assert not pts(w, 0)
+    hub.backends[1].pad = RawPad()
+    w.close()
+
+
+def test_unplug_one_keeps_other(qtbot, tmp_path):
+    w, hub, _ = make_hub(qtbot, tmp_path)
+    hub.backends[0].pad = RawPad()
+    hub.backends[1].pad = RawPad()
+    qtbot.waitUntil(lambda: len(w.pads) == 2, timeout=3000)
+    qtbot.wait(300)  # автомат нового геймпада заперт, пока стик не замечен в центре
+    hub.backends[0].pad = None
+    qtbot.waitUntil(lambda: sorted(w.pads) == [2], timeout=3000)
+    assert w.pad_router.slot_of(2) == 1 and w.pads[2].connected
+    hub.backends[1].pad = RawPad(axes={"leftx": 1.0})
+    qtbot.waitUntil(lambda: bool(pts(w, 1)) and pts(w, 1)[-1] != "#PTS5050", timeout=6000)
+    hub.backends[1].pad = RawPad()
+    w.close()
+
+
+def test_dots_per_pad(qtbot, tmp_path):
+    w, hub, fb = make_hub(qtbot, tmp_path)
+    hub.backends[0].pad = RawPad()
+    hub.backends[1].pad = RawPad()
+    qtbot.waitUntil(lambda: len(w.pads) == 2, timeout=3000)
+    assert PadFeedback(1, "dots", 1) in fb and PadFeedback(2, "dots", 2) in fb
+    qtbot.waitUntil(lambda: ("player", 1) in hub.backends[0].calls and ("player", 2) in hub.backends[1].calls,
+                    timeout=3000)
+    w.close()
