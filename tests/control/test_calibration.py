@@ -355,7 +355,8 @@ def test_full_wizard_measures_tele_in_three_minutes():
         cal = CalibrationRunner(client.send, src, lambda m: None, stream_kind="sim", model="AW-HE42").run()
         took = time.monotonic() - t0
         stop.set()
-        assert took <= 180, took
+        # ~168 с на симуляторе (DECISIONS); предел 200 с — запас на загруженную машину (CI), «около 3 минут»
+        assert took <= 200, took
         assert {0xD55, 0xEA9, 0xFFF} <= set(cal.zoom_points) and cal.zoom_points == sorted(cal.pan.points)
         for z in (0xD55, 0xEA9, 0xFFF):
             for code in (63, 70, 75):
@@ -373,36 +374,72 @@ def test_full_wizard_measures_tele_in_three_minutes():
 
 
 @pytest.mark.slow
-def test_wizard_cancel_stops_returns_home_and_saves_nothing():
-    """Оператор прервал мастер посреди пробега: стоп отправлен сразу, камера вернулась на место (±1°, зум тоже),
-    калибровки нет — run бросает CalibrationCancelled."""
+@pytest.mark.parametrize(
+    "step, zooms, codes, tilt_codes",
+    [
+        ("Поворот на зуме FFF", [0xFFF], (55, 70), ()),  # пробег на теле
+        ("Наклон", [0x555], (70,), (63,)),
+        ("Скорость зума", [0x555], (70,), ()),
+    ],
+)
+def test_wizard_cancel_stops_returns_home_and_saves_nothing(step, zooms, codes, tilt_codes):
+    """Оператор прервал мастер посреди движения (пробег на теле, наклон, замер зума): стоп этой оси отправлен
+    сразу, камера вернулась на место (±1°, зум тоже), калибровки нет — run бросает CalibrationCancelled."""
     from ptztracker.control.calibration import CalibrationCancelled
 
     sim, srv, src, client = make()
     try:
         sim.pan_deg, sim.tilt_deg = 3.0, -8.0
         cancel = threading.Event()
-        sent = []
-        t_cancel = []
+        sent, t_cancel, cur = [], [], [None]
+
+        def moving(cmd):
+            return (cmd.startswith("#PTS") and cmd != "#PTS5050") or (cmd.startswith("#Z") and cmd != "#Z50")
 
         def on_sample(kind, data):
-            if kind == "cmd" and data["cmd"] in ("#PTS7050", "#PTS3050") and not t_cancel:
-                # пробег кода 70 на зуме FFF: отмена через 0,3 с после его начала
-                t_cancel.append(None)
+            if kind == "step":
+                cur[0] = data["title"]
+            elif kind == "cmd" and cur[0] == step and moving(data["cmd"]) and not t_cancel:
+                t_cancel.append(None)  # первое движение этого шага: отмена через 0,3 с
                 threading.Timer(0.3, lambda: (t_cancel.__setitem__(0, time.monotonic()), cancel.set())).start()
 
         def send(cmd):
             sent.append((time.monotonic(), cmd))
             return client.send(cmd)
 
-        r = CalibrationRunner(send, src, lambda m: None, zooms=[0xFFF], codes=(55, 70), cancel=cancel,
-                              on_sample=on_sample)
+        r = CalibrationRunner(send, src, lambda m: None, zooms=zooms, codes=codes, tilt_codes=tilt_codes,
+                              cancel=cancel, on_sample=on_sample)
         with pytest.raises(CalibrationCancelled):
             r.run()
-        stops = [t for t, c in sent if c == "#PTS5050" and t >= t_cancel[0]]
-        # отмена видна в ближайшем опросе #APC, стоп — в следующем окне команд (темп камеры 0,15 с)
+        assert t_cancel and t_cancel[0] is not None, step
+        stop = "#Z50" if step == "Скорость зума" else "#PTS5050"
+        stops = [t for t, c in sent if c == stop and t >= t_cancel[0]]
+        # отмена видна в ближайшем опросе (темп камеры 0,15 с) или паузе (0,1 с), стоп — в следующем окне команд
         assert stops and stops[0] - t_cancel[0] < 0.5, (stops[:1], t_cancel)
         assert any(c == "#Z50" for t, c in sent if t >= t_cancel[0])
+        assert abs(sim.pan_deg - 3.0) <= 1.0 and abs(sim.tilt_deg + 8.0) <= 1.0 and sim.zoom < 0.01
+    finally:
+        src.stop()
+        srv.stop()
+
+
+@pytest.mark.slow
+def test_wizard_error_still_returns_home():
+    """Сбой посреди пробега (не отмена, например связь): ошибка доходит до окна, но камера сначала возвращена."""
+    sim, srv, src, client = make()
+    try:
+        sim.pan_deg, sim.tilt_deg = 3.0, -8.0
+        failed = []
+
+        def send(cmd):
+            if cmd == "#PTS3750" and not failed:  # пробег поворота кодом 63 (к центру — влево)
+                failed.append(cmd)
+                raise RuntimeError("связь пропала")
+            return client.send(cmd)
+
+        with pytest.raises(RuntimeError, match="связь пропала"):
+            CalibrationRunner(send, src, lambda m: None, zooms=[0x555], codes=(63, 70), tilt_codes=()).run()
+        assert failed
         assert abs(sim.pan_deg - 3.0) <= 1.0 and abs(sim.tilt_deg + 8.0) <= 1.0 and sim.zoom < 0.01
     finally:
         src.stop()

@@ -67,8 +67,13 @@ def run(
     # камера — как живая HE42 (adapt=True): постоянные °/с по коду (sim.ptz_model.he42_deg_s) до 0xD54, выше — медленнее,
     # а не таблица калибровки регулятора: проверяет саму таблицу (площадка 2026-10-29, §3б)
     cam_he42: bool = False,
+    # наклон камеры ÷ поворот на одном коде (у HE42 — 1); measured_tilt — мастер его измерил (Calibration.tilt)
+    tilt_factor: float = 1.0,
+    measured_tilt: bool = False,
 ) -> Trace:
     calib = default_calibration()
+    if measured_tilt:
+        calib.tilt = [(63, tilt_factor), (75, tilt_factor)]
     adapter = SpeedAdapter(calib) if adapt else None
     codes = (50, 50, 50)
     # #APC: положение камеры в градусах (единицы — he42.APC_DEG_PER_UNIT); мировые единицы — доли кадра
@@ -131,11 +136,11 @@ def run(
                 adapter.pt_sent(t, qp, qt, gz_pos)
                 true_gz = round(zoom_pos + cam_z.position(t) / math.log(he42.ZOOM_RATIO) * (P.LENS_MAX - P.LENS_MIN))
                 cam_x.command(t, speed_factor * he42_deg_s(qp, true_gz) / hfov_at(zoom_pos))  # на теле — медленнее
-                cam_y.command(t, speed_factor * he42_deg_s(qt, true_gz) / hfov_at(zoom_pos) / TILT_FROM_FH)
+                cam_y.command(t, speed_factor * tilt_factor * he42_deg_s(qt, true_gz) / hfov_at(zoom_pos) / TILT_FROM_FH)
                 continue
             if adapter is not None:  # камера едет по таблице без поправки, только в speed_factor раз быстрее
                 adapter.pt_sent(t, qp, qt, gz_pos)
-                qp, qt = calib.pan.speed(qp, gz_pos), calib.pan.speed(qt, gz_pos) / TILT_FROM_FH
+                qp, qt = calib.pan.speed(qp, gz_pos), tilt_factor * calib.pan.speed(qt, gz_pos) / TILT_FROM_FH
             cam_x.command(t, speed_factor * qp / k)  # камера даёт fw/s при текущем зуме → мировые единицы
             cam_y.command(t, speed_factor * qt / k)
         while zqueued and zqueued[0][0] <= t + 1e-9:

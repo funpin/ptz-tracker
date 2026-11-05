@@ -245,13 +245,14 @@ def test_adapter_converges_and_clamps():
     assert 1.95 < calib.pan_scale <= SCALE_MAX  # дальше — не поправка, а другая камера
 
 
-def _drive_axes(adapter, pan_factor, tilt_factor, T=20.0, pan_code=70, tilt_code=50):
-    """Поворот и наклон своими кодами, каждая ось — в свой раз быстрее таблицы; #APC раз в 0,5 с."""
+def _drive_axes(adapter, pan_factor, tilt_factor, T=20.0, pan_code=70, tilt_code=50, tilt_true=1.0):
+    """Поворот и наклон своими кодами, каждая ось — в свой раз быстрее таблицы; #APC раз в 0,5 с. tilt_true —
+    наклон камеры ÷ поворот на одном коде (замер мастера, если он есть, — уже в таблице калибровки)."""
     from ptztracker.control.camera_model import CameraDynamics
 
     calib = adapter.calib
     cams = []
-    for code, f in ((pan_code, pan_factor), (tilt_code, tilt_factor)):
+    for code, f in ((pan_code, pan_factor), (tilt_code, tilt_factor * tilt_true)):
         cam = CameraDynamics(calib.dead_time, calib.tau)
         cam.command(0.0, calib.pan.speed(code, Z) * f)
         cams.append(cam)
@@ -356,3 +357,31 @@ def test_session_applies_saved_speed_scale():
     assert scale_of({"pan": 1.3, "zoom": 9.0, "table": DEFAULT_TABLE_ID}, False) == want
     # без ярлыка pan/tilt отбрасываются (таблица поворота другая), зум от неё не зависит — остаётся
     assert scale_of({"pan": 2.0, "tilt": 1.5, "zoom": 0.8}, False) == {"pan": 1.0, "tilt": 1.0, "zoom": 0.8}
+
+
+def test_measured_tilt_is_not_counted_twice_by_adapter():
+    """Мастер измерил наклон ×0,7 от поворота, камера так и едет: поправка наклона остаётся ~1. Было: подстройка
+    сравнивала с таблицей поворота, находила 0,7, а модель умножала её на замер — 0,49 (камера «вдвое медленнее»
+    и регулятор гнал наклон)."""
+    calib = default_calibration()
+    calib.tilt = [(63, 0.7), (75, 0.7)]
+    _drive_axes(SpeedAdapter(calib), 1.0, 1.0, tilt_code=70, tilt_true=0.7)
+    assert abs(calib.tilt_scale - 1.0) < 0.05, calib.tilt_scale
+    assert abs(calib.pan_fw(70, Z, axis="tilt") / (0.7 * calib.pan.speed(70, Z)) - 1) < 0.05
+
+
+def _walk_y(t):
+    """Ходит вверх-вниз (лестница, сцена): как _walk, по высоте кадра."""
+    return 0.25 + (_walk(t) - AX)
+
+
+def test_measured_tilt_loop_no_overdrive():
+    """Виртуальный стенд: камера наклоняется ×0,7 от поворота, калибровка это знает. Поправка наклона у 1,
+    на стояниях наклон не качается (не больше одного разворота)."""
+    tr = run(lambda t: AX, world_y=_walk_y, T=60.0, adapt=True, apc_period=0.5, gz_period=0.7,
+             tilt_factor=0.7, measured_tilt=True)
+    assert abs(_at(tr, 59.9)[1] - 1.0) < 0.1, _at(tr, 59.9)
+    for k in range(6):
+        t0 = k * (LEG_S + STAND_S) + LEG_S + 1.0
+        win = [y for t, y in zip(tr.t, tr.tilt) if t0 <= t < t0 + STAND_S - 1.0]
+        assert sign_changes(win, eps=WATCHDOG_MOVING_V * 9 / 16) <= 1, k

@@ -34,9 +34,12 @@ DEFAULT_CODES = (53, 55, 57, 59, 61, 63, 65, 67, 70, 75, 80, 90)
 # до PROBE_MAX_FRACTION кадра РАБОЧЕГО зума (с которого начат мастер): полкадра теле (2–3°) код 75 проходит за
 # 0,1–0,2 с — это 1–2 опроса #APC; полкадра рабочего плана дают 0,5–1,5 с и камера не уходит со сцены.
 TELE_ZOOMS = (0xD55, 0xEA9)
-TELE_CODES = (55, 63, 70, 75)
+TELE_CODES = (55, 59, 63, 70, 75)
 TELE_PROBE_MAX_S = 1.5
-# Наклон: коды TILT_CODES вверх и вниз, короткие пробеги (до PROBE_MAX_FRACTION высоты кадра) на рабочем зуме.
+# Наклон: коды TILT_CODES вверх и вниз, короткие пробеги (до PROBE_MAX_FRACTION высоты кадра) на самом широком
+# зуме замеров (по умолчанию 0x555) — сразу после его кривой поворота, без лишних переездов зума. На узком рабочем
+# зуме полкадра по высоте — 1–3°, код 75 проходит их за 1–2 опроса #APC; доля «наклон ÷ поворот» от зума не
+# зависит (замедление на теле у наклона то же). Если самый широкий зум уже уже PREDICT_MIN_HFOV — не меряем.
 TILT_CODES = (63, 75)
 FLAT_FW_S = 0.004  # быстрые коды дали меньше — камера по командам скорости не поворачивается
 STEP_CODE = 70
@@ -246,7 +249,8 @@ class CalibrationRunner:
     ):
         # cancel — оператор прервал: стоп, камера домой, CalibrationRunner.run бросает CalibrationCancelled.
         # on_sample(kind, data) — наблюдатель (окно мастера): "apc" {t, pan, tilt, zoom}, "cmd" {t, cmd},
-        # "step" {index, total, title}, "result" {name, …}. Его ошибки мастер не прерывают.
+        # "step" {index, total, title}, "result" {name, …}. Вызывается в потоке мастера между опросами камеры —
+        # он НЕ должен ждать (только положить в буфер под замком); его ошибки мастер не прерывают.
         self.cancel = cancel
         self.on_sample = on_sample
         self._restoring = False
@@ -347,14 +351,17 @@ class CalibrationRunner:
 
     def _run(
         self, code: int, hfov: float, max_s: float, snapshots: tuple[float, ...] = (),
-        tilt: bool = False, max_deg: float | None = None, zoom: int | None = None,
+        tilt: bool = False, max_deg: float | None = None, zoom: int | None = None, predict: bool | None = None,
     ) -> dict:
         """Пробег с кодом code из состояния покоя: замеры #APC (t, градусы от начала) до max_s или max_deg
         (по умолчанию PROBE_MAX_FRACTION кадра), затем стоп. snapshots — через сколько секунд после команды взять
-        кадры. tilt — пробег наклоном; zoom — для паспортной скорости на теле."""
+        кадры. tilt — пробег наклоном; zoom — для паспортной скорости на теле. predict — ранний стоп по прогнозу
+        (по умолчанию — при угле обзора ≥ PREDICT_MIN_HFOV)."""
         axis = 1 if tilt else 0
         x0 = self._pan_tilt()[axis]
         max_deg = max_deg or PROBE_MAX_FRACTION * hfov
+        if predict is None:
+            predict = hfov >= PREDICT_MIN_HFOV
         _, t_cmd = self.pacer.timed_send(P.pan_tilt_speed(50, code) if tilt else P.pan_tilt_speed(code, 50))
         samples, frames, pending = [], [], list(snapshots)
         try:
@@ -368,7 +375,7 @@ class CalibrationRunner:
                     frames.append(self._frame())
                 if abs(x) >= max_deg:
                     break
-                if max_deg >= PROBE_MAX_FRACTION * PREDICT_MIN_HFOV:
+                if predict:
                     v = PRIOR_SPEED_FRACTION * _nominal_deg_s(code, zoom)
                     if len(samples) >= MIN_FIT_SAMPLES:
                         (ta, xa), (tb, xb) = samples[-2], samples[-1]
@@ -488,7 +495,9 @@ class CalibrationRunner:
             c = self._toward_centre(code, start)
             self._go_to(start)
             self.progress(f"Зум {zoom:03X}: скорость {code}…")
-            run = self._run(c, hfov, max_s, max_deg=max_deg, zoom=gz)
+            # на теле предел — полкадра рабочего плана: прогноз — по нему, а не по углу теле
+            predict = max(hfov, scene_hfov) >= PREDICT_MIN_HFOV
+            run = self._run(c, hfov, max_s, max_deg=max_deg, zoom=gz, predict=predict)
             v, _, _ = fit_ramp(run["samples"], run["t_cmd"], tau=tau)
             curve.append((code, round(abs(v) / hfov, 5)))  # град/с → доли кадра (у центра кадра)
         kept, dropped = monotone_curve(curve)
@@ -514,7 +523,9 @@ class CalibrationRunner:
             for c in (code, 100 - code):
                 self._go_to(start)
                 self.progress(f"Наклон: скорость {code}…")
-                run = self._run(c, hfov, PROBE_MAX_S, tilt=True, max_deg=PROBE_MAX_FRACTION * hfov * TILT_FROM_FH)
+                # прогноз стопа — по углу обзора, как у поворота (пробег по высоте короче, но сцена та же)
+                run = self._run(c, hfov, PROBE_MAX_S, tilt=True, max_deg=PROBE_MAX_FRACTION * hfov * TILT_FROM_FH,
+                                predict=hfov >= PREDICT_MIN_HFOV)
                 v, _, _ = fit_ramp(run["samples"], run["t_cmd"], tau=tau)
                 speeds.append(abs(v))
             out[code] = max(speeds)
@@ -567,8 +578,14 @@ class CalibrationRunner:
         start = self._wait_at_rest()
         zooms = self.zooms or default_zooms(start_zoom)
         scene_hfov = hfov_at(start_zoom)
-        titles = ["Разгон и задержка видео", "Наклон", *(f"Поворот на зуме {z:03X}" for z in zooms),
-                  "Скорость зума", "Возврат на место"]
+        tilt_zoom = min(zooms)
+        if not self.tilt_codes or hfov_at(tilt_zoom) < PREDICT_MIN_HFOV:
+            tilt_zoom = None  # узкий угол: пробег по высоте — 1–2 опроса #APC; наклон — как поворот
+            log.info("Наклон не меряется: нет кодов или самый широкий зум замеров узкий")
+        titles = ["Разгон и задержка видео"]
+        for z in zooms:
+            titles += [f"Поворот на зуме {z:03X}"] + (["Наклон"] if z == tilt_zoom else [])
+        titles += ["Скорость зума", "Возврат на место"]
         step = iter(range(len(titles)))
 
         def next_step() -> None:
@@ -581,13 +598,14 @@ class CalibrationRunner:
             latency, tau = self._step_response(scene_hfov, start)
             self._emit("result", {"name": "tau", "value": round(tau, 3)})
             self._emit("result", {"name": "video_latency", "value": round(latency, 3), "stream": self.stream_kind})
-            next_step()
-            tilt_deg = self._tilt_deg_s(start, scene_hfov, tau)  # на рабочем зуме, пока он не менялся
-            raw = {}
+            raw, tilt_deg = {}, {}
             for z in zooms:
                 next_step()
                 raw[z] = self._pan_curve(z, start, tau, scene_hfov)
                 self._emit_pan_result(z, raw[z])
+                if z == tilt_zoom:
+                    next_step()
+                    tilt_deg = self._tilt_deg_s(start, hfov_at(z), tau)  # зум уже здесь — без переезда
             curves = drop_flat_curves(raw)
             if not curves:
                 raise RuntimeError(
@@ -610,7 +628,7 @@ class CalibrationRunner:
         n = sum(len(c) for c in curves.values())
         self.progress(f"Готово: {n} замеров скорости")
         pan = SpeedTable(curves)
-        tilt = tilt_ratio(tilt_deg, pan, start_zoom)
+        tilt = tilt_ratio(tilt_deg, pan, tilt_zoom) if tilt_zoom is not None else None
         self._emit("result", {"name": "dead_time", "value": base.dead_time})
         self._emit("result", {"name": "tilt", "codes": [[c, round(tilt_deg[c], 3), r] for c, r in tilt or []]})
         return Calibration(

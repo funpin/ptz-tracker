@@ -253,11 +253,15 @@ class Calibration:
         """Наклон ÷ поворот для кода n ≥ 50 по замеру мастера (линейно, за крайними кодами — крайний)."""
         return _interp_held(sorted(self.tilt), n) if self.tilt else 1.0
 
-    def pan_fw(self, code: int, zoom: int, axis: str = "pan") -> float:
-        """Скорость камеры (fw/s, со знаком) по коду pan/tilt — таблица с поправкой оси; наклон — с замером
-        мастера, если он есть."""
-        v = self.pan.speed(code, zoom) * self.axis_scale(axis)
+    def table_fw(self, code: int, zoom: int, axis: str = "pan") -> float:
+        """Скорость по таблице калибровки (fw/s, со знаком) без поправки слежения; наклон — с замером мастера.
+        С ней сравнивает камеру подстройка скорости (speed_adapt): иначе замер наклона учёлся бы дважды."""
+        v = self.pan.speed(code, zoom)
         return v * self._tilt_gain(50 + abs(code - 50)) if axis == "tilt" else v
+
+    def pan_fw(self, code: int, zoom: int, axis: str = "pan") -> float:
+        """Скорость камеры (fw/s, со знаком) по коду pan/tilt — таблица (table_fw) с поправкой оси."""
+        return self.table_fw(code, zoom, axis) * self.axis_scale(axis)
 
     def pan_code(self, v: float, zoom: int, current: int = 50, axis: str = "pan") -> int:
         """Код pan/tilt для скорости v (fw/s) с учётом поправки оси (с гистерезисом от current)."""

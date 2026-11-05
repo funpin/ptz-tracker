@@ -132,13 +132,13 @@ class ReplayResult:
         + τ калибровки). Команда может опережать камеру — плавность у движения самой камеры (часть 1, задача 4)."""
         calib = self.calib or default_calibration()
         best = 0.0
-        for k in (0, 1):  # pan и tilt — по одной таблице скоростей
+        for k in (0, 1):  # pan и tilt — по таблице поворота (наклон — с замером мастера, если он есть)
             dyn, seg, prev = None, None, None
             for i, c in enumerate(codes):
                 if self.segment[i] != seg:
                     seg, prev = self.segment[i], None
                     dyn = CameraDynamics(calib.dead_time, calib.tau)
-                dyn.command(self.t[i], calib.pan_fw(c[k], self.zoom_pos[i]))
+                dyn.command(self.t[i], calib.pan_fw(c[k], self.zoom_pos[i], axis=("pan", "tilt")[k]))
                 v = dyn.velocity(self.t[i])
                 if prev is not None and 0 < self.t[i] - prev[0] <= MAX_DT_S:
                     best = max(best, abs(v - prev[1]) / (self.t[i] - prev[0]))
