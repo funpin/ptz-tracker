@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -153,17 +152,30 @@ class ManualControls(QWidget):
         self.af_check.setToolTip("Автофокус")
         self.push_af.setText("Разовый")
         self.push_af.setToolTip("Разовый автофокус")
+        # фокус в две строки: «AF · Разовый», затем «Ближе ‹ползунок› Дальше»: ползунок пружинный, как зум —
+        # тянете в сторону, фокус едет, отпустили — стоп; кнопки тоже работают, пока держите
+        self.focus_slider = SpringSlider(Qt.Horizontal)
+        self.focus_slider.setRange(-100, 100)
+        self.focus_slider.setStyleSheet(
+            f"QSlider::sub-page:horizontal, QSlider::add-page:horizontal {{ background: {C.RAISED_HI};"
+            " border-radius: 1px; }")
+        self.focus_slider.setToolTip("Тяните влево — фокус ближе, вправо — дальше. Отпустите — стоп.")
+        self.focus_slider.valueChanged.connect(lambda v: self._focus(v / 200))  # полный ход = как кнопка (±0,5)
+        self.focus_slider.sliderReleased.connect(lambda: self.focus_slider.setValue(0))
         fl = self._row("Фокус", self.af_check)
         fl.addStretch(1)
-        # кнопки фокуса — своей строкой под AF, поровну по ширине: в одну с AF не помещались («Дальше»)
+        self.push_af.setStyleSheet(f"QPushButton {{ min-height: {H_SMALL}px; max-height: {H_SMALL}px;"
+                                   f" padding: 0 {SP[2]}px; font-size: {FS_CAPTION + 1}px; }}")
+        fl.addWidget(self.push_af)
         fbl = QHBoxLayout()
-        fbl.setSpacing(SP[0] + 2)
+        fbl.setSpacing(SP[1])
         fbl.addSpacing(LABEL_W + SP[1])
-        for wd in (self.push_af, self.near_btn, self.far_btn):
-            wd.setSizePolicy(QSizePolicy.Ignored, wd.sizePolicy().verticalPolicy())
-            wd.setStyleSheet(f"QPushButton {{ min-height: {H_SMALL}px; max-height: {H_SMALL}px; padding: 0;"
-                             f" font-size: {FS_CAPTION + 1}px; }}")
-            fbl.addWidget(wd, 1)
+        for wd in (self.near_btn, self.far_btn):
+            wd.setStyleSheet(f"QPushButton {{ min-height: {H_SMALL - 4}px; max-height: {H_SMALL - 4}px;"
+                             f" padding: 0 {SP[1]}px; font-size: {FS_CAPTION}px; }}")
+        fbl.addWidget(self.near_btn)
+        fbl.addWidget(self.focus_slider, 1)
+        fbl.addWidget(self.far_btn)
 
         self.iris_auto = QCheckBox("Авто")
         self.iris_auto.setChecked(True)
@@ -226,7 +238,6 @@ class ManualControls(QWidget):
         lay.addLayout(sens_row)
         lay.addWidget(self.slow_tele_check)
         lay.addWidget(self.stop_btn)
-        lay.addSpacing(SP[0])
         lay.addWidget(SectionHeader("Изображение", "не выключает слежение"))
         lay.addLayout(il)
         lay.addLayout(gl)
@@ -292,6 +303,8 @@ class ManualControls(QWidget):
         self.joystick.release()
         if self.zoom_slider.value() != 0:
             self.zoom_slider.setValue(0)
+        if self.focus_slider.value() != 0:
+            self.focus_slider.setValue(0)
         if self._focus_moving:
             for b in (self.near_btn, self.far_btn):
                 b.setDown(False)

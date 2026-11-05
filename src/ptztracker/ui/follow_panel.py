@@ -84,7 +84,8 @@ class FollowPanel(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(SP[1])
-        lay.addWidget(SectionHeader("Кадр"))
+        self.title_header = SectionHeader("Кадр")  # окно прячет: над колонкой — имя выбранной камеры
+        lay.addWidget(self.title_header)
         lay.addLayout(grid)
         lay.addWidget(self.size_slider)
         lay.addLayout(erow)

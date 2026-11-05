@@ -77,7 +77,7 @@ from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.presets_drawer import DrawerRow, PresetsDrawer
-from ptztracker.ui.service_cell import KINDS, ServiceCell, ServiceRow
+from ptztracker.ui.service_cell import KINDS, TITLES, ServiceCell, ServiceRow, WelcomeView
 from ptztracker.ui.state import (
     TrackingView,
     analysis_pill,
@@ -88,7 +88,15 @@ from ptztracker.ui.state import (
     video_pill,
 )
 from ptztracker.ui.theme import FS_CAPTION, SP, C
-from ptztracker.ui.widgets import BrandMark, KeyButton, PadBadge, StatusPill, VideoFrame
+from ptztracker.ui.widgets import (
+    BrandMark,
+    KeyButton,
+    PadBadge,
+    StateTag,
+    StatusPill,
+    VideoFrame,
+    battery_time_text,
+)
 from ptztracker.updates import CHECK_INTERVAL_S, RELEASE_PAGE, UpdateChecker, UpdateInfo, is_newer
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
 
@@ -172,6 +180,10 @@ class MainWindow(QMainWindow):
         self.grid.selected = 0
         self._service = {k: ServiceCell(k) for k in KINDS}  # окно владеет, клетки только показывают
         self._service_slot: dict[str, int | None] = dict.fromkeys(KINDS)
+        self.welcome = WelcomeView()  # ни одной камеры в сетке — в первой клетке
+        self.welcome.addRequested.connect(lambda: self._add_camera())
+        self.welcome.simRequested.connect(lambda: self._open_sim_camera())
+        self._welcome_on = False
         self._loading = True  # пока строится окно: анализ и настройки не пересчитываем на каждую клетку
         self._srcs: dict[tuple[int, str], tuple[Cell, MixerSource]] = {}  # источники смесителя клетки (кэш)
         self.pad_router = PadRouter()  # какой геймпад ведёт какую клетку
@@ -298,6 +310,22 @@ class MainWindow(QMainWindow):
         sl = QVBoxLayout(side)
         sl.setContentsMargins(SP[1], 0, SP[1], 0)
         sl.setSpacing(SP[1])
+        # чем сейчас управляет правая колонка: номер и имя выбранной камеры, её эфир
+        head = QHBoxLayout()
+        head.setSpacing(SP[1])
+        self.side_num = QLabel("")
+        self.side_num.setFixedSize(22, 22)
+        self.side_num.setAlignment(Qt.AlignCenter)
+        self.side_num.setStyleSheet(f"background: {C.TEXT}; color: {C.BG}; border-radius: 6px; font-weight: 700;"
+                                    f" font-size: {FS_CAPTION}px;")
+        self.side_name = QLabel("")
+        self.side_name.setStyleSheet(f"color: {C.TEXT}; font-weight: 600;")
+        self.side_tally = StateTag("pgm")
+        head.addWidget(self.side_num)
+        head.addWidget(self.side_name, 1)
+        head.addWidget(self.side_tally)
+        sl.addLayout(head)
+        self.follow_panel.title_header.hide()  # силуэты говорят сами за себя; место — под имя камеры
         sl.addWidget(self.follow_panel)
         sl.addWidget(self.controls)
         sl.addStretch(1)
@@ -610,6 +638,17 @@ class MainWindow(QMainWindow):
             out.append((n, b.battery_percent if b else None, bool(b and b.battery_charging)))
         return out
 
+    def _update_side_head(self) -> None:
+        sel, c = self.grid.selected, self.selected_cell
+        self.side_num.setVisible(c is not None)
+        self.side_num.setText(str(sel + 1) if sel is not None else "")
+        name = c.cfg.name if c else "Камера не выбрана"
+        self.side_name.setText(self.side_name.fontMetrics().elidedText(name, Qt.ElideRight, SIDE_WIDTH - 110))
+        tally = self._tally_per[sel][1] if sel is not None else None
+        self.side_tally.setVisible(tally is not None)
+        if tally:
+            self.side_tally.set(tally)
+
     def _update_cell_headers(self) -> None:
         """Шапки клеток из снимков: эфир, слежение, симулятор, питание, разрешение и анализ в углу видео."""
         for i, c in enumerate(self.grid.cells):
@@ -633,6 +672,7 @@ class MainWindow(QMainWindow):
             if info and r is not None and r.fps:
                 info += f" · анализ {r.fps:.0f}"
             cell.set_info(info)
+        self._update_side_head()
 
     def _current_cfg(self) -> CameraConfig | None:
         c = self.selected_cell
@@ -678,6 +718,7 @@ class MainWindow(QMainWindow):
         self._reallocate_analysis()
         self._select_effects()
         self._refresh_cell_choices()
+        self._refresh_service_cells()
         self._update_selected_status()
 
     def select_slot(self, slot: int) -> None:
@@ -1518,8 +1559,11 @@ class MainWindow(QMainWindow):
     # --- статус -------------------------------------------------------
 
     def service_kind(self, slot: int) -> str | None:
-        """Какая служебная клетка стоит в пустой клетке `slot` (первая пустая — position, вторая — graphs, третья — summary)."""
+        """Какая служебная клетка стоит в пустой клетке `slot` (спека «Пустые клетки»: первая пустая — сводка,
+        вторая — положение камер, третья — графики). Без камер — только приветствие."""
         empty = [i for i, c in enumerate(self.grid.cells) if c is None]
+        if len(empty) == GRID_SLOTS:
+            return None
         return KINDS[empty.index(slot)] if slot in empty and empty.index(slot) < len(KINDS) else None
 
     def _service_pads(self, slot: int) -> list[int]:
@@ -1527,7 +1571,11 @@ class MainWindow(QMainWindow):
 
     def _refresh_service_cells(self) -> None:
         empty = [i for i, c in enumerate(self.grid.cells) if c is None]
-        want = {k: (empty[n] if n < len(empty) else None) for n, k in enumerate(KINDS)}
+        no_cams = len(empty) == GRID_SLOTS
+        want = {k: (empty[n] if n < len(empty) and not no_cams else None) for n, k in enumerate(KINDS)}
+        if self._welcome_on and not no_cams:
+            self.cells[0].set_service(None)
+            self._welcome_on = False
         moved = [k for k in self._service if self._service_slot[k] != want[k]]
         for kind in moved:  # два прохода: снять все переезжающие, потом поставить — иначе соседний снимет новый
             if self._service_slot[kind] is not None:
@@ -1536,6 +1584,12 @@ class MainWindow(QMainWindow):
             if want[kind] is not None:
                 self.cells[want[kind]].set_service(self._service[kind])
             self._service_slot[kind] = want[kind]
+        if no_cams and not self._welcome_on:
+            self.cells[0].set_service(self.welcome)
+            self._welcome_on = True
+        where = {slot: TITLES[k] for k, slot in want.items() if slot is not None}
+        for i, cell in enumerate(self.cells):
+            cell.set_empty_title(where.get(i, "нет камеры"))
         if not any(w is not None for w in want.values()):
             return
         rows = []
@@ -1544,8 +1598,19 @@ class MainWindow(QMainWindow):
                 continue
             s = c.session
             r = s.analyzer.latest() if s.analyzer else None
-            rows.append(ServiceRow(i, c.cfg.name, s.ptz, s.ptz_history(), r.fps if r else None,
-                                   s.online, self._service_pads(i)))
+            st = s.frames.stats()
+            if s.power in ("standby", "switching"):
+                track = "standby"
+            elif s.analyzer is None:
+                track = "no_analysis"
+            else:
+                track = {"on": "on", "lost": "lost"}.get(self._current_view(c).kind, "off")
+            pads = self._cell_pads(i)
+            rows.append(ServiceRow(
+                i, c.cfg.name, s.ptz, s.ptz_history(), r.fps if r else None, s.online, [n for n, _p, _c in pads],
+                tally=self._tally_per[i][1], track=track, battery={n: (p, ch) for n, p, ch in pads},
+                calibrated=c.cfg.calibration is not None, video_fps=st.fps if st.connected else None,
+                preset_pans=[t.pan for t in self._thumbs_of(c.cfg.id).values() if t.pan is not None]))
         for kind, widget in self._service.items():
             if want[kind] is not None:
                 widget.update_view(rows, self.grid.selected)
@@ -2255,7 +2320,9 @@ class MainWindow(QMainWindow):
                 continue
             n, b = live[i]
             pct, chg = b.battery_percent, bool(b.battery_charging)
-            badge.set(n, pct, chg)
+            rem = None if chg or pct is None else b.battery_remaining_s()
+            # сверху — сколько ещё проработает (6h, 1.5h, 30m); пока не посчитано — процент
+            badge.set(n, pct, chg, battery_time_text(rem) if rem is not None else None)
             slot = self._pad_slot_number(n)
             tip = f"{(b.info or {}).get('name') or 'Геймпад'} {n}"
             tip += f" — камера в клетке {slot} (огоньки на геймпаде)" if slot else " — без камеры"

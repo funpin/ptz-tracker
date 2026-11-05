@@ -408,6 +408,17 @@ class BrandMark(QWidget):
         p.end()
 
 
+def battery_time_text(seconds: float | None) -> str:
+    """Сколько ещё проработает геймпад, коротко для верхней строки: 6h, 1.5h, 30m."""
+    if seconds is None:
+        return "—"
+    mins = max(1, round(seconds / 60))
+    if mins < 60:
+        return f"{mins}m"
+    hours = mins / 60
+    return f"{round(hours)}h" if hours >= 2 else f"{round(hours, 1):g}h"
+
+
 class PadBadge(QWidget):
     """Геймпад: значок, номер (как огоньки на геймпаде) и батарейка с процентом внутри, как в iOS.
     Один виджет и для верхней строки, и для шапки клетки, и для «Сводки»."""
@@ -421,17 +432,21 @@ class PadBadge(QWidget):
         self._n = 0
         self._pct: int | None = None
         self._charging = False
+        self._time: str | None = None
         self.setFixedSize(self.W, self.H)
 
     def sizeHint(self) -> QSize:
         return QSize(self.W, self.H)
 
-    def set(self, number: int, percent: int | None, charging: bool) -> None:
-        if (number, percent, charging) != (self._n, self._pct, self._charging):
-            self._n, self._pct, self._charging = number, percent, charging
+    def set(self, number: int, percent: int | None, charging: bool, time_text: str | None = None) -> None:
+        """time_text — вместо процента время до разрядки (верхняя строка); при зарядке — всё равно процент."""
+        if (number, percent, charging, time_text) != (self._n, self._pct, self._charging, self._time):
+            self._n, self._pct, self._charging, self._time = number, percent, charging, time_text
             self.update()
 
     def battery_text(self) -> str:
+        if self._time and not self._charging:
+            return self._time
         return "—" if self._pct is None else str(self._pct)
 
     @staticmethod
@@ -705,7 +720,7 @@ class VideoFrame(QFrame):
 class SilhouetteButton(QPushButton):
     """Крупность кадра рисунком: пояс, в рост, общий план (спека «Кадр»). Активная — лаймовая рамка."""
 
-    W, H = 62, 46
+    W, H = 56, 40
 
     def __init__(self, kind: str, text: str, parent: QWidget | None = None):
         super().__init__(text, parent)

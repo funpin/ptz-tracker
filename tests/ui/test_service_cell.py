@@ -47,7 +47,7 @@ def make(qtbot, tmp_path):
 def test_kinds_assigned_in_order(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     w._open_cell(1, None)
-    assert [w.service_kind(i) for i in range(4)] == [None, "position", "graphs", "summary"]
+    assert [w.service_kind(i) for i in range(4)] == [None, "summary", "position", "graphs"]
     w.close()
 
 
@@ -60,7 +60,10 @@ def test_no_polling_when_four_cameras(qtbot, tmp_path):
         c.session.poll_position = lambda: calls.append(1)
     w._update_status()
     assert not calls
-    w.set_cell_camera(3, None)
+    w.set_cell_camera(3, None)  # одна пустая — «Сводка»: положение не нужно
+    w._update_status()
+    assert not calls
+    w.set_cell_camera(2, None)  # вторая пустая — «Положение камер»: опрос нужен
     w._update_status()
     assert calls
     w.close()
@@ -73,10 +76,10 @@ def _placed(w):
 def test_service_widgets_move_when_empties_shift(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     w.set_cell_camera(0, None)  # пустые [0, 2, 3]
-    assert _placed(w) == {"position": 0, "graphs": 2, "summary": 3}
+    assert _placed(w) == {"summary": 0, "position": 2, "graphs": 3}
     w.set_cell_camera(0, "sim1")  # пустые сдвигаются вперёд: [2, 3]
-    assert _placed(w) == {"position": 2, "graphs": 3, "summary": None}
-    assert w._service["position"].isVisible() and w._service["graphs"].isVisible()
+    assert _placed(w) == {"summary": 2, "position": 3, "graphs": None}
+    assert w._service["summary"].isVisible() and w._service["position"].isVisible()
     w.close()
 
 
@@ -127,3 +130,32 @@ def test_summary_lines(qtbot):
     text = " | ".join(w.summary_lines())
     assert "ВЕДУ" in text and "нет калибровки" in text and "1 · Сцена" in text and "PGM" in text
     w.grab()
+
+
+def test_two_cameras_get_summary_and_position(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)  # симулятор открывает две камеры
+    assert [w.service_kind(i) for i in range(4)] == [None, None, "summary", "position"]
+    assert w.cells[2].combo.itemText(0) == "Сводка" and w.cells[3].combo.itemText(0) == "Положение камер"
+    w.close()
+
+
+def test_no_cameras_shows_welcome(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w.set_cell_camera(0, None)
+    w.set_cell_camera(1, None)
+    w._update_status()
+    assert w.welcome.isVisible()
+    assert w.cells[0].combo.itemText(0) == "нет камеры"
+    w.set_cell_camera(0, "sim1")
+    w._update_status()
+    assert not w.welcome.isVisible()
+    w.close()
+
+
+def test_summary_gets_window_data(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: bool(w._service["summary"]._rows), timeout=3000)
+    rows = w._service["summary"]._rows
+    assert rows[0].track in ("off", "on", "lost") and rows[1].track == "no_analysis"
+    assert rows[0].video_fps is not None or rows[0].video_fps is None  # поле есть
+    w.close()

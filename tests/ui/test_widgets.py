@@ -253,3 +253,22 @@ def test_brand_mark_paints(qtbot):
     qtbot.addWidget(m)
     assert m.sizeHint().width() == 24
     assert not m.grab().isNull()
+
+
+def test_battery_time_text():
+    from ptztracker.ui.widgets import battery_time_text
+
+    assert battery_time_text(6 * 3600) == "6h"
+    assert battery_time_text(5400) == "1.5h"
+    assert battery_time_text(1800) == "30m"
+    assert battery_time_text(50) == "1m"
+    assert battery_time_text(None) == "—"
+
+
+def test_pad_badge_time_mode(qtbot):
+    b = PadBadge(framed=False)
+    qtbot.addWidget(b)
+    b.set(2, 60, False, time_text="1.5h")
+    assert b.battery_text() == "1.5h"
+    b.set(2, 60, True, time_text="1.5h")  # заряжается — время до разрядки не важно, показываем %
+    assert b.battery_text() == "60"

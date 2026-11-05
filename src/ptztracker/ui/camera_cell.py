@@ -69,7 +69,8 @@ class CameraCell(QFrame):
         self.combo.setMinimumContentsLength(6)
         self.combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.combo.addItem("нет", None)
+        self._empty_title = "нет камеры"
+        self.combo.addItem(self._empty_title, None)
         self.combo.currentIndexChanged.connect(self._on_index)
         self.combo.setStyleSheet(
             f"QComboBox {{ background: transparent; border: 1px solid transparent; font-weight: 600;"
@@ -141,7 +142,7 @@ class CameraCell(QFrame):
     def set_choices(self, items: list[tuple[str, str]], current: str | None) -> None:
         self.combo.blockSignals(True)
         self.combo.clear()
-        self.combo.addItem("нет", None)
+        self.combo.addItem(self._empty_title, None)
         for cam_id, name in items:
             self.combo.addItem(name, cam_id)
         i = self.combo.findData(current) if current is not None else 0
@@ -211,6 +212,12 @@ class CameraCell(QFrame):
         if text:
             self.info_label.adjustSize()
             self.video_frame._place_tags()
+
+    def set_empty_title(self, text: str) -> None:
+        """Первый пункт списка: «нет камеры» или название служебного вида, который стоит в пустой клетке."""
+        if text != self._empty_title:
+            self._empty_title = text
+            self.combo.setItemText(0, text)
 
     def set_service(self, widget: QWidget | None) -> None:
         if self._service is not None:

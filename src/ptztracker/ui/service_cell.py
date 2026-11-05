@@ -8,17 +8,17 @@ import time
 from dataclasses import dataclass, field
 from typing import Literal
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QFont, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from ptztracker.camera.he42 import HFOV_TELE_DEG, HFOV_WIDE_DEG, PAN_LIMIT_DEG
 from ptztracker.camera.session import PtzPosition
 from ptztracker.ui.theme import FONT_FAMILY, FS_CAPTION, R_PANEL, R_TAG, SP, C, qcolor
-from ptztracker.ui.widgets import PadBadge, StateTag
+from ptztracker.ui.widgets import BrandMark, PadBadge, StateTag
 
 Kind = Literal["position", "graphs", "summary"]
-KINDS: tuple[Kind, ...] = ("position", "graphs", "summary")
+KINDS: tuple[Kind, ...] = ("summary", "position", "graphs")  # порядок, в котором занимают пустые клетки
 GRAPH_SECONDS = 30.0
 TITLES = {"position": "Положение камер", "graphs": "Графики PTZ", "summary": "Сводка"}
 GRAPHS_NOTE = "Запись видео — в следующей версии"
@@ -308,7 +308,7 @@ class ServiceCell(QWidget):
         out = []
         for r in self._rows:
             tags = " ".join(StateTag.TEXTS[k] for k in (r.tally, r.track) if k)
-            pads = ", ".join(f"геймпад {n + 1} {self._pct_text(r, n)}" for n in r.pads) or "—"
+            pads = ", ".join(f"геймпад {n} {self._pct_text(r, n)}" for n in r.pads) or "—"
             fps = self._fps_text(r)
             cal = "калибровка" if r.calibrated else "нет калибровки"
             out.append(f"{r.slot + 1} · {r.name} | {tags} | {pads} | {fps} | {cal}")
@@ -362,7 +362,7 @@ class ServiceCell(QWidget):
                 px = x
                 for n in r.pads[:2]:
                     pct, chg = r.battery.get(n, (None, False))
-                    self._badge.set(n + 1, pct, chg)
+                    self._badge.set(n, pct, chg)
                     px += self._draw_widget(p, self._badge, px, cy - PadBadge.H / 2) + SP[0]
                 x += pads_w + gap
             p.setFont(self._font(FS_CAPTION))
@@ -383,3 +383,38 @@ class ServiceCell(QWidget):
     def _fps_text(r: ServiceRow) -> str:
         t = f"{r.video_fps:.0f} к/с" if r.video_fps is not None else "нет видео"
         return t + (f" · анализ {r.analysis_fps:.0f}" if r.analysis_fps is not None else "")
+
+
+class WelcomeView(QWidget):
+    """Камер нет совсем: знак и два пути — добавить камеру или открыть симулятор."""
+
+    addRequested = Signal()
+    simRequested = Signal()
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(f"WelcomeView {{ background: {C.SURFACE}; }}")
+        title = QLabel("Добавьте первую камеру")
+        title.setStyleSheet(f"color: {C.TEXT}; font-size: 15px; font-weight: 600;")
+        hint = QLabel("Камера и компьютер должны быть в одной сети")
+        hint.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
+        self.add_btn = QPushButton("+ Добавить камеру")
+        self.add_btn.setStyleSheet(f"QPushButton {{ background: {C.TEXT}; color: {C.BG}; border-color: {C.TEXT};"
+                                   " font-weight: 600; }")
+        self.sim_btn = QPushButton("Открыть симулятор")
+        self.add_btn.clicked.connect(self.addRequested)
+        self.sim_btn.clicked.connect(self.simRequested)
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        btns.addWidget(self.add_btn)
+        btns.addWidget(self.sim_btn)
+        btns.addStretch(1)
+        lay = QVBoxLayout(self)
+        lay.addStretch(1)
+        lay.addWidget(BrandMark(64), 0, Qt.AlignHCenter)
+        lay.addSpacing(SP[2])
+        lay.addWidget(title, 0, Qt.AlignHCenter)
+        lay.addLayout(btns)
+        lay.addWidget(hint, 0, Qt.AlignHCenter)
+        lay.addStretch(1)

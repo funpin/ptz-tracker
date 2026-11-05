@@ -18,7 +18,7 @@ def test_choices_contain_none_first(qtbot):
     got = []
     c.cameraChosen.connect(lambda *a: got.append(a))
     c.set_choices(ITEMS, "cam-a")
-    assert c.combo.itemText(0) == "нет"
+    assert c.combo.itemText(0) == "нет камеры"
     assert c.combo.itemData(0) is None
     assert [c.combo.itemData(i) for i in range(1, 3)] == ["cam-a", "cam-b"]
     assert c.combo.currentData() == "cam-a"

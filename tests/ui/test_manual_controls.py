@@ -137,3 +137,21 @@ def test_zoom_column_not_taller_than_stick(qtbot):
     # Windows (крупный шрифт): колонка выше стика удлиняла правую панель, и та прокручивалась
     c, _ = make(qtbot)
     assert c._zoom_col.sizeHint().height() <= c.joystick.height()
+
+
+def test_focus_slider_is_spring(qtbot):
+    c, s = make(qtbot)
+    c.focus_slider.setValue(-80)  # влево — ближе
+    assert s.focus[-1] < 0
+    c.focus_slider.setValue(60)
+    assert s.focus[-1] > 0
+    c.release_all()
+    assert c.focus_slider.value() == 0 and s.focus[-1] == 0
+
+
+def test_af_and_one_shot_share_a_row(qtbot):
+    c, _ = make(qtbot)
+    c.resize(320, 700)
+    c.show()
+    assert abs(c.af_check.geometry().center().y() - c.push_af.geometry().center().y()) <= 4
+    assert abs(c.near_btn.geometry().center().y() - c.focus_slider.geometry().center().y()) <= 4
