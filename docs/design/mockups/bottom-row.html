@@ -1,0 +1,35 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Нижний ряд клеток</title>
+<style>
+body{margin:0;background:#0E0F12;color:#F5F5F2;font-family:Inter,system-ui,sans-serif;padding:22px 26px 60px}
+h1{font-size:22px;margin:0 0 6px}h2{font-size:16px;margin:26px 0 8px;color:#B4B8BD}
+p{color:#B4B8BD;font-size:14px;line-height:1.55;max-width:1150px;margin:0 0 10px}
+b{color:#F5F5F2}.lime{color:#B7F34A}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+figure{margin:0}figure img{width:100%;border:1px solid #33373E;border-radius:8px;display:block}
+figcaption{font-size:13px;color:#B4B8BD;margin-top:6px}figcaption b{color:#F5F5F2}
+.choice{display:inline-flex;margin:16px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid #33373E;cursor:pointer;color:#B4B8BD;font-size:13px}
+.choice.selected{border-color:#B7F34A;color:#B7F34A}
+</style></head><body>
+<h1>Нижний ряд ниже — верхний ровно по кадру</h1>
+<p>Картинку камеры ограничивает <b>ширина</b> клетки, а не высота. Поэтому верхний ряд выгодно делать ровно такой высоты, чтобы кадр 16:9 встал <b>от края до края без чёрных полос</b>. Всё, что остаётся, получает нижний ряд (Сводка, Положение камер).</p>
+<p>Видео становится больше примерно на 7% по ширине. Чёрные полосы по бокам исчезают, а «Положение камер» остаётся читаемым. <span class="lime">Так только когда внизу нет камер.</span> Если в клетках 3–4 стоят камеры, все четыре клетки снова одинаковые.</p>
+
+<h2>Windows 1920×1080 (100%), развёрнуто</h2>
+<div class="pair">
+<figure><img src="rows-a1920.png"><figcaption><b>Сейчас:</b> ряды поровну, у кадра чёрные полосы по бокам (картинка 696 px шириной)</figcaption></figure>
+<figure><img src="rows-f1920.png"><figcaption><b>Предлагаю:</b> верхний ряд по кадру, картинка 742 px от края до края, полос нет</figcaption></figure>
+</div>
+
+<h2>Окно 1640×850</h2>
+<div class="pair">
+<figure><img src="rows-a1640.png"><figcaption><b>Сейчас</b></figcaption></figure>
+<figure><img src="rows-f1640.png"><figcaption><b>Предлагаю</b></figcaption></figure>
+</div>
+
+<h2>Почему не ниже ещё</h2>
+<div class="pair">
+<figure><img src="rows-b1920.png"><figcaption>Если нижний ряд ужать сильнее (60/40), кадр больше <b>не растёт</b>: он уже упёрся в ширину, появляются полосы сверху и снизу. Место просто пропадает.</figcaption></figure>
+<div></div>
+</div>
+<div><span class="choice" data-choice="fit">Да, верхний ряд по кадру</span><span class="choice" data-choice="no">Оставить как есть</span></div>
+</body></html>

@@ -149,6 +149,7 @@ def _clamp1(v: float) -> float:
     return max(-1.0, min(1.0, v))
 
 
+QWIDGETSIZE_MAX = (1 << 24) - 1  # «без предела» по высоте, как в Qt
 SIDE_FIT_RESERVE = 80  # окно 1640×850 на Mac: ~70 px свободно; стик растёт только сверх этого (запас под шрифт Windows)
 
 
@@ -1601,6 +1602,7 @@ class MainWindow(QMainWindow):
         if no_cams and not self._welcome_on:
             self.cells[0].set_service(self.welcome)
             self._welcome_on = True
+        QTimer.singleShot(0, self._fit_rows)
         where = {slot: TITLES[k] for k, slot in want.items() if slot is not None}
         for i, cell in enumerate(self.cells):
             cell.set_empty_title(where.get(i, "нет камеры"))
@@ -1784,9 +1786,29 @@ class MainWindow(QMainWindow):
         spare = free + (joy - STICK_MIN) - SIDE_FIT_RESERVE  # свободно при самом маленьком стике, сверх запаса
         self.controls.set_stick_size(STICK_MIN + max(0, int(spare * 0.6)))
 
+    def _fit_rows(self) -> None:
+        """Внизу нет камер — верхний ряд ровно по кадру 16:9 (картинку ограничивает ширина клетки, лишняя высота
+        дала бы только чёрные полосы), остальное — служебным клеткам. С камерой внизу ряды снова поровну."""
+        gl = self.grid_host.layout()
+        top = self.cells[0]
+        service_below = self.grid.cells[2] is None and self.grid.cells[3] is None
+        if not service_below or self.grid.cells[0] is None:
+            gl.setRowStretch(0, 1)
+            for c in self.cells[:2]:
+                c.setMaximumHeight(QWIDGETSIZE_MAX)
+            return
+        vf = top.video_frame
+        b = vf.BORDER
+        want = top.height() - vf.height() + round((vf.width() - 2 * b) * 9 / 16) + 2 * b
+        # потолок, а не минимум: окно можно ужать, а при нехватке места (пресеты во весь экран) ряд просто ниже
+        gl.setRowStretch(0, 2)
+        for c in self.cells[:2]:
+            c.setMaximumHeight(max(top.minimumSizeHint().height(), want))
+
     def resizeEvent(self, e):  # noqa: N802
         super().resizeEvent(e)
         QTimer.singleShot(0, self._fit_side)
+        QTimer.singleShot(0, self._fit_rows)
         self._fit_top_bar()
 
     def _remember_rtsp_url(self, s: CameraSession) -> None:

@@ -174,3 +174,38 @@ def test_target_label_short(qtbot, tmp_path):
     w._update_status()
     assert w.cells[0].target_label.text() == "Цель не выбрана"
     w.close()
+
+
+def _picture_h(cell) -> int:
+    vf = cell.video_frame
+    return vf.height() - 2 * vf.BORDER
+
+
+def _picture_w(cell) -> int:
+    vf = cell.video_frame
+    return vf.width() - 2 * vf.BORDER
+
+
+def test_top_row_fits_frame_when_bottom_is_service(qtbot, tmp_path):
+    """Внизу нет камер: верхний ряд ровно по кадру 16:9 (без чёрных полос), остальное — служебным клеткам."""
+    w = make(qtbot, tmp_path)
+    for size in ((1640, 850), (1920, 1001)):
+        w.resize(*size)
+        qtbot.wait(300)
+        top = w.cells[0]
+        assert abs(_picture_h(top) - _picture_w(top) * 9 / 16) <= 2, size
+        assert w.cells[2].height() > top.height() * 0.6, size  # «Положение камер» остаётся читаемым
+    w.close()
+
+
+def test_rows_equal_with_cameras_below(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w.resize(1640, 850)
+    w.set_cell_camera(2, "sim3")
+    qtbot.wait(300)
+    assert abs(w.cells[0].height() - w.cells[2].height()) <= 1
+    w.set_cell_camera(2, None)
+    qtbot.wait(300)
+    top = w.cells[0]
+    assert abs(_picture_h(top) - _picture_w(top) * 9 / 16) <= 2
+    w.close()
