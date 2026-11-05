@@ -26,7 +26,8 @@ def make(cam_id, **cfg):
 
 
 def test_two_cameras_track_and_manual():
-    """Две камеры с анализом (max_analyzed=2): первая следит за докладчиком, на второй идёт ручной поворот."""
+    """Две независимые сессии с анализом: первая следит за докладчиком, на второй одновременно ручной поворот.
+    Распределение анализа (max_analyzed) здесь не участвует — его проверяют tests/multicam/test_analysis.py и окно."""
     from ptztracker.sim.scene import SyntheticStage
 
     a = CameraSession(
@@ -65,7 +66,7 @@ def test_two_cameras_track_and_manual():
 
         assert a.follower.enabled, f"слежение первой выключилось: {a.follower.last_reason}"
         assert abs(b.sim.pan_deg - pan0) > 1.0, "вторая камера не повернулась"
-        assert errs and np.mean(errs) < 0.15, f"средняя ошибка {np.mean(errs):.3f}"
+        assert errs and np.mean(errs) < 0.10, f"средняя ошибка {np.mean(errs):.3f}"
     finally:
         for s in sessions:
             s.stop()

@@ -7,7 +7,6 @@ from ptztracker.ui.main_window import MainWindow
 from ptztracker.ui.theme import C
 
 
-
 def switch(w, i):
     """Сменить камеру в выбранной клетке на i-ю из списка (в окне на одну камеру — выбор в списке камер)."""
     w.set_cell_camera(w.grid.selected, w._cameras()[i].id)
