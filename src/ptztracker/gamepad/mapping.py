@@ -193,7 +193,7 @@ class Mapper:
                 self._touch[6] = False
             return 0
         self._touch = None
-        if tr is None or not tr[6]:
+        if tr is None or not tr[6] or t - self._last_t > STALL_S:
             return 0
         dx, dy, dur = tr[4] - tr[1], tr[5] - tr[2], tr[3] - tr[0]
         if dur > SWIPE_MAX_S or abs(dx) < SWIPE_MIN_DX or abs(dy) >= abs(dx):

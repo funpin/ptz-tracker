@@ -1744,6 +1744,7 @@ class MainWindow(QMainWindow):
         for b in self._bridges:
             if (b.info or {}).get("id") == pad_id:
                 self._apply_pad_speed(b)
+        self._apply_held()  # стик держат — новый предел сразу
 
     def _apply_pad_speed(self, b: GamepadBridge) -> None:
         pid = (b.info or {}).get("id")
@@ -1775,7 +1776,11 @@ class MainWindow(QMainWindow):
             if pid:
                 self.cfg.pad_speed_gear[pid] = new
                 self._save()
-            b.set_speed_limit(new / SPEED_GEARS)
+                for x in self._bridges:  # одинаковые геймпады без серийного номера делят ступень
+                    if (x.info or {}).get("id") == pid:
+                        self._apply_pad_speed(x)
+            else:
+                b.set_speed_limit(new / SPEED_GEARS)
             b.rumble(rumble_gear(new))
         self._refresh_gamepads_dialog()
 

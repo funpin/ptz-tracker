@@ -284,3 +284,10 @@ def test_swipe_lost_on_poll_gap():
     m.update(pad(touch=(0.2, 0.5)), 0.0)
     assert m.update(pad(touch=(0.8, 0.5)), 0.5) == []  # пропуск опросов дольше STALL_S
     assert m.update(pad(), 0.51) == []
+
+
+def test_swipe_rejected_when_lift_comes_after_poll_gap():
+    m = mk()
+    m.update(pad(touch=(0.2, 0.5)), 0.0)
+    m.update(pad(touch=(0.6, 0.5)), 0.1)
+    assert m.update(pad(), 0.6) == []  # опрос стоял 0,5 с: где был палец при отпускании — неизвестно
