@@ -56,6 +56,14 @@ class _LockedMapper:
         with self._lock:
             self._m.cancel_holds()
 
+    def set_sensitivity(self, sens: int) -> None:
+        with self._lock:
+            self._m.sensitivity = sens
+
+    @property
+    def sensitivity(self) -> int:
+        return self._m.sensitivity
+
 
 class GamepadBridge(QObject):
     intents = Signal(list)  # в потоке Qt; движения, устаревшие после стопа, уже отброшены
@@ -185,6 +193,14 @@ class GamepadBridge(QObject):
 
     def cancel_holds(self) -> None:
         self._mapper.cancel_holds()
+
+    def set_sensitivity(self, sens: int) -> None:
+        """Чувствительность стика 0…100 (control.manual_curve); действует со следующего опроса."""
+        self._mapper.set_sensitivity(int(sens))
+
+    @property
+    def sensitivity(self) -> int:
+        return self._mapper.sensitivity
 
     def set_status(self, s: PadStatus, t: float | None = None) -> None:
         """Цвет полосы — только при изменении."""

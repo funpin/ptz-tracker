@@ -26,7 +26,7 @@ def test_main_window_sim_preview_and_arrow(qtbot, tmp_path):
     qtbot.keyRelease(w, Qt.Key_Right)
     qtbot.wait(400)
     sim = w.session.sim
-    assert sim.pan_deg > 1
+    assert sim.pan_deg > 0.3  # стрелки по умолчанию — через кривую чувствительности (~1,3°/с)
     assert [c for c in sim.received if c.startswith("#PTS")][-1] == "#PTS5050"
     w.close()
 

@@ -1,5 +1,6 @@
 """Правая панель: без прокрутки при 1640×850; gain и баланс белого; кадр одной строкой."""
 
+import sys
 import time
 
 from PySide6.QtWidgets import QApplication
@@ -54,6 +55,9 @@ def test_side_panel_fits_without_scroll(qtbot, tmp_path):
         qtbot.waitExposed(w)
         qtbot.wait(1200)
         assert w.side_scroll.verticalScrollBar().maximum() == 0, _heights(w)  # на Windows видно, что выросло
+        if sys.platform == "darwin":  # шрифт Windows выше: на Mac держим запас по высоте под него
+            slack = w.side_scroll.viewport().height() - w.side_scroll.widget().sizeHint().height()
+            assert slack >= 40, _heights(w)
         # ни одна строка не шире панели (иначе правый край обрезается — на Windows так было с заголовками)
         assert w.side_scroll.widget().minimumSizeHint().width() <= w.side_scroll.viewport().width(), _heights(w)
         for wd in (w.controls.gain_slider, w.controls.wb_combo, w.controls.preset_buttons[-1],
@@ -144,4 +148,33 @@ def test_image_controls_do_not_disable_follow(qtbot, tmp_path):
     w.controls.gain_slider.setValue(2)
     qtbot.wait(300)
     assert w.session.follower.enabled
+    w.close()
+
+
+def test_dpad_from_auto_unticks_auto_boxes(qtbot, tmp_path):
+    """Жалоба 2026-11-05: «ирис с крестовины не снимает авто». Камера авто снимала, но флажок «Авто»
+    в панели и в меню камеры оставался: окно не читало режим ириса из ответов камеры."""
+    from ptztracker.camera import protocol as P
+    from ptztracker.gamepad.intents import GainStep, IrisStep
+
+    w = make(qtbot, tmp_path)
+    c, s = w.controls, w.session
+    qtbot.waitUntil(lambda: s.image.iris is not None, timeout=3000)
+    s.set_gain(P.GAIN_AUTO)
+    qtbot.waitUntil(lambda: c.gain_auto.isChecked() and s.sim.gain_code == P.GAIN_AUTO, timeout=3000)
+    assert c.iris_auto.isChecked() and s.sim.iris_auto
+    pad = w.pad_connected()
+    w._on_pad_intents([IrisStep(+1)], pad)
+    qtbot.waitUntil(lambda: not s.sim.iris_auto, timeout=2000)
+    qtbot.waitUntil(lambda: not c.iris_auto.isChecked() and c.iris_slider.isEnabled(), timeout=2000)
+    assert abs(c.iris_slider.value() - round(100 * (s.image.iris - P.LENS_MIN) / (P.LENS_MAX - P.LENS_MIN))) <= 1
+    n = len(s.sim.received)
+    w._on_pad_intents([GainStep(+1)], pad)
+    qtbot.waitUntil(lambda: s.sim.gain_code != P.GAIN_AUTO, timeout=2000)
+    qtbot.waitUntil(lambda: not c.gain_auto.isChecked(), timeout=2000)
+    assert "dB" in c.gain_value.text()
+    # снятие «Авто» в панели не отправляет камере ничего лишнего (#D31 или второй OGU)
+    qtbot.wait(600)
+    sent = list(s.sim.received)[n:]
+    assert "#D31" not in sent and sum(x.startswith("OGU:") and x != "OGU:" for x in sent) <= 1, sent
     w.close()

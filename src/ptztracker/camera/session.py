@@ -136,7 +136,6 @@ class CameraSession:
         self._pending_steps: dict[str, tuple[int, float]] = {}  # что -> (шаг, момент запроса)
         self._step_lock = threading.RLock()
         self._img_t: dict[str, float] = {}
-        self._gain_auto_logged = False
         # положение P/T/Z из ответов #APC/#GZ (любого источника: опрос окна, Follower, LimitWatch)
         self._ptz_lock = threading.Lock()
         self._ptz: PtzPosition | None = None
@@ -144,6 +143,7 @@ class CameraSession:
         self._zoom_x: float | None = None
         self._ptz_poll_t = -1e9
         self._apc_t = -1e9  # последний ответ #APC: свежий — опрос не нужен (#GZ не в счёт)
+        self._gz_t = -1e9  # последний ответ #GZ или запрос его (poll_zoom)
         # сведения о камере: стартуют с настроек, уточняются ответами камеры; настройки сессия не меняет —
         # окно читает camera_info() из потока Qt и сохраняет само
         self._info_lock = threading.Lock()
@@ -545,10 +545,26 @@ class CameraSession:
         self.scheduler.submit("q_apc", P.Q_PAN_TILT, Priority.QUERY, only_if_changed=False)
         self.scheduler.submit("q_gz", P.Q_ZOOM, Priority.QUERY, only_if_changed=False)
 
+    @property
+    def zoom_x(self) -> float | None:
+        """Масштаб по последнему ответу #GZ (1 — широкий угол, he42.ZOOM_RATIO — теле); None — не знаем."""
+        return self._zoom_x
+
+    def poll_zoom(self, min_interval: float) -> None:
+        """Спросить #GZ (очередь QUERY), если ответа не было min_interval с: «медленнее на крупном плане»."""
+        if self.scheduler is None or self._quiet or self._power in ("standby", "switching"):
+            return
+        now = time.monotonic()
+        if now - self._gz_t < min_interval:
+            return
+        self._gz_t = now
+        self.scheduler.submit("q_gz", P.Q_ZOOM, Priority.QUERY, only_if_changed=False)
+
     def _on_ptz_reply(self, cmd: str, reply: str) -> None:
         if cmd == P.Q_ZOOM:
             frac = (P.parse_zoom(reply) - P.LENS_MIN) / (P.LENS_MAX - P.LENS_MIN)
             self._zoom_x = he42.ZOOM_RATIO ** min(1.0, max(0.0, frac))
+            self._gz_t = time.monotonic()
             p = self._ptz
             if p is not None:
                 self._add_ptz(dataclasses.replace(p, t=time.monotonic(), zoom_x=self._zoom_x))
@@ -652,13 +668,11 @@ class CameraSession:
         return self._queue_step("iris", d, "q_iris", P.Q_IRIS)
 
     def gain_step(self, d: int) -> bool:
-        """Gain на следующий/предыдущий код (+1 ярче). Из AUTO — ручной на прежнем значении, без шага;
-        если прежнего не видели — камере ничего не шлём, False."""
+        """Gain на следующий/предыдущий код (+1 ярче). Из AUTO — первое нажатие только снимает «Авто»:
+        ручной на последнем виденном ручном значении, если его не видели — 0 dB (решение 2026-11-05)."""
         g = self._image.gain
-        if g is not None and g != P.GAIN_AUTO and self._fresh("gain"):
+        if g is not None and self._fresh("gain"):
             return self._gain_apply(d)
-        if g == P.GAIN_AUTO and self._last_manual_gain is None and self._fresh("gain"):
-            return self._gain_apply(d)  # сообщит False и запишет в журнал
         return self._queue_step("gain", d, "q_gain", P.Q_GAIN)
 
     def _iris_apply(self, d: int) -> bool:
@@ -680,12 +694,7 @@ class CameraSession:
             return False
         codes = P.GAIN_CODES
         if g == P.GAIN_AUTO:
-            if self._last_manual_gain not in codes:
-                if not self._gain_auto_logged:
-                    self._gain_auto_logged = True
-                    log.info("Gain на авто, ручного значения не видели: шаг пропущен")
-                return False
-            new = self._last_manual_gain
+            new = self._last_manual_gain if self._last_manual_gain in codes else codes[0]
         else:
             i = codes.index(g) if g in codes else min(range(len(codes)), key=lambda k: abs(codes[k] - g))
             new = codes[max(0, min(len(codes) - 1, i + (1 if d > 0 else -1)))]

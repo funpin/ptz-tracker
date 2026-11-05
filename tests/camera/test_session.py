@@ -330,18 +330,40 @@ def test_iris_step_stale_cache_requeries():
         s.stop()
 
 
-def test_gain_step_auto_without_manual_does_nothing():
+@pytest.mark.parametrize("d", [+1, -1])
+def test_gain_step_auto_without_manual_goes_to_0db(d):
+    """Ручного значения не видели: первое нажатие снимает «Авто» и ставит 0 dB (решение 2026-11-05), без шага."""
     from ptztracker.camera import protocol as P
 
     s = CameraSession(sim_cfg(), analysis=False)
     s.start()
     try:
-        s._upd(gain=P.GAIN_AUTO)
+        assert _wait(lambda: s.image.gain is not None)
+        s.set_gain(P.GAIN_AUTO)
+        assert _wait(lambda: s.sim.gain_code == P.GAIN_AUTO and s.image.gain == P.GAIN_AUTO, 1.5)
         s._last_manual_gain = None
-        n = len(s.sim.received)
-        assert s.gain_step(+1) is False
-        time.sleep(0.3)
-        assert not any(c.startswith("OGU") for c in list(s.sim.received)[n:])
+        assert s.gain_step(d) is True
+        assert s.image.gain == P.GAIN_CODES[0]
+        assert _wait(lambda: s.sim.gain_code == P.GAIN_CODES[0], 1.5)
+        assert s.gain_step(+1) is True  # дальше — обычные шаги
+        assert _wait(lambda: s.sim.gain_code == P.GAIN_CODES[1], 1.5)
+    finally:
+        s.stop()
+
+
+def test_gain_step_unknown_auto_without_manual_goes_to_0db_after_reply():
+    from ptztracker.camera import protocol as P
+
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.gain is not None)
+        s.set_gain(P.GAIN_AUTO)
+        assert _wait(lambda: s.sim.gain_code == P.GAIN_AUTO, 1.5)
+        s._image = type(s._image)()  # ещё не знаем, что на камере
+        s._last_manual_gain = None
+        assert s.gain_step(+1) is True
+        assert _wait(lambda: s.sim.gain_code == P.GAIN_CODES[0], 2.0)
     finally:
         s.stop()
 

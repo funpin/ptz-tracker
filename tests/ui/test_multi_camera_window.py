@@ -43,7 +43,7 @@ def test_keyboard_drives_selected_only(qtbot, tmp_path):
     qtbot.keyRelease(w, Qt.Key_Right)
     qtbot.wait(400)
     assert pts(w, 1) and pts(w, 1)[-1] == "#PTS5050"
-    assert w.grid.cells[1].session.sim.pan_deg > 1
+    assert w.grid.cells[1].session.sim.pan_deg > 0.3  # стрелки — через кривую чувствительности
     assert not pts(w, 0)
     w.close()
 
