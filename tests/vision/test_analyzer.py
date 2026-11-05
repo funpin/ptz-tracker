@@ -95,14 +95,14 @@ def test_slow_detector_does_not_block_and_drops_frames():
         assert time.monotonic() - t0 < 1.0
 
 
-def test_session_stop_stops_analyzer_quickly():
+def test_session_stop_stops_analyzer_quickly(ci_slack):
     s = CameraSession(CameraConfig(id="s", name="Сим", ip="sim", kind="sim"))
     s.start()
     time.sleep(1.0)
     t0 = time.monotonic()
     s.stop()
-    assert time.monotonic() - t0 < 1.0
-    assert wait_until(lambda: not s.analyzer.is_running(), 1.0)
+    assert time.monotonic() - t0 < 1.0 * ci_slack
+    assert wait_until(lambda: not s.analyzer.is_running(), 1.0 * ci_slack)
 
 
 def test_pose_detector_on_photo_through_analyzer():

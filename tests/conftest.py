@@ -5,6 +5,12 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
+@pytest.fixture
+def ci_slack() -> float:
+    """Множитель пределов по реальному времени: сервер сборки GitHub (CI) медленнее машины разработчика."""
+    return 3.0 if os.environ.get("CI") else 1.0
+
+
 @pytest.fixture(autouse=True)
 def _ephemeral_api_port(request, monkeypatch):
     """Окна в тестах (tests/ui, tests/api) поднимают API на свободном порту, а не на 8765:
