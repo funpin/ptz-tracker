@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from ptztracker.config import RECORD_BUFFER_MAX_S, RECORD_BUFFER_MIN_S, AppConfig, record_dir
+from ptztracker.ui.theme import C
 
 
 class RecordingDialog(QDialog):
@@ -21,9 +22,9 @@ class RecordingDialog(QDialog):
 
     def __init__(self, cfg: AppConfig, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Настройки записи")
+        self.setWindowTitle("Журнал для разбора (чёрный ящик)")
         self._cfg = cfg
-        self.enabled = QCheckBox("Вести запись (чёрный ящик)")
+        self.enabled = QCheckBox("Вести журнал")
         self.enabled.setChecked(cfg.record_enabled)
         self.minutes = QSpinBox()
         self.minutes.setRange(RECORD_BUFFER_MIN_S // 60, RECORD_BUFFER_MAX_S // 60)
@@ -36,7 +37,14 @@ class RecordingDialog(QDialog):
         browse = QPushButton("Обзор…")
         browse.clicked.connect(self._browse)
 
+        self.about_label = QLabel(
+            "Это не запись видео для эфира: уменьшенные кадры 5 раз в секунду и события слежения. "
+            "F9 сохраняет последние минуты в zip — его присылают для разбора.")
+        self.about_label.setWordWrap(True)
+        self.about_label.setStyleSheet(f"color: {C.TEXT_DIM};")
+
         lay = QVBoxLayout(self)
+        lay.addWidget(self.about_label)
         lay.addWidget(self.enabled)
         row = QHBoxLayout()
         row.addWidget(QLabel("Сколько последних минут хранить"))

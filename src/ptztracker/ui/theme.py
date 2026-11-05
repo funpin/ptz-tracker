@@ -99,6 +99,10 @@ QSlider::sub-page:horizontal {{ background: {C.ACCENT}; border-radius: 3px; }}
 QSlider::handle:horizontal {{ width: 18px; height: 18px; margin: -6px 0;
     border-radius: 9px; background: {C.TEXT}; }}
 QSlider::handle:horizontal:disabled {{ background: {C.TEXT_FAINT}; }}
+QSlider::groove:vertical {{ width: 6px; background: {C.RAISED_HI}; border-radius: 3px; }}
+QSlider::handle:vertical {{ width: 18px; height: 18px; margin: 0 -6px;
+    border-radius: 9px; background: {C.TEXT}; }}
+QSlider::handle:vertical:disabled {{ background: {C.TEXT_FAINT}; }}
 
 QScrollBar:vertical {{ width: 8px; background: transparent; margin: 0; }}
 QScrollBar::handle:vertical {{ background: {C.RAISED_HI}; border-radius: 4px; min-height: 24px; }}
@@ -114,8 +118,12 @@ QMenu::item {{ padding: 6px 20px; border-radius: 4px; }}
 QMenu::item:selected {{ background: {C.RAISED_HI}; }}
 QMenu::item:disabled {{ color: {C.TEXT_FAINT}; }}
 QMenu::separator {{ height: 1px; background: {C.LINE}; margin: 4px 8px; }}
-QStatusBar {{ background: {C.SURFACE}; color: {C.TEXT_DIM}; }}
-QStatusBar::item {{ border: none; }}
+QStatusBar {{ background: {C.SURFACE}; color: {C.TEXT_DIM}; border-top: 1px solid {C.LINE};
+    padding: 2px {SP[1]}px; }}
+QStatusBar::item {{ border: none; margin: 0 {SP[0]}px; }}
+QStatusBar QWidget {{ background: transparent; }}
+QStatusBar QToolButton:hover {{ background: {C.RAISED_HI}; border-radius: 4px; }}
+QToolButton[pill="true"]::menu-indicator {{ image: none; width: 0; }}
 
 QGroupBox {{ border: none; margin-top: {SP[3]}px; padding-top: {SP[1]}px; }}
 QGroupBox::title {{ subcontrol-origin: margin; left: 0; color: {C.TEXT_DIM};
@@ -146,6 +154,18 @@ def apply_dark_theme(app: QApplication) -> None:
     font.setPixelSize(FS_TEXT)
     app.setFont(font)
     app.setStyleSheet(stylesheet())
+
+
+def install_russian(app: QApplication) -> None:
+    """Стандартные кнопки и окна Qt (Cancel, Yes/No, выбор папки) — по-русски."""
+    from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
+
+    if getattr(app, "_ru_translator", None) is not None:
+        return
+    tr = QTranslator(app)
+    if tr.load(QLocale(QLocale.Russian), "qtbase", "_", QLibraryInfo.path(QLibraryInfo.TranslationsPath)):
+        app.installTranslator(tr)
+        app._ru_translator = tr  # держим ссылку: иначе переводчик соберёт сборщик мусора
 
 
 # цвет и номер клетки на виде сверху и в графиках служебных клеток

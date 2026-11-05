@@ -139,3 +139,14 @@ def test_stop_button_visible_without_scrolling(qtbot, tmp_path):
         w.close()
         app.setStyleSheet(old_style)
         app.setPalette(old_pal)
+
+
+def test_version_shown_and_credit_not_at_edge(qtbot, tmp_path):
+    from ptztracker import __version__
+
+    w = make(qtbot, tmp_path)
+    assert __version__ in w.version_label.text()
+    sb = w.statusBar()
+    right = w.credit_label.mapTo(sb, w.credit_label.contentsRect().topRight()).x()  # где кончается текст
+    assert right <= sb.width() - 12
+    w.close()

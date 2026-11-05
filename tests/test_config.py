@@ -334,3 +334,46 @@ def test_unsupported_list_is_not_shared_between_cameras():
     a, b = CameraConfig(id="a", name="a", ip="1.1.1.1"), CameraConfig(id="b", name="b", ip="1.1.1.2")
     a.unsupported.append("gain")
     assert b.unsupported == []
+
+
+def test_password_read_from_keychain_once_per_launch(monkeypatch):
+    # macOS спрашивает доступ к связке ключей при каждом чтении: переподключение не должно спрашивать снова
+    import keyring
+
+    import ptztracker.config as config
+
+    store, reads = {"cam-x": "secret"}, []
+
+    def fake_get(service, cid):
+        reads.append(cid)
+        return store.get(cid)
+
+    monkeypatch.setattr(config, "_pw_cache", {})
+    monkeypatch.setattr(keyring, "get_password", fake_get)
+    monkeypatch.setattr(keyring, "set_password", lambda s, cid, pw: store.__setitem__(cid, pw))
+    monkeypatch.setattr(keyring, "delete_password", lambda s, cid: store.pop(cid))
+    assert config.get_password("cam-x") == "secret"
+    assert config.get_password("cam-x") == "secret"
+    assert reads == ["cam-x"]
+    config.set_password("cam-x", "new")
+    assert config.get_password("cam-x") == "new" and reads == ["cam-x"]
+    config.set_password("cam-x", None)
+    assert config.get_password("cam-x") is None and reads == ["cam-x"]
+
+
+def test_password_not_cached_when_keychain_refuses(monkeypatch):
+    import keyring
+
+    import ptztracker.config as config
+
+    calls = []
+
+    def refuse(service, cid):
+        calls.append(cid)
+        raise keyring.errors.KeyringError("отказано")
+
+    monkeypatch.setattr(config, "_pw_cache", {})
+    monkeypatch.setattr(keyring, "get_password", refuse)
+    assert config.get_password("cam-y") is None
+    assert config.get_password("cam-y") is None
+    assert calls == ["cam-y", "cam-y"]  # оператор нажал «Отказать» — в следующий раз спросим снова

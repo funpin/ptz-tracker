@@ -18,6 +18,28 @@ def make(qtbot, tmp_path):
     return w
 
 
+def _heights(w) -> str:
+    """Высоты строк правой панели — чтобы по логу CI понять, что не поместилось."""
+    out = [f"окно {w.width()}x{w.height()}, область {w.side_scroll.viewport().height()},"
+           f" содержимое {w.side_scroll.widget().sizeHint().height()},"
+           f" мин. ширина содержимого {w.side_scroll.widget().minimumSizeHint().width()}"]
+    for panel in (w.follow_panel, w.controls):
+        lay = panel.layout()
+        for i in range(lay.count()):
+            it = lay.itemAt(i)
+            wd = it.widget()
+            name = type(wd).__name__ if wd else "layout"
+            text = getattr(wd, "text", lambda: "")() if wd and hasattr(wd, "text") else ""
+            out.append(f"{type(panel).__name__}[{i}] {name} {text[:20]!r} h={it.sizeHint().height()}"
+                       f" мин. ширина {it.minimumSize().width()}")
+            if not wd and it.layout():
+                sub = it.layout()
+                out.append("    " + ", ".join(
+                    f"{type(sub.itemAt(k).widget()).__name__ if sub.itemAt(k).widget() else 'layout'}"
+                    f"={sub.itemAt(k).minimumSize().width()}" for k in range(sub.count())))
+    return "\n".join(out)
+
+
 def recv(w, prefix):
     return [c for c in w.session.sim.received if c.startswith(prefix)]
 
@@ -31,12 +53,19 @@ def test_side_panel_fits_without_scroll(qtbot, tmp_path):
         w.resize(1640, 850)
         qtbot.waitExposed(w)
         qtbot.wait(1200)
-        assert w.side_scroll.verticalScrollBar().maximum() == 0
+        assert w.side_scroll.verticalScrollBar().maximum() == 0, _heights(w)  # на Windows видно, что выросло
+        # ни одна строка не шире панели (иначе правый край обрезается — на Windows так было с заголовками)
+        assert w.side_scroll.widget().minimumSizeHint().width() <= w.side_scroll.viewport().width(), _heights(w)
         for wd in (w.controls.gain_slider, w.controls.wb_combo, w.controls.preset_buttons[-1],
                    w.controls.near_btn, w.controls.iris_slider):
-            # по высоте не обрезано (панель не прокручивается); по ширине допускаем 1–2 px округления
-            r = wd.visibleRegion().boundingRect()
-            assert wd.isVisible() and r.height() == wd.height() and r.width() >= wd.width() - 2
+            # целиком внутри видимой области панели; по ширине допускаем 1–2 px округления.
+            # visibleRegion() тут не годится: на сервере сборки Windows (экран 800×800, окно больше экрана)
+            # он бывает пустым у виджета в границах панели
+            vp = w.side_scroll.viewport()
+            top_left = wd.mapTo(vp, wd.rect().topLeft())
+            r = wd.rect().translated(top_left)
+            where = f"{type(wd).__name__} {getattr(wd, 'text', lambda: '')()!r} {r} в области {vp.rect()}\n{_heights(w)}"
+            assert wd.isVisible() and vp.rect().adjusted(0, 0, 2, 0).contains(r), where
     finally:
         w.close()
         app.setStyleSheet(old_style)

@@ -38,7 +38,7 @@ _HOLD_BUTTONS = ("cross", "circle", "square", "triangle", "create")  # коро�
 _REPEAT_BUTTONS = {"dpad_right": IrisStep(+1), "dpad_left": IrisStep(-1),
                    "dpad_up": GainStep(+1), "dpad_down": GainStep(-1)}
 _PLAIN_BUTTONS = {"r3": ToggleFollow(), "touchpad": Stop(), "l3": PushFocus(),
-                  "l1": Composition(-1), "r1": Composition(+1), "options": MenuOpen()}
+                  "l1": Composition(+1), "r1": Composition(-1), "options": MenuOpen()}
 _MENU_BUTTONS = {"dpad_up": MenuNav(0, -1), "dpad_down": MenuNav(0, +1), "dpad_left": MenuNav(-1, 0),
                  "dpad_right": MenuNav(+1, 0), "cross": MenuAccept(), "circle": MenuClose(),
                  "triangle": MenuClose(), "options": MenuClose()}

@@ -93,7 +93,7 @@ def test_main_window_opens_replay(qtbot, tmp_path, monkeypatch):
     _episode(tmp_path)
     mw = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
     qtbot.addWidget(mw)
-    assert "Открыть запись…" in [a.text() for a in mw.blackbox_btn.menu().actions()]
+    assert "Открыть журнал…" in [a.text() for a in mw.blackbox_btn.menu().actions()]
     rw = mw.open_replay(tmp_path / "e.zip")
     assert rw is not None and rw.isVisible() and rw.slider.maximum() == N - 1
     # стрелки в окне записи листают ползунок, а не поворачивают камеру

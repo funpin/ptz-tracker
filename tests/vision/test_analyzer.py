@@ -95,14 +95,14 @@ def test_slow_detector_does_not_block_and_drops_frames():
         assert time.monotonic() - t0 < 1.0
 
 
-def test_session_stop_stops_analyzer_quickly():
+def test_session_stop_stops_analyzer_quickly(ci_slack):
     s = CameraSession(CameraConfig(id="s", name="Сим", ip="sim", kind="sim"))
     s.start()
     time.sleep(1.0)
     t0 = time.monotonic()
     s.stop()
-    assert time.monotonic() - t0 < 1.0
-    assert wait_until(lambda: not s.analyzer.is_running(), 1.0)
+    assert time.monotonic() - t0 < 1.0 * ci_slack
+    assert wait_until(lambda: not s.analyzer.is_running(), 1.0 * ci_slack)
 
 
 def test_pose_detector_on_photo_through_analyzer():
@@ -228,7 +228,9 @@ def test_pose_detector_on_1280x720_frame_through_analyzer():
         assert wait_until(lambda: a.latest() is not None and len(a.latest().tracks) >= 3, 5)
         r = a.latest()
         assert r.frame_size == (1280, 720)
-        assert all(0 <= t.box[0] < t.box[2] <= 1280 + 1 and 0 <= t.box[1] < t.box[3] <= 720 + 1 for t in r.tracks)
+        # пиксели кадра, а не доли; рамка человека у края может чуть выйти за кадр
+        assert max(t.box[2] for t in r.tracks) > 100
+        assert all(-64 <= t.box[0] < t.box[2] <= 1280 + 64 and -36 <= t.box[1] < t.box[3] <= 720 + 36 for t in r.tracks)
     finally:
         a.stop()
 

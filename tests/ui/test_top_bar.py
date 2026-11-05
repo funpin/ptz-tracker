@@ -94,13 +94,43 @@ def test_narrow_window_keeps_everything(qtbot, tmp_path):
 
 def test_compacts_when_bar_too_wide(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
-    qtbot.waitUntil(lambda: w.analysis_pill.kind() == "ok", timeout=8000)
-    w._update_status()
+    w.atem_pill.set("3 · PGM", "pgm", "")
+    w.atem_pill.show()
     w.cameras_btn.setMinimumWidth(w.width() - 300)  # крупный шрифт Windows / длинное имя камеры
     w._fit_top_bar()
-    assert w.video_pill.text() == ""
+    assert w.atem_pill.text() == ""
     assert w.track_btn.text() in ("TRACK OFF", "TRACK ON")
     w.close()
+
+
+def test_tech_status_lives_in_bottom_bar(qtbot, tmp_path):
+    # вверху — то, что нужно в эфире; видео и анализ — внизу, рядом с клавишами
+    w = make(qtbot, tmp_path)
+    sb = w.statusBar()
+    for pill in (w.video_pill, w.analysis_pill):
+        assert sb.isAncestorOf(pill) and not w._top.isAncestorOf(pill)
+    assert w._top.isAncestorOf(w.atem_pill) and w._top.isAncestorOf(w.blackbox_btn)
+    w.close()
+
+
+def test_cameras_button_shows_camera_icon(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    assert w.cameras_btn._icon_name == "camera"
+    w.close()
+
+
+def test_menu_buttons_have_no_arrow():
+    from ptztracker.ui.theme import stylesheet
+
+    assert "menu-indicator" in stylesheet()
+
+
+def test_footer_keys_short_and_point_to_f1():
+    from ptztracker.ui.main_window import _FOOTER_KEYS, _HOTKEYS
+
+    known = dict(_HOTKEYS) | {"F1": "все клавиши"}
+    assert len(_FOOTER_KEYS) <= 5 and _FOOTER_KEYS[-1][0] == "F1"
+    assert all(k in known for k, _ in _FOOTER_KEYS)
 
 
 def test_stream_menu_switches_stream(qtbot, tmp_path, monkeypatch):

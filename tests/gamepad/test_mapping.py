@@ -104,7 +104,7 @@ def test_neighbor_needs_recenter():
 def test_buttons():
     m = mk()
     for b, want in [("r3", ToggleFollow()), ("touchpad", Stop()), ("l3", PushFocus()),
-                    ("l1", Composition(-1)), ("r1", Composition(+1)), ("options", MenuOpen())]:
+                    ("l1", Composition(+1)), ("r1", Composition(-1)), ("options", MenuOpen())]:
         assert m.update(pad({b}), 0.0) == [want]
         assert m.update(pad({b}), 0.1) == []
         m.update(pad(), 0.2)

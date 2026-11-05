@@ -282,17 +282,26 @@ class ConfigStore:
             raise
 
 
+# macOS спрашивает доступ к связке ключей при каждом чтении: читаем один раз за запуск
+_pw_cache: dict[str, str | None] = {}
+
+
 def get_password(camera_id: str) -> str | None:
+    if camera_id in _pw_cache:
+        return _pw_cache[camera_id]
     try:
         import keyring
 
-        return keyring.get_password(KEYRING_SERVICE, camera_id)
-    except Exception as e:  # backend может отсутствовать
+        pw = keyring.get_password(KEYRING_SERVICE, camera_id)
+    except Exception as e:  # backend может отсутствовать, оператор мог нажать «Отказать» — тогда спросим снова
         log.warning("keyring недоступен: %s", e)
         return None
+    _pw_cache[camera_id] = pw
+    return pw
 
 
 def set_password(camera_id: str, pw: str | None) -> None:
+    _pw_cache[camera_id] = pw or None
     try:
         import keyring
 

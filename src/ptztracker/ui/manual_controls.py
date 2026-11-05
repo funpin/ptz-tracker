@@ -21,37 +21,12 @@ from PySide6.QtWidgets import (
 from ptztracker.camera import protocol as P
 from ptztracker.camera.session import CameraSession, ImageState
 from ptztracker.ui.joystick import JoystickWidget
-from ptztracker.ui.theme import FS_CAPTION, H_STOP, SP, C, qcolor
+from ptztracker.ui.theme import FS_CAPTION, H_STOP, SP, C
 from ptztracker.ui.widgets import KeyButton, SectionHeader, keycap_width, paint_keycap
 
 PRESET_SIZE = 32
+ZOOM_ROCKER_H = 112  # вместе с клавишами и подписями — по высоте стика
 TOUCH_HOLD_S = 1.5  # столько опрос камеры не перебивает ползунок, который оператор только что тронул
-
-
-class _ArrowKeys(QWidget):
-    """Только рисунок: клавиши ← ↑ ↓ → и подпись. Фокус не берёт, команд не шлёт."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFocusPolicy(Qt.NoFocus)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.setFixedSize(128, 104)
-
-    def paintEvent(self, e):  # noqa: N802
-        p = QPainter(self)
-        step = keycap_width("→") + SP[0]
-        mid = self.width() / 2
-        paint_keycap(p, mid + keycap_width("↑") / 2, 18, "↑")
-        y = 18 + 28
-        paint_keycap(p, mid - step / 2 - SP[0] / 2 - 0, y, "←")
-        paint_keycap(p, mid + keycap_width("↓") / 2, y, "↓")
-        paint_keycap(p, mid + step + SP[0] / 2 + keycap_width("→") / 2, y, "→")
-        p.setPen(qcolor(C.TEXT_FAINT))
-        f = p.font()
-        f.setPixelSize(FS_CAPTION)
-        p.setFont(f)
-        p.drawText(0, 78, self.width(), 24, Qt.AlignHCenter | Qt.AlignTop, "поворот клавишами")
-        p.end()
 
 
 class SpringSlider(QSlider):
@@ -88,31 +63,38 @@ class ManualControls(QWidget):
         self.joystick = JoystickWidget()
         self.joystick.moved.connect(self._on_joystick)
 
-        self.zoom_slider = SpringSlider(Qt.Horizontal)
+        # зум — качелька справа от стика, как на пульте PTZ: вверх — ближе, вниз — шире
+        self.zoom_slider = SpringSlider(Qt.Vertical)
         self.zoom_slider.setRange(-100, 100)
+        self.zoom_slider.setFixedHeight(ZOOM_ROCKER_H)
         # пружинный: в покое нейтральный, без акцентной заливки; метка по центру
-        self.zoom_slider.setTickPosition(QSlider.TicksBelow)
+        self.zoom_slider.setTickPosition(QSlider.TicksRight)
         self.zoom_slider.setTickInterval(100)
         self.zoom_slider.setStyleSheet(
-            f"QSlider::sub-page:horizontal, QSlider::add-page:horizontal {{ background: {C.RAISED_HI};"
+            f"QSlider::sub-page:vertical, QSlider::add-page:vertical {{ background: {C.RAISED_HI};"
             " border-radius: 3px; }"
         )
-        self.zoom_slider.setToolTip("Тяните вправо — приблизить, влево — отдалить. Отпустите — стоп.")
+        self.zoom_slider.setToolTip("Тяните вверх — приблизить, вниз — отдалить. Отпустите — стоп.")
         self.zoom_slider.valueChanged.connect(self._on_zoom)
         self.zoom_slider.sliderReleased.connect(lambda: self.zoom_slider.setValue(0))
-        zoom_row = QHBoxLayout()
-        zoom_row.setSpacing(SP[1])
-        zoom_row.addWidget(self._keycap_label("−"))
-        zoom_row.addWidget(QLabel("Шире"))
-        zoom_row.addWidget(self.zoom_slider, 1)
-        zoom_row.addWidget(QLabel("Ближе"))
-        zoom_row.addWidget(self._keycap_label("+"))
+        # клавиша и подпись в одну строку: колонка не выше стика (крупный шрифт Windows)
+        self._zoom_col = zoom_col = QVBoxLayout()
+        zoom_col.setSpacing(SP[0])
+        for key, text in (("+", "Ближе"), (None, None), ("−", "Шире")):
+            if key is None:
+                zoom_col.addWidget(self.zoom_slider, 0, Qt.AlignHCenter)
+                continue
+            row = QHBoxLayout()
+            row.setSpacing(SP[0])
+            row.addWidget(self._keycap_label(key))
+            row.addWidget(self._caption(text))
+            zoom_col.addLayout(row)
 
         stick_row = QHBoxLayout()
         stick_row.addStretch(1)
-        stick_row.addWidget(self.joystick)
-        stick_row.addSpacing(SP[2])
-        stick_row.addWidget(_ArrowKeys())
+        stick_row.addWidget(self.joystick, 0, Qt.AlignVCenter)
+        stick_row.addSpacing(SP[3] * 2)
+        stick_row.addLayout(zoom_col)
         stick_row.addStretch(1)
 
         self.stop_btn = KeyButton("СТОП КАМЕРЫ", "Esc", variant="stop")
@@ -200,7 +182,6 @@ class ManualControls(QWidget):
         lay.setSpacing(SP[1])
         lay.addWidget(SectionHeader("Камера", "движение выключает слежение"))
         lay.addLayout(stick_row)
-        lay.addLayout(zoom_row)
         lay.addWidget(self.stop_btn)
         lay.addLayout(il)
         lay.addLayout(gl)
@@ -222,6 +203,12 @@ class ManualControls(QWidget):
         for wd in widgets:
             row.addWidget(wd, 1 if isinstance(wd, QSlider) else 0)
         return row
+
+    @staticmethod
+    def _caption(text: str) -> QLabel:
+        lab = QLabel(text)
+        lab.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
+        return lab
 
     @staticmethod
     def _keycap_label(text: str) -> QWidget:

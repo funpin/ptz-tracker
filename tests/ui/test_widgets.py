@@ -142,3 +142,13 @@ def test_power_overlay_round_and_opaque(qtbot):
     qtbot.wait(20)
     assert o.power_btn.width() == o.power_btn.height() == PowerOverlay.BTN
     assert o.testAttribute(Qt.WA_StyledBackground)
+
+
+def test_section_header_hint_does_not_widen_panel(qtbot):
+    # Windows: длинная подсказка в заголовке раздвигала правую панель шире окна, пресет «9» обрезался
+    from ptztracker.ui.widgets import SectionHeader
+
+    h = SectionHeader("Камера", "движение выключает слежение " * 5)
+    qtbot.addWidget(h)
+    assert h.minimumSizeHint().width() < 120
+    assert "движение выключает слежение" in h.hint_label.toolTip()
