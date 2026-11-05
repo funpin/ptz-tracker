@@ -4,19 +4,19 @@ from PySide6.QtCore import Qt
 from test_gamepad_bridge import PadBackend, make
 
 from ptztracker.config import CameraConfig
-from ptztracker.ui.hotkeys_dialog import GAMEPAD_HELP, HotkeysDialog, fmt_remaining
+from ptztracker.ui.hotkeys_dialog import GAMEPAD_HELP, HotkeysDialog, fmt_remaining, keyboard_keys, pad_elements
 from ptztracker.ui.main_window import _HOTKEYS
 
 
 def rows(table):
-    return [(table.item(r, 0).text(), table.item(r, 1).text()) for r in range(table.rowCount())]
+    return table
 
 
 def test_dialog_tables(qtbot):
     d = HotkeysDialog()
     qtbot.addWidget(d)
-    assert rows(d.keys_table) == [(k, v) for k, v in _HOTKEYS] + [("F1", "эта справка")]
-    pad = rows(d.pad_table)
+    assert rows(d.keys_rows) == [(k, v) for k, v in _HOTKEYS] + [("F1", "эта справка")]
+    pad = rows(d.pad_rows)
     assert pad == GAMEPAD_HELP
     text = {k.lower(): v.lower() for k, v in pad}
     assert any("тачпад" in k and "стоп камеры" in v for k, v in text.items())
@@ -31,7 +31,7 @@ def test_f1_opens_hotkeys_with_gamepad_table(qtbot, tmp_path):
     qtbot.keyClick(w, Qt.Key_F1)
     d = w.hotkeys_dialog
     assert d is not None and d.isVisible()
-    assert any("тачпад" in k.lower() for k, _ in rows(d.pad_table))
+    assert any("тачпад" in k.lower() for k, _ in rows(d.pad_rows))
     d.close()
     w.close()
 
@@ -70,3 +70,62 @@ def test_gamepad_chip_hides_on_disconnect(qtbot, tmp_path):
     w.pad._on_conn(None)
     assert w.pad_chip.isHidden()
     w.close()
+
+
+def test_every_gamepad_row_has_element(qtbot):
+    d = HotkeysDialog()
+    qtbot.addWidget(d)
+    for label, _what in GAMEPAD_HELP:
+        key = pad_elements(label)
+        assert key and d.pad.elements_for(key), label
+
+
+def test_hover_row_highlights_drawing(qtbot):
+    d = HotkeysDialog()
+    qtbot.addWidget(d)
+    i = next(n for n, (k, _v) in enumerate(GAMEPAD_HELP) if k.startswith("Левый стик"))
+    d.row_hovered(i)
+    assert d.pad.highlighted == "lstick" and d.pad.animating
+    assert d.rows[i].lit
+    d.row_hovered(None)
+    assert d.pad.highlighted is None and not d.pad.animating
+
+
+def test_hover_drawing_highlights_row(qtbot):
+    d = HotkeysDialog()
+    qtbot.addWidget(d)
+    d.pad.hovered.emit("touchpad")
+    lit = [r for r in d.rows if r.lit]
+    assert len(lit) == 1 and "СТОП КАМЕРЫ" in lit[0].what_label.text()
+    d.pad.hovered.emit("dpad_left")
+    lit = [r for r in d.rows if r.lit]
+    assert len(lit) == 1 and lit[0].key_label.text().startswith("Крестовина")
+
+
+def test_unused_key_no_highlight(qtbot):
+    d = HotkeysDialog()
+    qtbot.addWidget(d)
+    d.tabs.setCurrentIndex(1)
+    d.keyboard.hovered.emit("Q")
+    assert d.keyboard.highlighted is None and not any(r.lit for r in d.rows)
+
+
+def test_tabs_and_keyboard_rows(qtbot):
+    d = HotkeysDialog()
+    qtbot.addWidget(d)
+    assert [d.tabs.tabText(i) for i in range(d.tabs.count())] == ["Геймпад", "Клавиатура", "Мышь"]
+    d.tabs.setCurrentIndex(1)
+    assert d.rows[-1].key_label.text() == "F1"
+    space = next(r.index for r in d.rows if r.key_label.text() == "Пробел")
+    d.row_hovered(space)
+    assert d.keyboard.highlighted == "Space"
+    d.tabs.setCurrentIndex(2)
+    d.row_hovered(0)
+    assert d.mouse.highlighted == "m_target"
+
+
+def test_keyboard_keys_parse():
+    assert keyboard_keys("1–5") == "1,2,3,4,5"
+    assert keyboard_keys("← → ↑ ↓") == "Left,Right,Up,Down"
+    assert keyboard_keys("+ −") == "+,−"
+    assert keyboard_keys("Пробел") == "Space"
