@@ -198,9 +198,12 @@ class SectionHeader(QWidget):
         self.title_label.setProperty("variant", "section")
         self.hint_label = QLabel(hint)
         self.hint_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
+        # подсказка не раздвигает панель (шрифт Windows шире): при нехватке места обрезается, полный текст — в подсказке
+        self.hint_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.hint_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.hint_label.setToolTip(hint)
         lay.addWidget(self.title_label)
-        lay.addStretch(1)
-        lay.addWidget(self.hint_label)
+        lay.addWidget(self.hint_label, 1)
 
 
 class TrackButton(QPushButton):
