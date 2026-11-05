@@ -84,6 +84,16 @@ class CameraInfo:
 
 
 _ER1 = re.compile(r"\ber1\b", re.IGNORECASE)
+_ER3 = re.compile(r"\ber3\b", re.IGNORECASE)
+# команды изображения, которые камера в Full Auto отклоняет ответом ER3 (баланс белого, gain, затвор, Synchro,
+# уровень чёрного, резкость, цветовая температура, ирис и его автомат; замер на HE40 «TEST» 2026-11-06)
+IMAGE_SET_PREFIXES = ("OAW:", "OGU:", "OSH:", "OMS:", "OTP:", "ODT:", "OSD:B1", "#AXI", "#D3")
+REFUSED_SHOW_S = 6.0  # столько меню говорит «камера не приняла», после последнего отказа
+
+
+def is_image_refusal(cmd: str, reply: str) -> bool:
+    """Камера отклонила настройку изображения (ER3 — обычно режим Full Auto)."""
+    return str(cmd).startswith(IMAGE_SET_PREFIXES) and bool(_ER3.search(str(reply)))
 _ER_NO_RETRY = re.compile(r"\ber[13]\b", re.IGNORECASE)  # камера ответила, что QID не знает: больше не спрашиваем
 
 
@@ -459,6 +469,10 @@ class CameraSession:
         with self._info_lock:
             return CameraInfo(self._model, self._firmware, tuple(sorted(self._unsupported)))
 
+    def refused_recently(self) -> bool:
+        """Камера только что отклонила настройку изображения (ER3, режим Full Auto) — меню об этом скажет."""
+        return time.monotonic() - getattr(self, "_refused_t", -1e9) < REFUSED_SHOW_S
+
     def supports(self, feature: str) -> bool:
         """False — камера отвечала ER1 на gain/WB/цветовую температуру/питание: кнопки скрыть или погасить."""
         return feature not in self._unsupported
@@ -593,6 +607,8 @@ class CameraSession:
                 self._on_model_reply(bool(ok), reply)
                 return
             self._note_feature(str(cmd), bool(ok), reply)
+            if not ok and is_image_refusal(cmd, reply):
+                self._refused_t = time.monotonic()
             if ok and cmd in (P.Q_PAN_TILT, P.Q_ZOOM):
                 self._on_ptz_reply(cmd, reply)
                 return

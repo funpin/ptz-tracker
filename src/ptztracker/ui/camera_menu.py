@@ -70,8 +70,13 @@ WHY = {
            " (у камеры в эфире — и в эфире).",
 }
 OSD_AUTOCLOSE_S = 60.0
-TITLE_QUICK = "Быстрые настройки    ↑↓ пункт · ←→ значение · ○ закрыть"
-TITLE_OSD = "Меню Panasonic на камере    ↑↓ · → выбрать · ← назад · ○ закрыть"
+TITLE_QUICK = "Быстрые настройки"
+TITLE_OSD = "Меню Panasonic на камере"
+KEYS_QUICK = "↑↓ пункт · ←→ значение · ○ закрыть"
+KEYS_OSD = "↑↓ · → выбрать · ← назад · ○ закрыть"
+ORDER = ("focus", "wb", "ctemp", "iris", "gain", "shutter", "synchro", "pedestal", "detail", "osd")
+REFUSED_HINT = ("Камера не принимает эту настройку: она в режиме Full Auto. Выключите Full Auto "
+                "(«Меню Panasonic на камере» → Scene) — тогда настройки заработают.")
 OSD_HINT = "Меню рисует сама камера — смотрите на картинку этой клетки. ○ или Esc — закрыть меню камеры."
 HZ50 = True  # ⚠ сеть 50 Гц (Россия): подписи затвора и частоты Synchro; формат камеры пока не спрашиваем
 
@@ -99,20 +104,30 @@ class CameraMenu(QFrame):
         lay.setSpacing(2)
         # «Быстрые настройки» — наше окошко в программе (в эфир не попадает); «Меню Panasonic» — меню самой
         # камеры, которое она рисует в своё видео (пользователь 2026-11-05: не путать два меню)
+        # название слева, клавиши справа мелко — раньше одной строкой, и клавиши обрезались
         self.title_label = QLabel(TITLE_QUICK)
-        self.title_label.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px; padding: 2px {SP[2]}px;")
-        lay.addWidget(self.title_label)
+        self.title_label.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px; font-weight: 600;")
+        self.keys_label = QLabel(KEYS_QUICK)
+        self.keys_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION - 1}px;")
+        self.keys_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        head = QHBoxLayout()
+        head.setContentsMargins(SP[2], 2, SP[2], 2)
+        head.addWidget(self.title_label)
+        head.addStretch(1)
+        head.addWidget(self.keys_label)
+        lay.addLayout(head)
         self.osd_mode = False
         self.on_air: Callable[[], bool] = lambda: False  # окно подставляет: камера меню сейчас в PGM
         self._rows: dict[str, _Row] = {}
-        for key in ("focus", "wb", "ctemp", "iris", "gain", "shutter", "synchro", "pedestal", "detail", "osd"):
+        for key in ORDER:
             r = _Row(key)
             r.clicked.connect(self.click_item)
             self._rows[key] = r
             lay.addWidget(r)
         self.hint = QLabel("")
         self.hint.setWordWrap(True)
-        self.hint.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px; padding: 4px {SP[2]}px 0;")
+        self._hint_color = None
+        self._set_hint_color(C.TEXT_DIM)
         lay.addWidget(self.hint)
         self.setStyleSheet(self.styleSheet() + f" QLabel {{ font-size: {FS_TEXT}px; }}")
         self._timer = QTimer(self)
@@ -223,22 +238,40 @@ class CameraMenu(QFrame):
         out["osd"] = "›"
         return out
 
+    def _set_hint_color(self, color: str) -> None:
+        if color != self._hint_color:
+            self._hint_color = color
+            self.hint.setStyleSheet(f"color: {color}; font-size: {FS_CAPTION}px; padding: 4px {SP[2]}px 0;")
+
+    def _refused(self) -> bool:
+        f = getattr(self._s(), "refused_recently", None)
+        return bool(f()) if callable(f) else False
+
     def _render(self) -> None:
         keys = self.visible_keys()
         if self._cursor not in keys or not self._enabled(self._cursor):
-            self._cursor = next((k for k in keys if self._enabled(k)), keys[0])
+            # пункт пропал (например, «Цвет. температура» после смены баланса белого): ближайший выше, не первый
+            i = ORDER.index(self._cursor) if self._cursor in ORDER else 0
+            above = [k for k in ORDER[:i] if k in keys and self._enabled(k)]
+            self._cursor = above[-1] if above else next((k for k in keys if self._enabled(k)), keys[0])
         vals = self.values()
         titles = {"focus": "Фокус", "wb": "Баланс белого", "ctemp": "   Цвет. температура",
                   "iris": "Ирис", "gain": "Gain", "shutter": "Затвор", "synchro": "   Частота Synchro",
                   "pedestal": "Уровень чёрного", "detail": "Резкость", "osd": "Меню Panasonic на камере"}
         self.title_label.setText(TITLE_OSD if self.osd_mode else TITLE_QUICK)
+        self.keys_label.setText(KEYS_OSD if self.osd_mode else KEYS_QUICK)
         for k, r in self._rows.items():
             r.setVisible(k in keys and not self.osd_mode)
             r.title.setText(titles[k])
             r.value.setText(vals[k])
             r.setToolTip(WHY[k])
             r.style(k == self._cursor, self._enabled(k))
-        self.hint.setText(OSD_HINT if self.osd_mode else WHY.get(self._cursor, ""))
+        refused = not self.osd_mode and self._cursor not in ("focus", "iris", "osd") and self._refused()
+        self._set_hint_color(C.LOST if refused else C.TEXT_DIM)
+        self.hint.setText(OSD_HINT if self.osd_mode else REFUSED_HINT if refused else WHY.get(self._cursor, ""))
+        # перенос строк: высоту считаем по ширине меню, иначе пояснение обрезается снизу
+        m = self.layout().contentsMargins()
+        self.hint.setFixedHeight(self.hint.heightForWidth(WIDTH - m.left() - m.right()))
         self.adjustSize()
 
     # --- открытие и закрытие ---------------------------------------------------

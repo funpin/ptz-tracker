@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from ptztracker import __version__
 from ptztracker.api.backend import start_window_api
 from ptztracker.camera.preset_thumbs import PresetThumbs
-from ptztracker.camera.session import CameraSession
+from ptztracker.camera.session import REFUSED_SHOW_S, CameraSession
 from ptztracker.config import (
     GRID_SLOTS,
     SPEED_GEARS,
@@ -1854,7 +1854,24 @@ class MainWindow(QMainWindow):
             if c is not None:
                 c.session.poll_position()
 
+    def _warn_refused(self) -> None:
+        """Камера выбранной клетки отклоняет ирис / gain / баланс белого (ER3, режим Full Auto) — сказать в строке
+        состояния, раз в REFUSED_SHOW_S, а не молча откатывать ползунки."""
+        s = self.session
+        f = getattr(s, "refused_recently", None)
+        if not callable(f) or not f():
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_refused_said", -1e9) < REFUSED_SHOW_S:
+            return
+        self._refused_said = now
+        self.statusBar().showMessage(
+            f"Камера «{s.cfg.name}» не принимает ирис, gain, баланс белого и затвор: она в режиме Full Auto. "
+            "Выключите Full Auto: быстрые настройки (M) → Меню Panasonic на камере → Scene.",
+            int(REFUSED_SHOW_S * 1000) + 1000)
+
     def _update_status(self) -> None:
+        self._warn_refused()
         self._poll_update_check()
         self._refresh_manual_speed()
         self._refresh_service_cells()

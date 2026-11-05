@@ -70,3 +70,12 @@ def test_update_row_mirrors_update_action(qtbot, tmp_path):
     w.update_action.setVisible(True)
     assert proxy.isVisible() and "9.9.9" in proxy.text()
     w.close()
+
+
+def test_status_bar_says_full_auto(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: w.session is not None, timeout=3000)
+    w.session.refused_recently = lambda: True
+    w._update_status()
+    assert "Full Auto" in w.statusBar().currentMessage()
+    w.close()

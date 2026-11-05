@@ -434,3 +434,51 @@ def test_quick_menu_lights_panel_row(qtbot):
     m.nav(0, 1)  # gain
     m.accept()
     assert c.rows["gain"].active
+
+
+# --- камера в Full Auto, курсор, текст целиком (жалоба пользователя 2026-11-06) ---------------------
+
+
+def test_cursor_stays_near_when_row_disappears(qtbot):
+    s = FullSession()
+    s.image = ImageState(wb=P.WB_VAR, color_temp=10, gain=0x20)
+    m, _ = build(qtbot, s)
+    m.open()
+    m.nav(0, 1)
+    m.nav(0, 1)
+    assert m._cursor == "ctemp"
+    s.image = dataclasses.replace(s.image, wb=0)  # строка «Цвет. температура» пропала
+    qtbot.wait(300)
+    assert m._cursor == "wb"  # не прыгает на первый пункт
+
+
+def test_refused_by_camera_says_full_auto(qtbot):
+    s = FullSession()
+    s.image = ImageState(wb=0, gain=0x20)
+    s.refused_recently = lambda: True
+    m, _ = build(qtbot, s)
+    m.open()
+    m.nav(0, 1)
+    assert "Full Auto" in m.hint.text() and cm.C.LOST in m.hint.styleSheet()
+    s.refused_recently = lambda: False
+    m._render()
+    assert "Full Auto" not in m.hint.text()
+
+
+def test_title_and_hint_fit(qtbot):
+    m, _ = build(qtbot, FullSession())
+    m.open()
+    assert m.title_label.text() == "Быстрые настройки" and "закрыть" in m.keys_label.text()
+    m.nav(0, 1)  # баланс белого: самое длинное пояснение
+    m.show()
+    qtbot.wait(50)
+    assert m.hint.height() >= m.hint.heightForWidth(m.hint.width())
+
+
+def test_image_refusal_detection():
+    from ptztracker.camera.session import is_image_refusal
+
+    assert is_image_refusal("OAW:1", "ER3:OAW") and is_image_refusal("OSH:3", "er3:OSH")
+    assert is_image_refusal("#AXI95B", "eR3:AXI") and is_image_refusal("#D30", "eR3:")  # ирис
+    assert not is_image_refusal("OAW:1", "OAW:1") and not is_image_refusal("#PTS5050", "ER3:PTS")
+    assert not is_image_refusal("OAW:1", "ER1:OAW")
