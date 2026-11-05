@@ -4,12 +4,37 @@ from PySide6.QtWidgets import QApplication
 
 from ptztracker.ui.theme import C, apply_dark_theme, stylesheet
 
+BRANDBOOK = {
+    "BG": "#17191D", "SURFACE": "#1E2126", "RAISED": "#272B31", "RAISED_HI": "#30353C", "LINE": "#33373E",
+    "TEXT": "#F5F5F2", "TEXT_DIM": "#B4B8BD", "TEXT_FAINT": "#858A91", "GREY": "#777C83", "LIME": "#B7F34A",
+    "LOST": "#F0A020", "FAULT": "#EF4444", "PGM": "#E8202A", "PVW": "#2FB65E",
+}
 
-def test_tokens_match_mockup():
-    assert C.ON == "#3D8BFF"
-    assert C.PGM == "#E8202A"
-    assert C.PVW == "#1FB35A"
-    assert C.FAULT == "#EF4444"
+
+def test_tokens_match_brandbook():
+    for name, value in BRANDBOOK.items():
+        assert getattr(C, name) == value, name
+    assert C.ON == C.LIME and C.ACCENT == C.LIME
+    assert C.SELECT == C.TEXT
+
+
+def test_no_blue_tokens():
+    for k, v in vars(C).items():
+        if k.isupper():
+            r, g, b = (int(v[i:i + 2], 16) for i in (1, 3, 5))
+            assert b <= max(r, g) + 20, k  # синий канал не преобладает
+
+
+def test_checked_controls_use_lime():
+    qss = stylesheet()
+
+    def rule(selector: str) -> str:
+        return qss.split(selector, 1)[1].split("}", 1)[0]
+
+    assert C.LIME in rule("QCheckBox::indicator:checked")
+    assert C.LIME in rule("QSlider::sub-page:horizontal")
+    assert C.TEXT in rule("QPushButton:checked")
+    assert f"selection-background-color: {C.RAISED_HI}" in rule("QComboBox QAbstractItemView")
 
 
 def test_stylesheet_uses_only_tokens():

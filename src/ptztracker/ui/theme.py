@@ -3,32 +3,34 @@ from PySide6.QtWidgets import QApplication
 
 
 class C:
-    """Токены цвета (единственный источник; QSS и виджеты берут отсюда)."""
+    """Токены цвета (единственный источник; QSS и виджеты берут отсюда). Смысл — docs/BRANDBOOK.md §3."""
 
-    BG = "#13161C"  # фон окна
-    SURFACE = "#1B1F27"  # панели, меню, статус
-    RAISED = "#252A34"  # кнопки, поля
-    RAISED_HI = "#2E3440"  # наведение, дорожка ползунка
-    LINE = "#333A47"  # границы
-    TEXT = "#E7EAF0"
-    TEXT_DIM = "#A0A8B6"
-    TEXT_FAINT = "#6C7486"
-    ACCENT = "#4C8DF6"  # выбор, действие
-    SELECT = "#3B82F6"  # рамка выбранной клетки
-    ON = "#3D8BFF"  # слежение ведёт
-    LOST = "#F0A020"  # цель потеряна
-    REMOTE = "#A78BFA"  # пульт
+    BG = "#17191D"  # Graphite: фон окна
+    SURFACE = "#1E2126"  # панели, шапки клеток, меню, статус
+    RAISED = "#272B31"  # кнопки, поля
+    RAISED_HI = "#30353C"  # наведение, дорожка ползунка
+    LINE = "#33373E"  # все линии и рамки
+    TEXT = "#F5F5F2"  # Soft White: текст, знак, выбранное
+    TEXT_DIM = "#B4B8BD"
+    TEXT_FAINT = "#858A91"
+    GREY = "#777C83"  # Neutral Grey: контуры, отметки (для мелкого текста тёмный)
+    LIME = "#B7F34A"  # Tracking Lime: только активное
+    ACCENT = LIME  # действие, включённое
+    SELECT = TEXT  # рамка выбранной клетки
+    ON = LIME  # слежение ведёт
+    LOST = "#F0A020"  # цель потеряна, мало заряда
+    REMOTE = TEXT  # пульт
     FAULT = "#EF4444"  # раскачка, стоп
-    PGM = "#E8202A"  # Tally: эфир
-    PVW = "#1FB35A"  # Tally: превью
-    OK = "#4CC38A"  # значки верхней панели: «всё в порядке» (не путать с зелёным Tally)
+    PGM = "#E8202A"  # Tally: эфир (сплошной)
+    PVW = "#2FB65E"  # Tally: превью (только контуром — не путать с лаймом)
+    OK = TEXT  # значки верхней панели: «всё в порядке»
 
 
 FONT_FAMILY = "Segoe UI"
-FS_CAPTION, FS_TEXT, FS_BUTTON, FS_STATE = 12, 14, 15, 24  # px
-H_BUTTON, H_CHOICE, H_STOP, H_STATE = 34, 40, 44, 118  # px
-SP = (4, 8, 12, 16)
-R_BUTTON, R_PANEL = 6, 10
+FS_CAPTION, FS_TEXT, FS_BUTTON, FS_STATE = 12, 13, 15, 24  # px
+H_BUTTON, H_CHOICE, H_STOP, H_STATE = 34, 40, 42, 118  # px
+SP = (4, 8, 12, 16, 24)
+R_BUTTON, R_PANEL, R_TAG = 8, 10, 5
 
 
 def qcolor(hex: str, alpha: int = 255) -> QColor:
@@ -55,13 +57,13 @@ QPushButton {{ background: {C.RAISED}; color: {C.TEXT}; border: 1px solid {C.LIN
     border-radius: {R_BUTTON}px; min-height: {H_BUTTON}px; padding: 0 {SP[2]}px;
     font-size: {FS_BUTTON}px; }}
 QPushButton:hover {{ background: {C.RAISED_HI}; }}
-QPushButton:checked {{ background: {_rgba(C.ACCENT, 0.24)}; border-color: {C.ACCENT}; }}
+QPushButton:checked {{ background: {_rgba(C.TEXT, 0.06)}; border-color: {C.TEXT}; }}
 QPushButton:disabled {{ color: {C.TEXT_FAINT}; background: {C.SURFACE}; }}
 QPushButton[variant="ghost"] {{ background: transparent; border-color: transparent; }}
 QPushButton[variant="ghost"]:hover {{ background: {C.RAISED_HI}; }}
 QPushButton[variant="choice"] {{ min-height: {H_CHOICE}px; }}
-QPushButton[variant="choice"]:checked {{ background: {_rgba(C.ACCENT, 0.24)};
-    border-color: {C.ACCENT}; }}
+QPushButton[variant="choice"]:checked {{ background: {_rgba(C.TEXT, 0.06)};
+    border-color: {C.TEXT}; }}
 QPushButton[variant="stop"] {{ min-height: {H_STOP}px; color: {C.FAULT};
     border: 1px solid {C.FAULT}; font-weight: 700; }}
 QPushButton[variant="stop"]:hover {{ background: {_rgba(C.FAULT, 0.18)}; }}
@@ -81,27 +83,27 @@ QLabel[kind="pvw"] {{ color: {C.PVW}; border-color: {_rgba(C.PVW, 0.5)}; }}
 
 QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {{ background: {C.RAISED};
     border: 1px solid {C.LINE}; border-radius: {R_BUTTON}px; min-height: {H_BUTTON - 2}px;
-    padding: 0 {SP[1]}px; selection-background-color: {C.ACCENT}; }}
+    padding: 0 {SP[1]}px; selection-background-color: {C.RAISED_HI}; }}
 QComboBox:hover, QLineEdit:hover, QSpinBox:hover {{ background: {C.RAISED_HI}; }}
-QComboBox:focus, QLineEdit:focus, QSpinBox:focus {{ border-color: {C.ACCENT}; }}
+QComboBox:focus, QLineEdit:focus, QSpinBox:focus {{ border-color: {C.TEXT_DIM}; }}
 QComboBox:disabled, QLineEdit:disabled, QSpinBox:disabled {{ color: {C.TEXT_FAINT}; }}
 QComboBox QAbstractItemView {{ background: {C.RAISED}; border: 1px solid {C.LINE};
-    selection-background-color: {C.ACCENT}; outline: 0; }}
+    selection-background-color: {C.RAISED_HI}; outline: 0; }}
 
 QCheckBox {{ spacing: {SP[1]}px; }}
 QCheckBox:disabled {{ color: {C.TEXT_FAINT}; }}
-QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {C.LINE};
-    border-radius: 4px; background: {C.RAISED}; }}
-QCheckBox::indicator:checked {{ background: {C.ACCENT}; border-color: {C.ACCENT}; }}
+QCheckBox::indicator {{ width: 15px; height: 15px; border: 1px solid {C.GREY};
+    border-radius: 4px; background: transparent; }}
+QCheckBox::indicator:checked {{ background: {C.LIME}; border-color: {C.LIME}; }}
 
-QSlider::groove:horizontal {{ height: 6px; background: {C.RAISED_HI}; border-radius: 3px; }}
-QSlider::sub-page:horizontal {{ background: {C.ACCENT}; border-radius: 3px; }}
-QSlider::handle:horizontal {{ width: 18px; height: 18px; margin: -6px 0;
-    border-radius: 9px; background: {C.TEXT}; }}
+QSlider::groove:horizontal {{ height: 3px; background: {C.RAISED_HI}; border-radius: 1px; }}
+QSlider::sub-page:horizontal {{ background: {C.LIME}; border-radius: 1px; }}
+QSlider::handle:horizontal {{ width: 16px; height: 16px; margin: -7px 0;
+    border-radius: 8px; background: {C.TEXT}; }}
 QSlider::handle:horizontal:disabled {{ background: {C.TEXT_FAINT}; }}
-QSlider::groove:vertical {{ width: 6px; background: {C.RAISED_HI}; border-radius: 3px; }}
-QSlider::handle:vertical {{ width: 18px; height: 18px; margin: 0 -6px;
-    border-radius: 9px; background: {C.TEXT}; }}
+QSlider::groove:vertical {{ width: 4px; background: {C.RAISED_HI}; border-radius: 2px; }}
+QSlider::handle:vertical {{ width: 16px; height: 16px; margin: 0 -6px;
+    border-radius: 8px; background: {C.TEXT}; }}
 QSlider::handle:vertical:disabled {{ background: {C.TEXT_FAINT}; }}
 
 QScrollBar:vertical {{ width: 8px; background: transparent; margin: 0; }}
@@ -113,8 +115,8 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: tran
 QMenuBar {{ background: {C.SURFACE}; }}
 QMenuBar::item {{ background: transparent; padding: 4px {SP[2]}px; }}
 QMenuBar::item:selected {{ background: {C.RAISED_HI}; }}
-QMenu {{ background: {C.SURFACE}; border: 1px solid {C.LINE}; padding: 4px; }}
-QMenu::item {{ padding: 6px 20px; border-radius: 4px; }}
+QMenu {{ background: {C.SURFACE}; border: 1px solid {C.LINE}; border-radius: {R_PANEL}px; padding: 6px; }}
+QMenu::item {{ padding: 7px 20px 7px 10px; border-radius: 7px; }}
 QMenu::item:selected {{ background: {C.RAISED_HI}; }}
 QMenu::item:disabled {{ color: {C.TEXT_FAINT}; }}
 QMenu::separator {{ height: 1px; background: {C.LINE}; margin: 4px 8px; }}
@@ -145,8 +147,8 @@ def apply_dark_theme(app: QApplication) -> None:
     p.setColor(QPalette.ButtonText, q(C.TEXT))
     p.setColor(QPalette.ToolTipBase, q(C.RAISED))
     p.setColor(QPalette.ToolTipText, q(C.TEXT))
-    p.setColor(QPalette.Highlight, q(C.ACCENT))
-    p.setColor(QPalette.HighlightedText, q("#FFFFFF"))
+    p.setColor(QPalette.Highlight, q(C.RAISED_HI))
+    p.setColor(QPalette.HighlightedText, q(C.TEXT))
     for role in (QPalette.Text, QPalette.ButtonText, QPalette.WindowText):
         p.setColor(QPalette.Disabled, role, q(C.TEXT_FAINT))
     app.setPalette(p)
@@ -169,4 +171,4 @@ def install_russian(app: QApplication) -> None:
 
 
 # цвет и номер клетки на виде сверху и в графиках служебных клеток
-SLOT_COLORS = (C.ACCENT, C.PVW, C.LOST, C.REMOTE)
+SLOT_COLORS = (C.TEXT, C.LIME, C.LOST, C.TEXT_DIM)
