@@ -60,7 +60,7 @@ def test_side_panel_fits_without_scroll(qtbot, tmp_path):
             assert slack >= 40, _heights(w)
         # ни одна строка не шире панели (иначе правый край обрезается — на Windows так было с заголовками)
         assert w.side_scroll.widget().minimumSizeHint().width() <= w.side_scroll.viewport().width(), _heights(w)
-        for wd in (w.controls.gain_slider, w.controls.wb_combo, w.controls.preset_buttons[-1],
+        for wd in (w.controls.gain_slider, w.controls.wb_combo, w.controls.far_btn,
                    w.controls.near_btn, w.controls.iris_slider):
             # целиком внутри видимой области панели; по ширине допускаем 1–2 px округления.
             # visibleRegion() тут не годится: на сервере сборки Windows (экран 800×800, окно больше экрана)
@@ -79,8 +79,7 @@ def test_side_panel_fits_without_scroll(qtbot, tmp_path):
 def test_compositions_in_one_row(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     ys = {b.geometry().y() for b in w.follow_panel.comp_buttons.values()}
-    assert len(ys) == 1
-    assert "Пояс · слева" in w.follow_panel.comp_buttons["waist_left"].toolTip()
+    assert len(ys) == 1 and len(w.follow_panel.comp_buttons) == 3
     w.close()
 
 

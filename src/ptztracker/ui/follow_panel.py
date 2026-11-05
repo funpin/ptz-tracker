@@ -3,10 +3,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
-    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -15,10 +13,12 @@ from PySide6.QtWidgets import (
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.ui.state import TrackingView, tracking_view
 from ptztracker.ui.theme import FS_CAPTION, SP, C
-from ptztracker.ui.widgets import KeyButton, SectionHeader, TrackButton
+from ptztracker.ui.widgets import SectionHeader, SilhouetteButton, TrackButton
 
-# короткие подписи кадра для одной строки; полное имя — в подсказке
-SHORT_TITLES = {"waist_center": "Пояс", "waist_left": "◧", "waist_right": "◨", "full": "Рост", "wide": "Общ."}
+# крупность кадра: три силуэта и ползунок на трёх отметках (спека 2026-11-05, «Кадр»). Пояс слева/справа
+# убран из кнопок — вернётся перетаскиванием зоны в 1.2; агент и старые настройки ещё могут его задать
+SIZES = ("waist_center", "full", "wide")
+SIZE_TITLES = {"waist_center": "Пояс", "full": "Рост", "wide": "Общий"}
 
 
 class FollowPanel(QWidget):
@@ -45,21 +45,24 @@ class FollowPanel(QWidget):
 
         self.comp_group = QButtonGroup(self)
         self.comp_group.setExclusive(True)
-        self.comp_buttons: dict[str, KeyButton] = {}
-        grid = QGridLayout()
-        grid.setSpacing(SP[0])
-        for i, (key, comp) in enumerate(COMPOSITIONS.items()):
-            # цифра клавиши — в самой подписи: на узкой кнопке нарисованная клавиша наползала на текст
-            b = KeyButton(f"{i + 1} {SHORT_TITLES.get(key, comp.title)}", variant="choice")
-            b.setToolTip(f"{comp.title} — клавиша {i + 1}")
-            b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)  # пять в ряд — поровну, без мин. ширины
-            b.setStyleSheet("padding: 0 2px;")
-            b.setCheckable(True)
-            b.setFocusPolicy(Qt.NoFocus)
-            b.clicked.connect(lambda _=False, k=key: self.compositionChanged.emit(k))
+        self.comp_buttons: dict[str, SilhouetteButton] = {}
+        grid = QHBoxLayout()
+        grid.setSpacing(0)
+        for i, key in enumerate(SIZES):
+            b = SilhouetteButton(key, f"{SIZE_TITLES[key]} · {i + 1}")
+            b.setToolTip(f"{COMPOSITIONS[key].title} — клавиша {i + 1}")
+            b.clicked.connect(lambda _=False, k=key: self._pick(k))
             self.comp_group.addButton(b)
             self.comp_buttons[key] = b
-            grid.addWidget(b, 0, i)
+            if i:
+                grid.addStretch(1)
+            grid.addWidget(b)
+        self.size_slider = QSlider(Qt.Horizontal)
+        self.size_slider.setRange(0, len(SIZES) - 1)
+        self.size_slider.setPageStep(1)
+        self.size_slider.setFocusPolicy(Qt.NoFocus)
+        self.size_slider.setToolTip("Крупность: пояс → рост → общий (плавные промежуточные — в версии 1.2)")
+        self.size_slider.valueChanged.connect(lambda v: self._pick(SIZES[v]))
 
         self.effort_slider = QSlider(Qt.Horizontal)
         self.effort_slider.setRange(0, 100)
@@ -83,6 +86,7 @@ class FollowPanel(QWidget):
         lay.setSpacing(SP[1])
         lay.addWidget(SectionHeader("Кадр"))
         lay.addLayout(grid)
+        lay.addWidget(self.size_slider)
         lay.addLayout(erow)
         lay.addWidget(self.calib_label)
         self.set_state(False, None)
@@ -103,9 +107,20 @@ class FollowPanel(QWidget):
         self.status_label.setVisible(bool(text))
         self.status_label.adjustSize()
 
+    def _pick(self, key: str) -> None:
+        self._show_size(key)
+        self.compositionChanged.emit(key)
+
+    def _show_size(self, key: str) -> None:
+        size = key if key in SIZES else "waist_center"  # пояс слева/справа — пока тоже «Пояс»
+        self.comp_buttons[size].setChecked(True)
+        self.size_slider.blockSignals(True)
+        self.size_slider.setValue(SIZES.index(size))
+        self.size_slider.blockSignals(False)
+
     def set_composition(self, key: str) -> None:
-        if key in self.comp_buttons:
-            self.comp_buttons[key].setChecked(True)
+        """Показать крупность (без команды): из настроек камеры, агента или геймпада."""
+        self._show_size(key)
 
     def set_effort(self, x: float) -> None:
         self.effort_slider.blockSignals(True)
@@ -124,7 +139,7 @@ class FollowPanel(QWidget):
 
     def _show_calib_label(self) -> None:
         if not self._calibrated:
-            text = "Камера не откалибрована: меню ☰ → Калибровка (2 мин)"
+            text = "Камера не откалибрована: ⋯ → Калибровка (2 мин)"
             color = C.LOST  # без калибровки слежение хуже: предупреждение
         else:
             text = self._note or ""

@@ -700,3 +700,62 @@ class VideoFrame(QFrame):
         h = self.BORDER / 2
         p.drawRect(QRectF(self.rect()).adjusted(h, h, -h, -h))
         p.end()
+
+
+class SilhouetteButton(QPushButton):
+    """Крупность кадра рисунком: пояс, в рост, общий план (спека «Кадр»). Активная — лаймовая рамка."""
+
+    W, H = 62, 46
+
+    def __init__(self, kind: str, text: str, parent: QWidget | None = None):
+        super().__init__(text, parent)
+        self.kind = kind
+        self.setCheckable(True)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setCursor(Qt.PointingHandCursor)
+        h = self.H + 24
+        self.setStyleSheet(f"QPushButton {{ background: transparent; border: none; padding: 0;"
+                           f" min-height: {h}px; max-height: {h}px; }}")
+        self.setFixedSize(self.W + 24, h)
+
+    def paintEvent(self, _e):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        on = self.isChecked()
+        box = QRectF((self.width() - self.W) / 2 + 0.75, 0.75, self.W - 1.5, self.H - 1.5)
+        if self.underMouse() and not on:
+            p.setBrush(qcolor(C.RAISED))
+        else:
+            p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(qcolor(C.LIME if on else C.GREY), 1.5))
+        p.drawRoundedRect(box, 6, 6)
+        fig = qcolor(C.TEXT if on else C.TEXT_DIM)
+        p.setPen(Qt.NoPen)
+        p.setBrush(fig)
+        x, y, w, h = box.x(), box.y(), box.width(), box.height()
+        cx = x + w / 2
+        p.save()
+        p.setClipRect(box.adjusted(1, 1, -1, -1))
+        if self.kind == "waist_center":
+            p.drawEllipse(QPointF(cx, y + h * 0.37), h * 0.16, h * 0.16)
+            body = QPainterPath(QPointF(cx - w * 0.28, y + h))
+            body.cubicTo(cx - w * 0.28, y + h * 0.66, cx - w * 0.14, y + h * 0.6, cx, y + h * 0.6)
+            body.cubicTo(cx + w * 0.14, y + h * 0.6, cx + w * 0.28, y + h * 0.66, cx + w * 0.28, y + h)
+            p.drawPath(body)
+        elif self.kind == "full":
+            p.drawEllipse(QPointF(cx, y + h * 0.2), h * 0.09, h * 0.09)
+            p.drawRoundedRect(QRectF(cx - w * 0.1, y + h * 0.32, w * 0.2, h * 0.3), 2, 2)
+            p.drawRect(QRectF(cx - w * 0.06, y + h * 0.6, w * 0.12, h * 0.28))
+        else:
+            p.setPen(QPen(qcolor(C.GREY), 1))
+            p.drawLine(QPointF(x + 4, y + h * 0.8), QPointF(x + w - 4, y + h * 0.8))
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(QPointF(cx, y + h * 0.45), h * 0.05, h * 0.05)
+            p.drawRect(QRectF(cx - w * 0.035, y + h * 0.52, w * 0.07, h * 0.28))
+        p.restore()
+        f = QFont(self.font())
+        f.setPixelSize(FS_CAPTION - 1)
+        p.setFont(f)
+        p.setPen(qcolor(C.TEXT if on else C.TEXT_DIM))
+        p.drawText(QRectF(0, self.H + 4, self.width(), 18), Qt.AlignHCenter | Qt.AlignTop, self.text())
+        p.end()

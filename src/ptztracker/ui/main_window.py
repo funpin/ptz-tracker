@@ -69,7 +69,7 @@ from ptztracker.ui.atem_dialog import AtemDialog
 from ptztracker.ui.camera_cell import CameraCell
 from ptztracker.ui.camera_dialog import CameraDialog, merge_edit
 from ptztracker.ui.camera_menu import CameraMenu
-from ptztracker.ui.follow_panel import FollowPanel
+from ptztracker.ui.follow_panel import SIZES, FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge
 from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
@@ -107,7 +107,7 @@ ZOOM_POLL_S = 1.0  # «медленнее на крупном плане»: #GZ 
 KEY_ZOOM_SPEED = 0.5
 SIDE_WIDTH = 372
 _HOTKEYS = [
-    ("Пробел", "слежение"), ("1–5", "кадр"), ("← → ↑ ↓", "поворот"), ("+ −", "зум"), ("Esc", "стоп"),
+    ("Пробел", "слежение"), ("1–3", "кадр: пояс, рост, общий"), ("← → ↑ ↓", "поворот"), ("+ −", "зум"), ("Esc", "стоп"),
     ("F9", "сохранить момент"), ("M", "меню камеры"),
 ]  # F1 («справка») сюда не добавляем: окно F1 показывает её само
 # в строке состояния — только главное; остальное в окне F1
@@ -361,7 +361,7 @@ class MainWindow(QMainWindow):
         for b in (self.presets_btn, self.help_btn):
             b.setFocusPolicy(Qt.NoFocus)
             b.setStyleSheet(f"QPushButton {{ min-height: 24px; max-height: 24px; padding: 0 {SP[1]}px;"
-                            f" font-size: {FS_CAPTION}px; border-radius: 6px; }}")
+                            f" font-size: {FS_CAPTION}px; border-radius: 6px; text-align: left; }}")
         self.help_btn.clicked.connect(self.show_hotkeys)
         self.version_label = QLabel(f"v{__version__}")
         self.version_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
@@ -1648,7 +1648,7 @@ class MainWindow(QMainWindow):
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self.toggle_follow()
                 return True
-            comp_keys = {Qt.Key_1 + i: k for i, k in enumerate(COMPOSITIONS)}
+            comp_keys = {Qt.Key_1 + i: k for i, k in enumerate(SIZES)}  # 1 пояс, 2 рост, 3 общий
             if key in comp_keys:
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self._on_composition(comp_keys[key])

@@ -57,20 +57,22 @@ def test_composition_and_effort_saved(qtbot, tmp_path):
     store = ConfigStore(tmp_path / "c.json")
     w = MainWindow(store)
     qtbot.addWidget(w)
-    w.follow_panel.comp_buttons["waist_left"].click()
+    w.follow_panel.comp_buttons["wide"].click()
     w.follow_panel.effort_slider.setValue(20)
     w.follow_panel.effort_slider.sliderReleased.emit()
-    assert w.session.follower.controller.composition.key == "waist_left"
+    assert w.session.follower.controller.composition.key == "wide"
     assert abs(w.session.follower.controller.effort.gain - 0.9 - (1.3 - 0.9) * 0.4) < 1e-6
     w.close()
     cam = store.load().cameras[0]
-    assert cam.composition == "waist_left" and abs(cam.effort - 0.2) < 1e-9
+    assert cam.composition == "wide" and abs(cam.effort - 0.2) < 1e-9
 
 
 def test_number_keys_select_composition(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
-    qtbot.keyClick(w, Qt.Key_4)
+    qtbot.keyClick(w, Qt.Key_2)  # 1 пояс, 2 рост, 3 общий
     assert w.follow_panel.comp_buttons["full"].isChecked()
+    assert w.session.follower.controller.composition.key == "full"
+    qtbot.keyClick(w, Qt.Key_5)  # 4 и 5 больше ничего не делают
     assert w.session.follower.controller.composition.key == "full"
     w.close()
 

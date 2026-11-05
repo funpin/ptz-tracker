@@ -127,13 +127,13 @@ def recalibration_hint(calibration: dict | None, model: str | None, firmware: st
         return None  # без калибровки есть своё сообщение
     done_model, done_fw = calibration.get("model"), calibration.get("firmware")
     if not done_model:
-        return "Калибровка сделана в прежней версии программы — откалибруйте камеру заново (меню ☰ → Калибровка)"
+        return "Калибровка сделана в прежней версии программы — откалибруйте камеру заново (⋯ в шапке камеры → Калибровка)"
     if model and not _same(done_model, model):
         return (f"Калибровка сделана на камере {done_model}, а подключена {model} — "
-                "откалибруйте заново (меню ☰ → Калибровка)")
+                "откалибруйте заново (⋯ в шапке камеры → Калибровка)")
     if firmware and done_fw and not _same(done_fw, firmware):
         return (f"Прошивка камеры другая: при калибровке {done_fw}, сейчас {firmware} — "
-                "откалибруйте заново (меню ☰ → Калибровка)")
+                "откалибруйте заново (⋯ в шапке камеры → Калибровка)")
     return None
 
 

@@ -27,6 +27,8 @@ from ptztracker.ui.widgets import KeyButton, SectionHeader, keycap_width, paint_
 
 PRESET_SIZE = 32
 ZOOM_ROCKER_H = 112  # вместе с клавишами и подписями — по высоте стика
+LABEL_W = 52  # колонка подписей «Изображения» (спека «Всё влезает и стоит ровно»)
+H_SMALL = 28  # кнопки фокуса
 TOUCH_HOLD_S = 1.5  # столько опрос камеры не перебивает ползунок, который оператор только что тронул
 
 
@@ -147,15 +149,21 @@ class ManualControls(QWidget):
         self.far_btn.pressed.connect(lambda: self._focus(0.5))
         for b in (self.near_btn, self.far_btn):
             b.released.connect(lambda: self._focus(0.0))
-        fl = QHBoxLayout()
-        fl.setSpacing(SP[0])
         self.af_check.setText("AF")
         self.af_check.setToolTip("Автофокус")
         self.push_af.setText("Разовый")
         self.push_af.setToolTip("Разовый автофокус")
-        for wd in (self.af_check, self.push_af, self.near_btn, self.far_btn):
-            wd.setSizePolicy(QSizePolicy.Ignored, wd.sizePolicy().verticalPolicy())  # ряд — по ширине панели
-            fl.addWidget(wd)
+        fl = self._row("Фокус", self.af_check)
+        fl.addStretch(1)
+        # кнопки фокуса — своей строкой под AF, поровну по ширине: в одну с AF не помещались («Дальше»)
+        fbl = QHBoxLayout()
+        fbl.setSpacing(SP[0] + 2)
+        fbl.addSpacing(LABEL_W + SP[1])
+        for wd in (self.push_af, self.near_btn, self.far_btn):
+            wd.setSizePolicy(QSizePolicy.Ignored, wd.sizePolicy().verticalPolicy())
+            wd.setStyleSheet(f"QPushButton {{ min-height: {H_SMALL}px; max-height: {H_SMALL}px; padding: 0;"
+                             f" font-size: {FS_CAPTION + 1}px; }}")
+            fbl.addWidget(wd, 1)
 
         self.iris_auto = QCheckBox("Авто")
         self.iris_auto.setChecked(True)
@@ -218,13 +226,18 @@ class ManualControls(QWidget):
         lay.addLayout(sens_row)
         lay.addWidget(self.slow_tele_check)
         lay.addWidget(self.stop_btn)
+        lay.addSpacing(SP[0])
+        lay.addWidget(SectionHeader("Изображение", "не выключает слежение"))
         lay.addLayout(il)
         lay.addLayout(gl)
-        lay.addWidget(SectionHeader("Пресеты", "Shift+клик — записать"))
-        lay.addLayout(pl)
-        lay.addWidget(SectionHeader("Фокус и баланс белого"))
         lay.addLayout(fl)
+        lay.addLayout(fbl)
         lay.addLayout(wl)
+        # пресеты — в выдвижной панели снизу окна (спека «Выдвижная панель „Пресеты“»); кнопки остаются
+        # объектами для клавиш и API, но в правой колонке их нет
+        for b in self.preset_buttons:
+            b.setParent(self)
+            b.hide()
         self.bind(None)
         self._show_values()
 
@@ -233,7 +246,8 @@ class ManualControls(QWidget):
         row = QHBoxLayout()
         row.setSpacing(SP[1])
         lab = QLabel(title)
-        lab.setMinimumWidth(36)
+        lab.setFixedWidth(LABEL_W)  # подписи одной колонкой: Ирис, Gain, Фокус, WB
+        lab.setStyleSheet(f"color: {C.TEXT_DIM};")
         row.addWidget(lab)
         for wd in widgets:
             row.addWidget(wd, 1 if isinstance(wd, QSlider) else 0)
