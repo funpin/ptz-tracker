@@ -659,6 +659,10 @@ class MainWindow(QMainWindow):
             return self.pad_router.slot_of(self._menu_pad)
         return self.grid.selected
 
+    def menu_session(self) -> CameraSession | None:
+        """Сессия, на которую действует меню Options (читает API: агент не трогает эту камеру, пока меню открыто)."""
+        return self._menu_session()
+
     def _menu_session(self) -> CameraSession | None:
         slot = self._menu_slot()
         c = self.grid.cells[slot] if slot is not None else None

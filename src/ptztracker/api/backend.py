@@ -181,7 +181,8 @@ class WindowBackend:
         if QApplication.activeModalWidget() is not None:
             raise ApiError(409, "В программе открыто окно (диалог) — дождитесь, пока оператор его закроет.")
         menu = getattr(self.w, "camera_menu", None)
-        if menu is not None and menu.is_open and cell is self.w.selected_cell:
+        # меню Options действует на свою камеру: выбранную или камеру геймпада, который его открыл
+        if menu is not None and menu.is_open and self.w.menu_session() is cell.session:
             raise ApiError(409, "В программе открыто меню камеры — дождитесь, пока оператор его закроет.")
         return fn(cell, *args)
 
@@ -221,6 +222,9 @@ class WindowBackend:
     def _on_off_air_cleared(self, gate) -> None:
         """Снят «Камера НЕ в эфире» у камеры: слежение, включённое агентом на ней, выключается сразу."""
         f = self._agent_followers.pop(gate, None)
+        live = {c.gate for c in self.w.grid.cells if c is not None}
+        for g in [g for g in self._agent_followers if g not in live]:
+            del self._agent_followers[g]  # клетку закрыли: её запись больше не нужна
         cell = next((c for c in self.w.grid.cells if c is not None and c.gate is gate), None)
         if f is not None and cell is not None and cell.session.follower is f and f.enabled:
             f.disable("камера в эфире — агент не ведёт")

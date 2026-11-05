@@ -487,3 +487,23 @@ def test_camera_param_odd_digits_404_and_moment_per_camera(qtbot, tmp_path):
     code, data = call_bg(qtbot, port, "/moment", token=tok, body={"camera": "2"})
     assert code == 200 and data["path"].endswith(".zip")
     w.close()
+
+
+def test_menu_opened_from_pad_blocks_agent_on_pad_camera_only(qtbot, tmp_path):
+    """Меню Options открыто геймпадом на камере 2, выбрана камера 1: агент не трогает камеру 2, а камеру 1 может."""
+    w, port, tok = make_window(qtbot, tmp_path)
+    analyze_both(w)
+    allow_cell(w, 0)
+    allow_cell(w, 1)
+    pad = w.pad_connected()
+    w.pad_create(pad)
+    assert w.pad_router.slot_of(pad) == 1 and w.grid.selected == 0
+    w._menu_pad = pad
+    w.camera_menu.open()
+    assert w.camera_menu.is_open
+    code, data = call_bg(qtbot, port, "/composition?camera=2", token=tok, body={"key": "full"})
+    assert code == 409 and "меню" in data["error"]
+    code, _ = call_bg(qtbot, port, "/composition?camera=1", token=tok, body={"key": "full"})
+    assert code == 200
+    w.camera_menu.close_menu()
+    w.close()

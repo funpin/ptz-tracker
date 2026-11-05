@@ -294,3 +294,14 @@ def test_intents_from_unnumbered_bridge_never_reach_pad_1(qtbot, tmp_path):
     assert sorted(w.pads) == [1]  # геймпад 1 не отключён
     assert not [c for c in pts(w, 0) if c != "#PTS5050"]  # его камера не поехала
     w.close()
+
+
+def test_unplugging_pad_closes_its_menu(qtbot, tmp_path):
+    w, _ = make(qtbot, tmp_path)
+    pad = w.pad_connected()
+    w.pad_create(pad)
+    w._menu_pad = pad
+    w.camera_menu.open()
+    w.pad_disconnected(pad)
+    assert not w.camera_menu.is_open  # меню геймпада не остаётся висеть над чужой камерой
+    w.close()
