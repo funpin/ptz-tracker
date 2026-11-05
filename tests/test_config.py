@@ -377,3 +377,38 @@ def test_password_not_cached_when_keychain_refuses(monkeypatch):
     assert config.get_password("cam-y") is None
     assert config.get_password("cam-y") is None
     assert calls == ["cam-y", "cam-y"]  # оператор нажал «Отказать» — в следующий раз спросим снова
+
+
+def test_control_sensitivity_defaults_and_roundtrip(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"cameras": []}), encoding="utf-8")  # config.json версии 1.0.1
+    cfg = ConfigStore(p).load()
+    assert cfg.stick_sensitivity == 50 and cfg.slow_on_tele is True
+    assert cfg.pad_sensitivity == {} and cfg.pad_names == {}
+    cfg.stick_sensitivity = 20
+    cfg.slow_on_tele = False
+    cfg.pad_sensitivity = {"SN1": 80}
+    cfg.pad_names = {"SN1": "DualSense Wireless Controller"}
+    ConfigStore(p).save(cfg)
+    back = ConfigStore(p).load()
+    assert (back.stick_sensitivity, back.slow_on_tele) == (20, False)
+    assert back.pad_sensitivity == {"SN1": 80}
+    assert back.pad_names == {"SN1": "DualSense Wireless Controller"}
+
+
+def test_control_sensitivity_bad_values_fixed(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({
+        "cameras": [], "stick_sensitivity": 250, "slow_on_tele": "да",
+        "pad_sensitivity": {"a": -5, "b": "x", "c": 70, "": 10, "d": True},
+        "pad_names": {"a": 5, "c": "Pad"},
+    }), encoding="utf-8")
+    cfg = ConfigStore(p).load()
+    assert cfg.stick_sensitivity == 100
+    assert cfg.slow_on_tele is True
+    assert cfg.pad_sensitivity == {"a": 0, "c": 70}
+    assert cfg.pad_names == {"c": "Pad"}
+    p.write_text(json.dumps({"cameras": [], "stick_sensitivity": None, "pad_sensitivity": [1, 2],
+                             "pad_names": "x"}), encoding="utf-8")
+    cfg = ConfigStore(p).load()
+    assert cfg.stick_sensitivity == 50 and cfg.pad_sensitivity == {} and cfg.pad_names == {}

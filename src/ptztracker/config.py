@@ -20,6 +20,7 @@ from typing import Literal
 
 import platformdirs
 
+from ptztracker.control.manual_curve import clamp_sens
 from ptztracker.video.rtsp import with_mjpeg_framerate
 
 log = logging.getLogger(__name__)
@@ -78,6 +79,12 @@ class AppConfig:
     check_updates: bool = True  # раз в сутки спрашивать GitHub, не вышла ли новая версия
     last_update_check: float = 0.0  # когда проверяли в последний раз (секунды с 1970)
     latest_version: str = ""  # новая версия, найденная последней проверкой; пусто — новее нет
+    # ручное управление (control.manual_curve): 0 — «Плавно», 100 — «Резко»; мышь и стрелки — одна настройка,
+    # геймпады — своя у каждого по опознавателю (серийный номер или «GUID:имя»), имя — для окна «Геймпады…»
+    stick_sensitivity: int = 50
+    slow_on_tele: bool = True  # на теле тот же наклон поворачивает медленнее
+    pad_sensitivity: dict = field(default_factory=dict)
+    pad_names: dict = field(default_factory=dict)
 
 
 RECORD_DIR_NAME = "Записи PTZ Tracker"
@@ -225,6 +232,24 @@ def _fix_update_settings(cfg: AppConfig) -> None:
         cfg.latest_version = d.latest_version
 
 
+def _fix_control_settings(cfg: AppConfig) -> None:
+    d = AppConfig()
+
+    def sens(v) -> int | None:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            return None
+        return clamp_sens(v)
+
+    s = sens(cfg.stick_sensitivity)
+    cfg.stick_sensitivity = d.stick_sensitivity if s is None else s
+    if not isinstance(cfg.slow_on_tele, bool):
+        cfg.slow_on_tele = d.slow_on_tele
+    ps = cfg.pad_sensitivity if isinstance(cfg.pad_sensitivity, dict) else {}
+    cfg.pad_sensitivity = {k: sens(v) for k, v in ps.items() if isinstance(k, str) and k and sens(v) is not None}
+    names = cfg.pad_names if isinstance(cfg.pad_names, dict) else {}
+    cfg.pad_names = {k: v for k, v in names.items() if isinstance(k, str) and k and isinstance(v, str)}
+
+
 def ensure_api_token(cfg: AppConfig) -> bool:
     """Создать токен API, если его ещё нет. True — токен новый (конфиг нужно сохранить)."""
     if cfg.api_token:
@@ -264,6 +289,7 @@ class ConfigStore:
         _fix_api_settings(cfg)
         _fix_grid(cfg)
         _fix_update_settings(cfg)
+        _fix_control_settings(cfg)
         return cfg
 
     def save(self, cfg: AppConfig) -> None:
