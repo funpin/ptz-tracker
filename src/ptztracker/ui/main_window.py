@@ -74,7 +74,7 @@ from ptztracker.ui.follow_panel import SIZES, FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge
 from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
-from ptztracker.ui.manual_controls import ManualControls
+from ptztracker.ui.manual_controls import STICK_MIN, ManualControls
 from ptztracker.ui.presets_drawer import DrawerRow, PresetsDrawer
 from ptztracker.ui.service_cell import KINDS, TITLES, ServiceCell, ServiceRow, WelcomeView
 from ptztracker.ui.state import (
@@ -147,6 +147,9 @@ _PAD_SIZES = ("waist", "full", "wide")  # L1/R1: только крупность
 
 def _clamp1(v: float) -> float:
     return max(-1.0, min(1.0, v))
+
+
+SIDE_FIT_RESERVE = 80  # окно 1640×850 на Mac: ~70 px свободно; стик растёт только сверх этого (запас под шрифт Windows)
 
 
 def _vline() -> QFrame:
@@ -326,8 +329,7 @@ class MainWindow(QMainWindow):
         sl.addLayout(head)
         self.follow_panel.title_header.hide()  # силуэты говорят сами за себя; место — под имя камеры
         sl.addWidget(self.follow_panel)
-        sl.addWidget(self.controls)
-        sl.addStretch(1)
+        sl.addWidget(self.controls, 1)  # лишняя высота — внутри, поровну перед «Камерой» и «Изображением»
         # агент — в немодальном окне из меню ☰ (модальное заблокировало бы API: 409)
         self.agent_panel = AgentPanel()  # разрешения агенту: по умолчанию выключены, не сохраняются
         self.agent_window = QDialog(self)
@@ -1770,8 +1772,16 @@ class MainWindow(QMainWindow):
         self.agent_window.show()
         self.agent_window.raise_()
 
+    def _fit_side(self) -> None:
+        """Свободную высоту правой колонки (высокий экран) — стику: он растёт, пока колонка без прокрутки."""
+        joy = self.controls.joystick.width()
+        free = self.side_scroll.viewport().height() - self.side_scroll.widget().minimumSizeHint().height()
+        spare = free + (joy - STICK_MIN) - SIDE_FIT_RESERVE  # свободно при самом маленьком стике, сверх запаса
+        self.controls.set_stick_size(STICK_MIN + max(0, int(spare * 0.6)))
+
     def resizeEvent(self, e):  # noqa: N802
         super().resizeEvent(e)
+        QTimer.singleShot(0, self._fit_side)
         self._fit_top_bar()
 
     def _remember_rtsp_url(self, s: CameraSession) -> None:

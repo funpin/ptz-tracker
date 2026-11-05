@@ -177,3 +177,17 @@ def test_dpad_from_auto_unticks_auto_boxes(qtbot, tmp_path):
     sent = list(s.sim.received)[n:]
     assert "#D31" not in sent and sum(x.startswith("OGU:") and x != "OGU:" for x in sent) <= 1, sent
     w.close()
+
+
+def test_stick_grows_on_tall_screen(qtbot, tmp_path):
+    """MacBook Pro 16 во весь экран (~1728×1080): пустое место в правой колонке отдаётся стику."""
+    w = make(qtbot, tmp_path)
+    w.resize(1640, 850)
+    qtbot.wait(300)
+    assert w.controls.joystick.width() == 176
+    w.resize(1728, 1080)
+    qtbot.waitUntil(lambda: w.controls.joystick.width() >= 230, timeout=2000)
+    assert w.side_scroll.verticalScrollBar().maximum() == 0
+    w.resize(1640, 850)
+    qtbot.waitUntil(lambda: w.controls.joystick.width() == 176, timeout=2000)
+    w.close()

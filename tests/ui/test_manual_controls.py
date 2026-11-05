@@ -161,6 +161,6 @@ def test_one_shot_af_sits_next_to_af(qtbot):
     c, _ = make(qtbot)
     c.resize(320, 700)
     c.show()
-    gap = c.push_af.geometry().left() - c.af_check.geometry().right()
-    assert 0 < gap <= 24  # не у правого края
+    gap = c.af_check.geometry().left() - c.push_af.geometry().right()
+    assert 0 < gap <= 24  # «Разовый», сразу за ним AF
     assert c.push_af.height() == c.near_btn.height()

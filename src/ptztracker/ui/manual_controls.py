@@ -26,6 +26,7 @@ from ptztracker.ui.widgets import KeyButton, SectionHeader, keycap_width, paint_
 
 PRESET_SIZE = 32
 ZOOM_ROCKER_H = 112  # вместе с клавишами и подписями — по высоте стика
+STICK_MIN, STICK_MAX = 176, 260  # стик: в окне 1640×850 и на высоком экране (MacBook Pro 16 во весь экран)
 LABEL_W = 52  # колонка подписей «Изображения» (спека «Всё влезает и стоит ровно»)
 H_SMALL = 28  # кнопки фокуса
 TOUCH_HOLD_S = 1.5  # столько опрос камеры не перебивает ползунок, который оператор только что тронул
@@ -162,9 +163,9 @@ class ManualControls(QWidget):
         self.focus_slider.setToolTip("Тяните влево — фокус ближе, вправо — дальше. Отпустите — стоп.")
         self.focus_slider.valueChanged.connect(lambda v: self._focus(v / 200))  # полный ход = как кнопка (±0,5)
         self.focus_slider.sliderReleased.connect(lambda: self.focus_slider.setValue(0))
-        fl = self._row("Фокус", self.af_check)
+        fl = self._row("Фокус", self.push_af)  # «Разовый» первым, AF — рядом (пользователь 2026-11-05)
         fl.addSpacing(SP[2])
-        fl.addWidget(self.push_af)  # сразу за AF: разовая фокусировка — про автофокус
+        fl.addWidget(self.af_check)
         fl.addStretch(1)
         fbl = QHBoxLayout()
         fbl.setSpacing(SP[1])
@@ -232,11 +233,13 @@ class ManualControls(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(SP[1])
+        lay.addStretch(1)
         lay.addWidget(SectionHeader("Камера", "движение выключает слежение"))
         lay.addLayout(stick_row)
         lay.addLayout(sens_row)
         lay.addWidget(self.slow_tele_check)
         lay.addWidget(self.stop_btn)
+        lay.addStretch(1)  # высокий экран: лишняя высота — поровну между разделами, в 1640×850 — ноль
         lay.addWidget(SectionHeader("Изображение", "не выключает слежение"))
         lay.addLayout(il)
         lay.addLayout(gl)
@@ -296,6 +299,13 @@ class ManualControls(QWidget):
         self._focus_moving = v != 0.0
         if self._s:
             self._s.set_focus_velocity(v)
+
+    def set_stick_size(self, px: int) -> None:
+        """Стик и качелька зума крупнее, когда в колонке есть место (высокий экран); STICK_MIN — окно 1640×850."""
+        px = max(STICK_MIN, min(STICK_MAX, px))
+        if px != self.joystick.width():
+            self.joystick.setFixedSize(px, px)
+            self.zoom_slider.setFixedHeight(ZOOM_ROCKER_H + px - STICK_MIN)
 
     def release_all(self) -> None:
         """Отпустить всё, что может двигать камеру: джойстик, зум, фокус."""
