@@ -5,7 +5,7 @@ import time
 from ptztracker.camera.session import PtzPosition
 from ptztracker.config import ConfigStore
 from ptztracker.ui.main_window import MainWindow
-from ptztracker.ui.service_cell import ServiceCell, ServiceRow, ptz_text
+from ptztracker.ui.service_cell import ServiceCell, ServiceRow, card_rects, position_geometry, ptz_text
 
 
 def row(ptz=None, history=()):
@@ -78,3 +78,52 @@ def test_service_widgets_move_when_empties_shift(qtbot, tmp_path):
     assert _placed(w) == {"position": 2, "graphs": 3, "summary": None}
     assert w._service["position"].isVisible() and w._service["graphs"].isVisible()
     w.close()
+
+
+def test_cone_width_follows_zoom():
+    wide = position_geometry(row(PtzPosition(0.0, 0.0, 0.0, 1.0)))
+    tele = position_geometry(row(PtzPosition(0.0, 0.0, 0.0, 62.1 / 3.3)))
+    assert abs(wide.half_fov - 31.05) < 0.1
+    assert abs(tele.half_fov - 1.65) < 0.05
+    assert position_geometry(row(PtzPosition(0.0, 0.0, 0.0, None))).half_fov == wide.half_fov
+
+
+def test_near_limit():
+    assert position_geometry(row(PtzPosition(0.0, 165.0, 0.0, 1.0))).near_limit
+    assert position_geometry(row(PtzPosition(0.0, -165.0, 0.0, 1.0))).near_limit
+    assert not position_geometry(row(PtzPosition(0.0, 100.0, 0.0, 1.0))).near_limit
+
+
+def test_position_without_ptz(qtbot):
+    w = ServiceCell("position")
+    qtbot.addWidget(w)
+    w.resize(600, 300)
+    w.update_view([row()], 0)
+    assert not position_geometry(row()).has_data
+    assert "нет данных" in w.card_lines(0)
+    w.grab()
+
+
+def test_card_layout():
+    from PySide6.QtCore import QRectF
+
+    rect = QRectF(0, 0, 600, 300)
+    two = card_rects(2, rect)
+    assert len({r.top() for r in two}) == 1
+    four = card_rects(4, rect)
+    assert len({r.top() for r in four}) == 2 and len({r.left() for r in four}) == 2
+    assert all(rect.contains(r) for r in four)
+
+
+def test_summary_lines(qtbot):
+    w = ServiceCell("summary")
+    qtbot.addWidget(w)
+    w.resize(640, 300)
+    a = ServiceRow(0, "Сцена", None, [], 15.0, True, [0], tally="pgm", track="on", battery={0: (83, False)},
+                   calibrated=True, video_fps=25.0)
+    b = ServiceRow(1, "Зал", None, [], None, True, [1], tally="pvw", track="no_analysis", battery={1: (18, False)},
+                   calibrated=False, video_fps=12.0)
+    w.update_view([a, b], 0)
+    text = " | ".join(w.summary_lines())
+    assert "ВЕДУ" in text and "нет калибровки" in text and "1 · Сцена" in text and "PGM" in text
+    w.grab()

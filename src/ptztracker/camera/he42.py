@@ -106,6 +106,8 @@ VIDEO_LATENCY_S: dict[str, float] = {"mjpeg": 0.12, "mjpeg_2": 0.26, "h264": 0.6
 # По углу обзора °/с камеры переводятся в доли кадра: таблица регулятора без калибровки
 # (control.camera_model.default_calibration), симулятор (картинка) и мастер калибровки (по #APC).
 HFOV_WIDE_DEG, HFOV_TELE_DEG = 62.1, 3.3
+# Предел поворота (паспорт AW-HE42): ±175° от середины #APC. Только для показа в «Положении камер».
+PAN_LIMIT_DEG = 175.0
 
 
 def hfov_deg(zoom_frac: float) -> float:
