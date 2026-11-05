@@ -1,5 +1,6 @@
 """Правая панель: без прокрутки при 1640×850; gain и баланс белого; кадр одной строкой."""
 
+import sys
 import time
 
 from PySide6.QtWidgets import QApplication
@@ -54,6 +55,9 @@ def test_side_panel_fits_without_scroll(qtbot, tmp_path):
         qtbot.waitExposed(w)
         qtbot.wait(1200)
         assert w.side_scroll.verticalScrollBar().maximum() == 0, _heights(w)  # на Windows видно, что выросло
+        if sys.platform == "darwin":  # шрифт Windows выше: на Mac держим запас по высоте под него
+            slack = w.side_scroll.viewport().height() - w.side_scroll.widget().sizeHint().height()
+            assert slack >= 40, _heights(w)
         # ни одна строка не шире панели (иначе правый край обрезается — на Windows так было с заголовками)
         assert w.side_scroll.widget().minimumSizeHint().width() <= w.side_scroll.viewport().width(), _heights(w)
         for wd in (w.controls.gain_slider, w.controls.wb_combo, w.controls.preset_buttons[-1],
