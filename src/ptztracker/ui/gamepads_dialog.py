@@ -156,6 +156,7 @@ class GamepadsDialog(QDialog):
         self.name_labels: dict[str, QLabel] = {}
         self.tiles: dict[str, QLabel] = {}
         self.curves: dict[str, CurvePreview] = {}
+        self.row_extras: dict[str, QHBoxLayout] = {}  # место под свои настройки геймпада (L1/R1 и т. п.)
         self._list, self._list_lay = _panel()
         self.empty_label = QLabel("Программа ещё не видела ни одного геймпада. Подключите его — он появится здесь.")
         self.empty_label.setWordWrap(True)
@@ -232,6 +233,10 @@ class GamepadsDialog(QDialog):
         meta.addWidget(status, 1)
         text.addWidget(name)
         text.addLayout(meta)
+        # место под настройки этого геймпада (например, выбор назначения L1/R1) — строкой под состоянием
+        extra = QHBoxLayout()
+        extra.setSpacing(SP[1])
+        text.addLayout(extra)
         host = QWidget()
         host.setLayout(text)
         host.setFixedWidth(300)
@@ -256,6 +261,7 @@ class GamepadsDialog(QDialog):
         self.name_labels[r.pad_id] = name
         self.tiles[r.pad_id] = tile
         self.curves[r.pad_id] = curve
+        self.row_extras[r.pad_id] = extra
         return row
 
     def set_rows(self, rows: list[PadRow]) -> None:
@@ -264,7 +270,7 @@ class GamepadsDialog(QDialog):
             w = self._list_lay.takeAt(0).widget()
             if w is not None:
                 w.deleteLater()
-        for d in (self.sliders, self.status_labels, self.name_labels, self.tiles, self.curves):
+        for d in (self.sliders, self.status_labels, self.name_labels, self.tiles, self.curves, self.row_extras):
             d.clear()
         for i, r in enumerate(rows):
             self._list_lay.addWidget(self._row(i, r))
