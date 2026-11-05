@@ -225,3 +225,15 @@ def test_slower_at_tele_like_live_he40():
     assert abs(tele.pan_vel - 2.47) < 0.05 and abs(tele.tilt_vel - 2.47) < 0.05
     assert he42_deg_s(70) == he42.PAN_DEG_S[70]  # без зума — как прежде (широкий угол)
     assert abs(he42_deg_s(70, 0xFFF) - 2.47) < 1e-6
+
+
+def test_shutter_synchro_pedestal_detail_preset_speed():
+    s = SimPtz()
+    assert s.handle("QSH") == "OSH:0"
+    assert s.handle("OSH:B") == "OSH:B" and s.handle("QSH") == "OSH:B"
+    assert s.handle("OSH:4").upper().startswith("ER3")  # 1/60 у HE42 нет
+    assert s.handle("OMS:010") == "OMS:010" and s.handle("QMS") == "OMS:010"
+    assert s.handle("OMS:100").upper().startswith("ER3")
+    assert s.handle("QTP") == "OTP:096" and s.handle("OTP:0A5") == "OTP:0A5" and s.handle("QTP") == "OTP:0A5"
+    assert s.handle("QDT") == "ODT:1" and s.handle("ODT:2") == "ODT:2"
+    assert s.handle("#UPVS") == "uPVS625" and s.handle("#UPVS999") == "uPVS999" and s.handle("#UPVS") == "uPVS999"

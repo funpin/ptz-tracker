@@ -313,3 +313,67 @@ def test_menu_items_follow_session_supports(qtbot):
     assert not [x for x in s.calls if x[0] == "gain"]
     s.unsupported = {"wb"}  # без баланса белого температура тоже недоступна
     assert not m._enabled("wb") and not m._enabled("ctemp") and m._enabled("gain")
+
+
+class RareSession(FullSession):
+    def set_shutter(self, code):
+        self.calls.append(("shutter", code))
+
+    def set_synchro(self, step):
+        self.calls.append(("synchro", step))
+
+    def set_pedestal(self, level):
+        self.calls.append(("pedestal", level))
+
+    def set_detail(self, mode):
+        self.calls.append(("detail", mode))
+
+
+def test_shutter_steps_and_synchro_row(qtbot):
+    s = RareSession()
+    s.image = dataclasses.replace(ImageState(), shutter=0, synchro=1, pedestal=0, detail=1)
+    m, _ = build(qtbot, s)
+    m.open()
+    assert "shutter" in m.visible_keys() and "synchro" not in m.visible_keys()
+    m.click_item("shutter")  # клик — следующая ступень
+    assert s.calls[-1] == ("shutter", 3)
+    assert m.values()["shutter"].startswith("1/120")  # сеть 50 Гц
+    s.image = dataclasses.replace(s.image, shutter=P.SHUTTER_SYNCHRO)
+    m._local.clear()
+    m._render()
+    assert "synchro" in m.visible_keys() and "Гц" in m.values()["synchro"]
+    m._cursor = "synchro"
+    m.nav(1, 0)
+    assert s.calls[-1][0] == "synchro" and s.calls[-1][1] > 1
+
+
+def test_pedestal_and_detail_arrows(qtbot):
+    s = RareSession()
+    s.image = dataclasses.replace(ImageState(), shutter=0, pedestal=0, detail=1)
+    m, _ = build(qtbot, s)
+    m.open()
+    m._cursor = "pedestal"
+    m.nav(-1, 0)
+    assert s.calls[-1] == ("pedestal", -1)
+    m._cursor = "detail"
+    m.nav(1, 0)
+    assert s.calls[-1] == ("detail", 2) and m.values()["detail"] == "Высокая"
+
+
+def test_rare_rows_hidden_without_support(qtbot):
+    s = FullSession()  # старая сессия без затвора и резкости
+    m, _ = build(qtbot, s)
+    m.open()
+    assert not {"shutter", "pedestal", "detail"} & set(k for k in m.visible_keys() if m._enabled(k))
+
+
+def test_rows_explain_why(qtbot):
+    s = RareSession()
+    s.image = dataclasses.replace(ImageState(), shutter=0, pedestal=0, detail=1, gain=8, wb=0)
+    m, _ = build(qtbot, s)
+    m.open()
+    for k in m.visible_keys():
+        assert len(cm.WHY[k]) > 15 and m._rows[k].toolTip() == cm.WHY[k]
+    m._cursor = "shutter"
+    m._render()
+    assert m.hint.text() == cm.WHY["shutter"] and "мерцан" in m.hint.text()

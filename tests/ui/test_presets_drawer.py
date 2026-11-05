@@ -168,3 +168,15 @@ def test_whole_cards_only(qtbot):
         from ptztracker.ui.presets_drawer import CARD_W
 
         assert (vw + row.CARD_GAP) % (CARD_W + row.CARD_GAP) == 0, (width, vw)
+
+
+def test_preset_speed_slider(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w.presets_btn.click()
+    qtbot.waitUntil(lambda: w.session.image.preset_speed is not None, timeout=4000)
+    sl = w.presets_drawer.speed_slider
+    qtbot.waitUntil(lambda: sl.value() == w.session.image.preset_speed, timeout=2000)  # окно обновляется раз в 0,5 с
+    sl.setValue(30)
+    sl.sliderReleased.emit()
+    qtbot.waitUntil(lambda: "#UPVS999" in w.session.sim.received, timeout=2000)
+    w.close()

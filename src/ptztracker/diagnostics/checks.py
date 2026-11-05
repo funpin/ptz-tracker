@@ -176,7 +176,11 @@ def check_rtsp(ctx: DiagContext, st: dict) -> CheckResult:
 def check_queries(ctx: DiagContext, st: dict) -> CheckResult:
     pacer: Pacer = st["pacer"]
     details = {}
-    for name, cmd in (("pan_tilt", P.Q_PAN_TILT), ("zoom", P.Q_ZOOM), ("focus", P.Q_FOCUS), ("iris", P.Q_IRIS)):
+    # затвор, Synchro, уровень чёрного, резкость, скорость пресетов — только запросы (камеру не меняют):
+    # сверить с документацией Panasonic то, что программа показывает в меню камеры
+    for name, cmd in (("pan_tilt", P.Q_PAN_TILT), ("zoom", P.Q_ZOOM), ("focus", P.Q_FOCUS), ("iris", P.Q_IRIS),
+                      ("shutter", P.Q_SHUTTER), ("synchro", P.Q_SYNCHRO), ("pedestal", P.Q_PEDESTAL),
+                      ("detail", P.Q_DETAIL), ("preset_speed", P.Q_PRESET_SPEED)):
         try:
             details[name + "_raw"] = pacer.send(cmd)
         except Exception as e:

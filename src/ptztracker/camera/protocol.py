@@ -36,6 +36,26 @@ WB_MODES: dict[int, str] = {0: "ATW", 1: "AWB A", 2: "AWB B", 3: "ATW 2", 4: "32
 WB_VAR = 9
 COLOR_TEMP_MAX = 0x4B
 
+# Затвор, Synchro, уровень чёрного, резкость, скорость пресетов — по Panasonic «HD Integrated Camera
+# Interface Specifications» v1.12 (стр. 21, 55–59, 125–138) для HE40/HE42 ⚠ не сверено на живой камере.
+# В режиме камеры Full Auto камера отвечает ER3.
+Q_SHUTTER = "QSH"
+Q_SYNCHRO = "QMS"
+Q_PEDESTAL = "QTP"
+Q_DETAIL = "QDT"
+Q_PRESET_SPEED = "#UPVS"
+SHUTTER_SYNCHRO = 0xB
+# код → (подпись при сети 50 Гц, при 60 Гц); 1/60 и 1/125 у HE40/42 нет
+SHUTTER_STEPS: dict[int, tuple[str, str]] = {
+    0x0: ("Выкл", "Выкл"), 0x3: ("1/120", "1/100"), 0x5: ("1/250", "1/250"), 0x6: ("1/500", "1/500"),
+    0x7: ("1/1000", "1/1000"), 0x8: ("1/2000", "1/2000"), 0x9: ("1/4000", "1/4000"), 0xA: ("1/10000", "1/10000"),
+    SHUTTER_SYNCHRO: ("Synchro", "Synchro"),
+}
+SYNCHRO_MIN, SYNCHRO_MAX = 0x001, 0x0FF
+PEDESTAL_ZERO, PEDESTAL_STEP = 0x096, 15  # −10…+10 → 000…12C
+DETAIL_MODES = {0: "Выкл", 1: "Низкая", 2: "Высокая"}
+PRESET_SPEED_LO, PRESET_SPEED_HI = 250, 999  # #UPVS: 1 (медленно) … 30 (быстро)
+
 LENS_MIN = 0x555
 LENS_MAX = 0xFFF
 
@@ -210,3 +230,65 @@ def parse_iris_auto(body: str) -> bool | None:
     """Флаг авто из 4-символьной формы `giXXXf` (1 — авто); в 3-символьной его нет -> None."""
     m = re.fullmatch(r"gi[0-9A-Fa-f]{3}([01])", body.strip())
     return None if m is None else m.group(1) == "1"
+
+
+def shutter(code: int) -> str:
+    if code not in SHUTTER_STEPS:
+        raise ValueError(f"shutter={code!r}: допустимы {[f'{c:X}' for c in SHUTTER_STEPS]}")
+    return f"OSH:{code:X}"
+
+
+def parse_shutter(body: str) -> int:
+    return _parse_hex(r"OSH:([0-9A-Fa-f])", body, "затвора")
+
+
+def shutter_label(code: int, hz50: bool) -> str:
+    return SHUTTER_STEPS.get(code, ("?", "?"))[0 if hz50 else 1]
+
+
+def synchro(step: int) -> str:
+    _check_range("synchro", step, SYNCHRO_MIN, SYNCHRO_MAX)
+    return f"OMS:{step:03X}"
+
+
+def parse_synchro(body: str) -> int:
+    return _parse_hex(r"OMS:([0-9A-Fa-f]{3})", body, "частоты Synchro")
+
+
+def synchro_hz(step: int, hz50: bool) -> float:
+    """⚠ Документ даёт только концы шкалы (50,00…570,13 Гц и 59,94…660,09 Гц); между ними — линейно."""
+    lo, hi = (50.0, 570.13) if hz50 else (59.94, 660.09)
+    return lo + (hi - lo) * (step - SYNCHRO_MIN) / (SYNCHRO_MAX - SYNCHRO_MIN)
+
+
+def pedestal(level: int) -> str:
+    _check_range("pedestal", level, -10, 10)
+    return f"OTP:{PEDESTAL_ZERO + level * PEDESTAL_STEP:03X}"
+
+
+def parse_pedestal(body: str) -> int:
+    return round((_parse_hex(r"OTP:([0-9A-Fa-f]{3})", body, "уровня чёрного") - PEDESTAL_ZERO) / PEDESTAL_STEP)
+
+
+def detail(mode: int) -> str:
+    if mode not in DETAIL_MODES:
+        raise ValueError(f"detail={mode!r}: допустимы 0, 1, 2")
+    return f"ODT:{mode}"
+
+
+def parse_detail(body: str) -> int:
+    return _parse_hex(r"ODT:([0-2])", body, "резкости")
+
+
+def preset_speed(n: int) -> str:
+    """Скорость переезда в пресет 1 (медленно) … 30 (быстро) → #UPVS250…999."""
+    _check_range("preset_speed", n, 1, 30)
+    return f"#UPVS{PRESET_SPEED_LO + round((n - 1) * (PRESET_SPEED_HI - PRESET_SPEED_LO) / 29):03d}"
+
+
+def parse_preset_speed(body: str) -> int:
+    m = re.fullmatch(r"uPVS(\d{3})", body.strip())
+    if not m:
+        raise ValueError(f"Не похоже на ответ скорости пресетов: {body!r}")
+    v = int(m.group(1))
+    return max(1, min(30, 1 + round((v - PRESET_SPEED_LO) * 29 / (PRESET_SPEED_HI - PRESET_SPEED_LO))))

@@ -14,7 +14,15 @@ from collections import deque
 from typing import Callable
 
 from ptztracker.camera import he42
-from ptztracker.camera.protocol import COLOR_TEMP_MAX, GAIN_AUTO, GAIN_CODES, WB_MODES
+from ptztracker.camera.protocol import (
+    COLOR_TEMP_MAX,
+    GAIN_AUTO,
+    GAIN_CODES,
+    SHUTTER_STEPS,
+    SYNCHRO_MAX,
+    SYNCHRO_MIN,
+    WB_MODES,
+)
 
 TAU_S = he42.RAMP_TAU_S
 DEAD_TIME_S = he42.DEAD_TIME_S
@@ -97,6 +105,8 @@ class SimPtz:
         self.gain_code = 0x08
         self.wb = 0
         self.color_temp = 0x1A
+        # затвор, Synchro, уровень чёрного, резкость, скорость пресетов — как у HE42 после сброса ⚠ по документации
+        self.shutter, self.synchro, self.pedestal, self.detail, self.preset_speed = 0x0, 0x001, 0x096, 1, 625
         self.received: deque[str] = deque(maxlen=5000)
         self._target: tuple[float, float] | None = None
         self._zoom_target: float | None = None
@@ -233,6 +243,39 @@ class SimPtz:
                 raise ValueError(cmd)
             self.color_temp = int(m[1], 16)
             return cmd
+        if cmd == "QSH":
+            return f"OSH:{self.shutter:X}"
+        if m := re.fullmatch(r"OSH:([0-9A-F])", cmd):
+            if int(m[1], 16) not in SHUTTER_STEPS:
+                raise ValueError(cmd)
+            self.shutter = int(m[1], 16)
+            return cmd
+        if cmd == "QMS":
+            return f"OMS:{self.synchro:03X}"
+        if m := re.fullmatch(r"OMS:([0-9A-F]{3})", cmd):
+            if not SYNCHRO_MIN <= int(m[1], 16) <= SYNCHRO_MAX:
+                raise ValueError(cmd)
+            self.synchro = int(m[1], 16)
+            return cmd
+        if cmd == "QTP":
+            return f"OTP:{self.pedestal:03X}"
+        if m := re.fullmatch(r"OTP:([0-9A-F]{3})", cmd):
+            if int(m[1], 16) > 0x12C:
+                raise ValueError(cmd)
+            self.pedestal = int(m[1], 16)
+            return cmd
+        if cmd == "QDT":
+            return f"ODT:{self.detail}"
+        if m := re.fullmatch(r"ODT:([0-2])", cmd):
+            self.detail = int(m[1])
+            return cmd
+        if cmd == "#UPVS":
+            return f"uPVS{self.preset_speed:03d}"
+        if m := re.fullmatch(r"#UPVS(\d{3})", cmd):
+            if not 250 <= int(m[1]) <= 999:
+                raise ValueError(cmd)
+            self.preset_speed = int(m[1])
+            return f"uPVS{m[1]}"
         if cmd == "QID":
             return "OID:AW-HE42"
         if cmd.startswith("OSE:"):

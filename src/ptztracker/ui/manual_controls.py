@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from ptztracker.camera import protocol as P
 from ptztracker.camera.session import CameraSession, ImageState
 from ptztracker.control.manual_curve import DEFAULT_SENS, SENS_MAX, SENS_MIN, clamp_sens, shape
+from ptztracker.ui.camera_menu import WHY
 from ptztracker.ui.joystick import JoystickWidget
 from ptztracker.ui.theme import FS_CAPTION, H_STOP, SP, C
 from ptztracker.ui.widgets import KeyButton, SectionHeader, keycap_width, paint_keycap
@@ -229,6 +230,13 @@ class ManualControls(QWidget):
             b.clicked.connect(lambda _=False, n=i + 1: self._preset_clicked(n))
             pl.addWidget(b)
             self.preset_buttons.append(b)
+
+        # «зачем» при наведении — те же пояснения, что в меню камеры
+        for row, key, extra in ((il, "iris", (self.iris_slider, self.iris_auto)),
+                                (gl, "gain", (self.gain_slider, self.gain_auto)),
+                                (fl, "focus", (self.af_check,)), (wl, "wb", ())):
+            for wd in (row.itemAt(0).widget(), *extra):
+                wd.setToolTip(WHY[key])
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)

@@ -388,6 +388,7 @@ class MainWindow(QMainWindow):
         self.presets_drawer.storeRequested.connect(self.store_preset)
         self.presets_drawer.eraseRequested.connect(self._erase_preset)
         self.presets_drawer.rowsShownChanged.connect(lambda _n: self._fit_drawer_height())
+        self.presets_drawer.speedChanged.connect(lambda n: self.session and self.session.set_preset_speed(n))
         left = QWidget()
         left.setObjectName("leftCol")
         ll = QVBoxLayout(left)
@@ -1140,6 +1141,8 @@ class MainWindow(QMainWindow):
             rows.append(DrawerRow(i, c.cfg.name, self._tally_per[i][1], dict(self._thumbs_of(c.cfg.id)),
                                   self._last_preset.get(i)))
         self.presets_drawer.set_rows(rows)
+        s = self.session
+        self.presets_drawer.set_speed(s.image.preset_speed if s is not None else None)
 
     def recall_preset(self, slot: int, n: int) -> None:
         """Пресет n (1…) камеры в клетке: клетка выбирается, слежение и агент этой камеры выключаются

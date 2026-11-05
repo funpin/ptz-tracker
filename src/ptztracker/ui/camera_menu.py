@@ -19,8 +19,8 @@ FOCUS_SPEED = 0.3  # ближе/дальше, пока держишь ←/→
 CTEMP_STEP = 2  # шаг цветовой температуры за нажатие (≈200 K)
 LOCAL_HOLD_S = 1.5  # столько держим только что выбранное значение, пока камера не ответила
 WB_CHOICES = (0, 1, 2, 4, 5, 9)  # ATW, AWB A, AWB B, 3200K, 5600K, VAR
-ROW_H = 36
-WIDTH = 340
+ROW_H = 26  # девять пунктов и пояснение помещаются в клетку 2×2 окна 1640×850
+WIDTH = 380
 
 
 class _Row(QWidget):
@@ -29,6 +29,7 @@ class _Row(QWidget):
     def __init__(self, key: str, parent=None) -> None:
         super().__init__(parent)
         self.key = key
+        self.setAttribute(Qt.WA_StyledBackground, True)  # иначе рамка выбранного пункта из QSS не рисуется
         self.setFixedHeight(ROW_H)
         self.setFocusPolicy(Qt.NoFocus)
         lay = QHBoxLayout(self)
@@ -52,6 +53,23 @@ class _Row(QWidget):
             self.clicked.emit(self.key)
 
 
+# редкие настройки: пункт → метод сессии. Камера HE40/HE42 в Full Auto отвечает ER3 — значение остаётся прежним
+RARE = {"shutter": "set_shutter", "synchro": "set_synchro", "pedestal": "set_pedestal", "detail": "set_detail"}
+# «зачем» — подсказка при наведении и строка внизу меню у выбранного пункта (геймпад мышью не наводит)
+WHY = {
+    "focus": "Авто — камера сама держит резкость; Ручной — ←→ ближе/дальше, если автофокус «плавает».",
+    "wb": "Цвет белого: ATW — подстраивается сам, AWB A/B — запомненный, 3200K/5600K — под лампы и дневной свет.",
+    "ctemp": "Вручную подогнать цвет под свет на сцене (режим VAR).",
+    "iris": "Сколько света пускает объектив. Авто — камера сама держит яркость.",
+    "gain": "Усиление сигнала: ярче в тёмном зале, но больше шума. Авто — камера решает сама.",
+    "shutter": "Убрать мерцание LED-экранов и ламп на сцене. Synchro — точная подстройка под частоту экрана.",
+    "synchro": "Крутите, пока полосы на LED-экране не исчезнут.",
+    "pedestal": "Уровень чёрного: подогнать картинку под соседние камеры, чтобы при переключении не было скачка.",
+    "detail": "Резкость контуров: подогнать под соседние камеры; «Высокая» делает лица жёстче.",
+}
+HZ50 = True  # ⚠ сеть 50 Гц (Россия): подписи затвора и частоты Synchro; формат камеры пока не спрашиваем
+
+
 class CameraMenu(QFrame):
     openChanged = Signal(bool)
 
@@ -73,18 +91,19 @@ class CameraMenu(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(SP[1], SP[1], SP[1], SP[1])
         lay.setSpacing(2)
-        head = QLabel("Меню камеры")
+        head = QLabel("Меню камеры    ↑↓ пункт · ←→ значение · ○ закрыть")
         head.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px; padding: 2px {SP[2]}px;")
         lay.addWidget(head)
         self._rows: dict[str, _Row] = {}
-        for key in ("focus", "wb", "ctemp", "iris", "gain"):
+        for key in ("focus", "wb", "ctemp", "iris", "gain", "shutter", "synchro", "pedestal", "detail"):
             r = _Row(key)
             r.clicked.connect(self.click_item)
             self._rows[key] = r
             lay.addWidget(r)
-        foot = QLabel("↑↓ пункт   ←→ значение   ✕ принять   ○ закрыть")
-        foot.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px; padding: 2px {SP[2]}px;")
-        lay.addWidget(foot)
+        self.hint = QLabel("")
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px; padding: 4px {SP[2]}px 0;")
+        lay.addWidget(self.hint)
         self.setStyleSheet(self.styleSheet() + f" QLabel {{ font-size: {FS_TEXT}px; }}")
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -147,13 +166,28 @@ class CameraMenu(QFrame):
         if key == "ctemp":
             return (self._has("set_color_temp") and self._supports("wb") and self._supports("color_temp")
                     and self._wb() == P.WB_VAR)
+        if key in RARE:
+            return self._has(RARE[key]) and self._val(key) is not None
         return False
 
     def visible_keys(self) -> list[str]:
         keys = ["focus", "wb"]
         if self._wb() == P.WB_VAR:
             keys.append("ctemp")
-        return keys + ["iris", "gain"]
+        keys += ["iris", "gain"]
+        # редкие настройки (спека 2026-11-05): затвор, Synchro — только когда выбран, уровень чёрного, резкость
+        if self._has("set_shutter"):
+            keys.append("shutter")
+            if self._val("shutter") == P.SHUTTER_SYNCHRO:
+                keys.append("synchro")
+        if self._has("set_pedestal"):
+            keys.append("pedestal")
+        if self._has("set_detail"):
+            keys.append("detail")
+        return keys
+
+    def _val(self, key: str) -> int | None:
+        return self._cur(key, getattr(self._image(), key, None))
 
     def values(self) -> dict[str, str]:
         c = self._controls
@@ -167,6 +201,11 @@ class CameraMenu(QFrame):
         out["wb"] = "—" if wb is None else P.WB_MODES.get(wb, "?")
         ct = self._ctemp()
         out["ctemp"] = "—" if ct is None else f"≈{P.color_temp_kelvin(ct)} K  ◀ ▶"
+        sh, sy, pd, dt = (self._val(k) for k in ("shutter", "synchro", "pedestal", "detail"))
+        out["shutter"] = "—" if sh is None else f"{P.shutter_label(sh, HZ50)}  ◀ ▶"
+        out["synchro"] = "—" if sy is None else f"{P.synchro_hz(sy, HZ50):.1f} Гц  ◀ ▶".replace(".", ",")
+        out["pedestal"] = "—" if pd is None else f"{pd:+d}  ◀ ▶".replace("+0", "0")
+        out["detail"] = "—" if dt is None else P.DETAIL_MODES.get(dt, "?")
         return out
 
     def _render(self) -> None:
@@ -175,12 +214,15 @@ class CameraMenu(QFrame):
             self._cursor = next((k for k in keys if self._enabled(k)), keys[0])
         vals = self.values()
         titles = {"focus": "Фокус", "wb": "Баланс белого", "ctemp": "   Цвет. температура",
-                  "iris": "Ирис", "gain": "Gain"}
+                  "iris": "Ирис", "gain": "Gain", "shutter": "Затвор", "synchro": "   Частота Synchro",
+                  "pedestal": "Уровень чёрного", "detail": "Резкость"}
         for k, r in self._rows.items():
             r.setVisible(k in keys)
             r.title.setText(titles[k])
             r.value.setText(vals[k])
+            r.setToolTip(WHY[k])
             r.style(k == self._cursor, self._enabled(k))
+        self.hint.setText(WHY.get(self._cursor, ""))
         self.adjustSize()
 
     # --- открытие и закрытие ---------------------------------------------------
@@ -257,6 +299,8 @@ class CameraMenu(QFrame):
             self._wb_step(d)
         elif k == "ctemp":
             self._ctemp_step(d)
+        elif k in RARE:
+            self._rare_step(k, d)
         else:
             self._toggle(k)
 
@@ -268,7 +312,9 @@ class CameraMenu(QFrame):
         if self._enabled(k):
             if k == "wb":
                 self._wb_step(+1)
-            elif k != "ctemp":
+            elif k in ("shutter", "detail"):
+                self._rare_step(k, +1)
+            elif k not in ("ctemp", "synchro", "pedestal"):
                 self._toggle(k)
         self._render()
 
@@ -305,6 +351,24 @@ class CameraMenu(QFrame):
         if new != wb:
             self._s().set_wb(new)
             self._remember("wb", new)
+
+    def _rare_step(self, k: str, d: int) -> None:
+        """Затвор и резкость — по кругу ступеней (клик/✕ — следующая); Synchro и уровень чёрного — шагом."""
+        v = self._val(k)
+        if v is None:
+            return
+        if k == "shutter":
+            steps = list(P.SHUTTER_STEPS)
+            new = steps[(steps.index(v) + d) % len(steps)] if v in steps else steps[0]
+        elif k == "detail":
+            new = (v + d) % len(P.DETAIL_MODES)
+        elif k == "synchro":
+            new = max(P.SYNCHRO_MIN, min(P.SYNCHRO_MAX, v + d))
+        else:
+            new = max(-10, min(10, v + d))
+        if new != v:
+            getattr(self._s(), RARE[k])(new)
+            self._remember(k, new)
 
     def _ctemp_step(self, d: int) -> None:
         ct = self._ctemp()

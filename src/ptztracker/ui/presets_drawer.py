@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QScrollArea,
+    QSlider,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -273,6 +274,7 @@ class PresetsDrawer(QWidget):
     storeRequested = Signal(int, int)
     eraseRequested = Signal(int, int)
     rowsShownChanged = Signal(int)
+    speedChanged = Signal(int)  # скорость переезда в пресет 1…30 — для выбранной камеры (первой строки)
     ROW_H = CARD_H + 12  # строка: карточки и отступы
 
     def __init__(self, parent: QWidget | None = None):
@@ -285,8 +287,30 @@ class PresetsDrawer(QWidget):
         self.row_widgets: list[PresetRow] = []
         self.rows_shown = 1
         self.grip = _Grip(self)
-        head = QLabel("<b>Пресеты</b> · клик — вызвать, Shift+клик — записать · потяните за край — другие камеры")
-        head.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION - 0.5}px;")
+        title = QLabel("<b>Пресеты</b> · клик — вызвать, Shift+клик — записать · потяните за край — другие камеры")
+        title.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION - 0.5}px;")
+        # скорость переезда в пресет (камера помнит её сама) — для выбранной камеры
+        self.speed_slider = QSlider(Qt.Horizontal)
+        self.speed_slider.setRange(1, 30)
+        self.speed_slider.setFixedWidth(180)
+        self.speed_slider.setFocusPolicy(Qt.NoFocus)
+        self.speed_slider.setTracking(False)  # команда — по отпусканию
+        self.speed_slider.setToolTip("Как быстро камера переезжает в пресет (выбранная камера)")
+        self.speed_slider.valueChanged.connect(self.speedChanged)
+        head = QWidget()
+        head.setStyleSheet("background: transparent;")
+        hl = QHBoxLayout(head)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(SP[1])
+        hl.addWidget(title, 1)
+        for t in ("Скорость переезда:  Медленно",):
+            lab = QLabel(t)
+            lab.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION - 0.5}px;")
+            hl.addWidget(lab)
+        hl.addWidget(self.speed_slider)
+        fast = QLabel("Быстро")
+        fast.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION - 0.5}px;")
+        hl.addWidget(fast)
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(SP[2], 0, SP[2], SP[1])
         self._lay.setSpacing(2)
@@ -303,6 +327,14 @@ class PresetsDrawer(QWidget):
             if i < len(rows):
                 w.set(rows[i], i == 0)
         self._apply_rows()
+
+    def set_speed(self, n: int | None) -> None:
+        """Показать скорость выбранной камеры без команды; None — камера ещё не ответила."""
+        self.speed_slider.setEnabled(n is not None)
+        if n is not None and not self.speed_slider.isSliderDown() and n != self.speed_slider.value():
+            self.speed_slider.blockSignals(True)
+            self.speed_slider.setValue(n)
+            self.speed_slider.blockSignals(False)
 
     def set_rows_shown(self, n: int) -> None:
         n = max(1, min(n, max(1, len(self.rows))))

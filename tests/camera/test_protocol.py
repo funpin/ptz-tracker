@@ -161,3 +161,34 @@ def test_parse_iris():
     assert P.parse_iris_auto("gi5551") is True and P.parse_iris_auto("gi555") is None
     with pytest.raises(ValueError):
         P.parse_iris("ER1")
+
+
+def test_shutter_and_synchro():
+    from ptztracker.camera import protocol as P
+
+    assert P.shutter(0) == "OSH:0" and P.shutter(P.SHUTTER_SYNCHRO) == "OSH:B"
+    assert P.parse_shutter("OSH:6") == 6
+    with pytest.raises(ValueError):
+        P.shutter(4)  # 1/60 у HE40/42 нет
+    assert P.shutter_label(3, hz50=True) == "1/120" and P.shutter_label(3, hz50=False) == "1/100"
+    assert P.shutter_label(P.SHUTTER_SYNCHRO, True) == "Synchro"
+    assert P.synchro(1) == "OMS:001" and P.parse_synchro("OMS:0FF") == 0xFF
+    assert abs(P.synchro_hz(1, hz50=True) - 50.0) < 0.01 and abs(P.synchro_hz(0xFF, hz50=True) - 570.13) < 0.01
+
+
+def test_pedestal_and_detail():
+    from ptztracker.camera import protocol as P
+
+    assert P.pedestal(0) == "OTP:096" and P.pedestal(-10) == "OTP:000" and P.pedestal(10) == "OTP:12C"
+    assert P.parse_pedestal("OTP:0A5") == 1
+    with pytest.raises(ValueError):
+        P.pedestal(11)
+    assert P.detail(2) == "ODT:2" and P.parse_detail("ODT:1") == 1
+
+
+def test_preset_speed():
+    from ptztracker.camera import protocol as P
+
+    assert P.preset_speed(1) == "#UPVS250" and P.preset_speed(30) == "#UPVS999"
+    assert P.parse_preset_speed("uPVS250") == 1 and P.parse_preset_speed("uPVS999") == 30
+    assert P.parse_preset_speed(f"uPVS{P.preset_speed(15)[5:]}") == 15

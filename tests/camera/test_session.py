@@ -746,3 +746,20 @@ def test_zoom_reply_does_not_suppress_pan_tilt_poll():
     s._power = "on"
     s.poll_position()
     assert "#APC" in Sch.sent
+
+
+def test_rare_image_settings_reach_camera_and_state():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.shutter == 0 and s.image.pedestal == 0 and s.image.detail == 1)
+        s.set_shutter(0xB)
+        s.set_synchro(0x20)
+        s.set_pedestal(-3)
+        s.set_detail(2)
+        s.set_preset_speed(30)
+        assert _wait(lambda: (s.image.shutter, s.image.synchro, s.image.pedestal, s.image.detail,
+                              s.image.preset_speed) == (0xB, 0x20, -3, 2, 30))
+        assert s.follower is None or not s.follower.enabled  # картинка не двигает камеру
+    finally:
+        s.stop()

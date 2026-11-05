@@ -67,6 +67,11 @@ class ImageState:
     color_temp: int | None = None
     iris: int | None = None
     iris_auto: bool | None = None
+    shutter: int | None = None  # код OSH (protocol.SHUTTER_STEPS)
+    synchro: int | None = None  # шаг OMS 001…0FF
+    pedestal: int | None = None  # уровень чёрного −10…+10
+    detail: int | None = None  # резкость 0 выкл, 1 низкая, 2 высокая
+    preset_speed: int | None = None  # скорость переезда в пресет 1…30
 
 
 @dataclasses.dataclass(frozen=True)
@@ -512,6 +517,8 @@ class CameraSession:
             return  # камера в ожидании отвечает ER2 — опросим после включения
         for key, cmd in (
             ("q_gain", P.Q_GAIN), ("q_wb", P.Q_WB), ("q_ctemp", P.Q_COLOR_TEMP), ("q_iris", P.Q_IRIS),
+            ("q_shutter", P.Q_SHUTTER), ("q_synchro", P.Q_SYNCHRO), ("q_pedestal", P.Q_PEDESTAL),
+            ("q_detail", P.Q_DETAIL), ("q_preset_speed", P.Q_PRESET_SPEED),
         ):
             self.scheduler.submit(key, cmd, Priority.QUERY, only_if_changed=False)
 
@@ -615,6 +622,16 @@ class CameraSession:
                 self._apply_pending("gain")
             elif ok and (cmd == P.Q_WB or str(cmd).startswith("OAW:")):
                 self._upd(wb=P.parse_wb(reply))
+            elif ok and (cmd == P.Q_SHUTTER or str(cmd).startswith("OSH:")):
+                self._upd(shutter=P.parse_shutter(reply))
+            elif ok and (cmd == P.Q_SYNCHRO or str(cmd).startswith("OMS:")):
+                self._upd(synchro=P.parse_synchro(reply))
+            elif ok and (cmd == P.Q_PEDESTAL or str(cmd).startswith("OTP:")):
+                self._upd(pedestal=P.parse_pedestal(reply))
+            elif ok and (cmd == P.Q_DETAIL or str(cmd).startswith("ODT:")):
+                self._upd(detail=P.parse_detail(reply))
+            elif ok and str(cmd).startswith(P.Q_PRESET_SPEED):
+                self._upd(preset_speed=P.parse_preset_speed(reply))
             elif ok and cmd == P.Q_IRIS:
                 auto = P.parse_iris_auto(reply)
                 if auto is None:
@@ -723,6 +740,23 @@ class CameraSession:
 
     def set_color_temp(self, index: int) -> None:
         self._submit("ctemp", P.color_temp(index), only_if_changed=False)
+
+    # затвор, Synchro, уровень чёрного, резкость (меню камеры) и скорость пресетов — камеру не двигают,
+    # слежение не выключают; в Full Auto камера отвечает ER3, тогда остаётся её прежнее значение
+    def set_shutter(self, code: int) -> None:
+        self._submit("shutter", P.shutter(code), only_if_changed=False)
+
+    def set_synchro(self, step: int) -> None:
+        self._submit("synchro", P.synchro(step), only_if_changed=False)
+
+    def set_pedestal(self, level: int) -> None:
+        self._submit("pedestal", P.pedestal(level), only_if_changed=False)
+
+    def set_detail(self, mode: int) -> None:
+        self._submit("detail", P.detail(mode), only_if_changed=False)
+
+    def set_preset_speed(self, n: int) -> None:
+        self._submit("preset_speed", P.preset_speed(n), only_if_changed=False)
 
     # --- ручное управление --------------------------------------------
 
