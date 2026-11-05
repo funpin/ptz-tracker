@@ -612,6 +612,7 @@ class VideoFrame(QFrame):
         self.onair_tag = self._make_tag()
         self.tracking_tag.hide()
         self.onair_tag.hide()
+        self.tags_enabled = True  # клетка сетки показывает эфир и слежение в своей шапке — ярлыки не нужны
         self._overlays: list[tuple[QWidget, str]] = []
 
     def add_overlay(self, w: QWidget, corner: str) -> None:
@@ -648,7 +649,7 @@ class VideoFrame(QFrame):
         elif self._tally == "pvw":
             self.onair_tag.setStyleSheet(self._tag_style(C.PVW, C.TEXT, 'bottom-left'))
             self.onair_tag.setText("ПРЕВЬЮ · PVW")
-        self.onair_tag.setVisible(self._tally is not None)
+        self.onair_tag.setVisible(self._tally is not None and self.tags_enabled)
         self._place_tags()
         self.update()
 
@@ -658,7 +659,7 @@ class VideoFrame(QFrame):
         else:
             self.tracking_tag.setStyleSheet(self._tag_style(color, C.BG, 'bottom-right'))
         self.tracking_tag.setText(text)
-        self.tracking_tag.show()
+        self.tracking_tag.setVisible(self.tags_enabled)
         self._place_tags()
 
     def _place_tags(self) -> None:
@@ -679,7 +680,10 @@ class VideoFrame(QFrame):
             elif corner == "top-center":
                 w.move(max(off, (self.width() - w.width()) // 2), off + SP[1])
             elif corner == "top-left":
-                w.move(off + SP[1], off + self.tracking_tag.height() + SP[1])
+                below = self.tracking_tag.height() if self.tracking_tag.isVisibleTo(self) else 0
+                w.move(off + SP[1], off + below + SP[1])
+            elif corner == "bottom-right":
+                w.move(self.width() - w.width() - off - SP[1], self.height() - w.height() - off - SP[1])
             else:
                 w.move(off + SP[1], self.height() - w.height() - off - SP[1])
 

@@ -68,10 +68,52 @@ def test_set_choices_twice_and_unknown_current(qtbot):
 def test_pads_badges(qtbot):
     c = make(qtbot)
     assert not c.pad_badges[0].isVisible()
-    c.set_pads(2)
+    c.set_pads([(1, 83, False), (3, 18, False)])
     assert [b.isVisible() for b in c.pad_badges[:3]] == [True, True, False]
-    c.set_pads(0)
-    assert not any(b.isVisible() for b in c.pad_badges)
+    assert c.pad_badges[0].battery_text() == "83" and c.more_pads.isHidden()
+    c.set_pads([(1, 83, False), (2, 50, False), (3, None, False), (4, 10, True)])
+    assert [b.isVisible() for b in c.pad_badges] == [True, False, False, False]
+    assert c.more_pads.isVisible() and c.more_pads.text() == "+3"
+    assert "3" in c.more_pads.toolTip() and "10%" in c.more_pads.toolTip()
+    c.set_pads([])
+    assert not any(b.isVisible() for b in c.pad_badges) and c.more_pads.isHidden()
+
+
+def test_header_tags_and_power(qtbot):
+    c = make(qtbot)
+    c.set_choices(ITEMS, "cam-a")
+    c.set_header(tally="pgm", state="on", sim=True, power="on")
+    assert c.tally_tag.text() == "PGM" and c.state_tag.text() == "ВЕДУ" and c.sim_tag.isVisible()
+    assert c.power_btn.isVisible() and c.more_btn.isVisible()
+    c.set_header(tally=None, state="standby", sim=False, power="standby")
+    assert c.tally_tag.isHidden() and c.state_tag.text() == "ОЖИДАНИЕ" and c.sim_tag.isHidden()
+    got = []
+    c.powerClicked.connect(got.append)
+    c.power_btn.click()
+    assert got == [0]
+    c.set_choices(ITEMS, None)
+    c.set_header(tally=None, state=None, sim=False, power=None)
+    assert c.power_btn.isHidden() and c.more_btn.isHidden() and c.state_tag.isHidden()
+
+
+def test_header_never_overflows(qtbot):
+    c = make(qtbot)
+    c.set_choices([("x", "Очень длинное имя камеры на сцене слева у окна")], "x")
+    c.set_header(tally="pgm", state="no_analysis", sim=True, power="on")
+    c.set_pads([(1, 83, False), (2, 50, False), (3, 40, False)])
+    c.resize(560, 300)
+    qtbot.wait(50)
+    for w in (c.more_btn, c.power_btn, c.more_pads, c.pad_badges[0]):
+        x = w.mapTo(c, QPoint(0, 0)).x()
+        assert x >= 0 and x + w.width() <= c.width(), w
+
+
+def test_corner_info(qtbot):
+    c = make(qtbot)
+    c.set_info("640×360 · 25 · анализ 15")
+    assert c.info_label.text() == "640×360 · 25 · анализ 15" and not c.info_label.isHidden()
+    c.set_info("")
+    assert c.info_label.isHidden()
 
 
 def test_service_shown_without_camera(qtbot):

@@ -295,17 +295,8 @@ class MainWindow(QMainWindow):
         for c in self.cells:
             c.preview.setMinimumSize(240, 135)  # четыре превью в одном окне
         self.camera_menu = CameraMenu(self._menu_session, self.controls)
-        # виртуальную камеру нельзя принять за живую: метка поверх видео каждой клетки с симулятором
-        self._sim_badges: list[QLabel] = []
-        for c in self.cells:
-            badge = QLabel("СИМУЛЯТОР")
-            badge.setStyleSheet(
-                f"background: {C.REMOTE}; color: {C.BG}; border-radius: 6px; padding: 4px 12px;"
-                f" font-size: {FS_CAPTION}px; font-weight: 700;")
-            badge.setAttribute(Qt.WA_TransparentForMouseEvents)
-            c.video_frame.add_overlay(badge, "top-center")
-            badge.hide()
-            self._sim_badges.append(badge)
+        # виртуальную камеру нельзя принять за живую: плашка «СИМУЛЯТОР» в шапке клетки
+        self._tally_per: list[tuple[int, str | None, bool]] = [(0, None, False)] * GRID_SLOTS
         self.camera_menu.openChanged.connect(self._on_menu_changed)
 
         side = QWidget()
@@ -361,6 +352,7 @@ class MainWindow(QMainWindow):
             c.reset_target_btn.clicked.connect(lambda _=False, s=i: self._reset_target(s))
             c.skeleton_check.toggled.connect(lambda on, cell=c: self._on_skeleton(on, cell))
             c.preview.targetClicked.connect(lambda _id: self._update_status())
+            c.powerClicked.connect(self._cell_power)
         central = QWidget()
         hl = QHBoxLayout(central)
         hl.addWidget(grid_host, 1)
@@ -396,12 +388,18 @@ class MainWindow(QMainWindow):
 
         # одно меню ☰ в окне — одинаково на Mac и Windows; меню «Сервис» в строке macOS нет
         menu = self.main_menu_btn.menu()
-        self.calib_action = menu.addAction("Калибровка камеры…", self._run_calibration)
-        self.diag_action = menu.addAction("Диагностика камеры…", self._run_diagnostics)
+        # про одну камеру — в ⋯ её клетки (спека «Меню ☰ (только общее)»); действия общие для всех клеток
+        self.calib_action = QAction("Калибровка камеры…", self)
+        self.calib_action.triggered.connect(self._run_calibration)
+        self.diag_action = QAction("Диагностика камеры…", self)
+        self.diag_action.triggered.connect(self._run_diagnostics)
+        self.power_action = QAction("Перевести камеру в режим ожидания…", self)
+        self.power_action.triggered.connect(self._power_menu)
+        self.osd_action = QAction("Меню камеры (OSD)\tM", self)
+        self.osd_action.triggered.connect(self._open_osd_menu)
         self.atem_action = menu.addAction("ATEM…", self._edit_atem)
         self.agent_action = menu.addAction("Агент…", self._show_agent_window)
         self.pads_action = menu.addAction("Геймпады…", self.show_gamepads)
-        self.power_action = menu.addAction("Перевести камеру в режим ожидания…", self._power_menu)
         self.sim_action = menu.addAction("Симулятор (для тренировки)", self._open_sim_camera)
         menu.addSeparator()
         self.save_moment_action = QAction("Сохранить момент (F9)", self)  # не ручное управление: слежение не трогаем
@@ -438,6 +436,8 @@ class MainWindow(QMainWindow):
         self.max_analyzed_group.triggered.connect(lambda act: self._on_max_analyzed(act.data()))
         self.update_action = menu.addAction("", self._open_release_page)
         self.update_action.setVisible(False)
+        for i, c in enumerate(self.cells):
+            self._build_cell_menu(i, c.more_btn.menu(), stream_menu)
         self._saveFinished.connect(self._on_save_finished)
         self._saved_path: Path | None = None
         self._hide_folder_timer = QTimer(self)
@@ -554,12 +554,68 @@ class MainWindow(QMainWindow):
 
     @property
     def sim_badge(self) -> QLabel:
-        """Метка «СИМУЛЯТОР» выбранной клетки (совместимость: окно на одну камеру)."""
-        return self._sim_badges[self.grid.selected if self.grid.selected is not None else 0]
+        """Плашка «СИМУЛЯТОР» выбранной клетки (совместимость: окно на одну камеру)."""
+        return self.cells[self.grid.selected if self.grid.selected is not None else 0].sim_tag
 
     def _sync_sim_badges(self) -> None:
-        for c, badge in zip(self.grid.cells, self._sim_badges):
-            badge.setVisible(c is not None and c.cfg.kind == "sim")
+        self._update_cell_headers()
+
+    def _build_cell_menu(self, slot: int, menu: QMenu, stream_menu: QMenu) -> None:
+        """⋯ в шапке клетки: всё про эту камеру. Перед показом клетка выбирается — действия идут на неё."""
+        menu.aboutToShow.connect(lambda: self.select_slot(slot))
+        menu.addAction(self.osd_action)
+        streams = menu.addMenu("Видеопоток")
+        for act in self.stream_actions.actions():
+            streams.addAction(act)
+        menu.addSeparator()
+        menu.addAction(self.calib_action)
+        menu.addAction(self.diag_action)
+        menu.addSeparator()
+        menu.addAction(self.edit_action)
+        menu.addAction("Убрать из клетки", lambda: self.set_cell_camera(slot, None))
+        menu.addSeparator()
+        menu.addAction(self.power_action)
+
+    def _open_osd_menu(self) -> None:
+        if not self.camera_menu.is_open:
+            self.release_all_held()
+            self.camera_menu.toggle()
+
+    def _cell_power(self, slot: int) -> None:
+        """⏻ в шапке клетки: как пункт меню, но для этой камеры (слежение выключится до вопроса)."""
+        self.select_slot(slot)
+        self._power_menu()
+
+    def _cell_pads(self, slot: int) -> list[tuple[int, int | None, bool]]:
+        out = []
+        for n in self.pad_router.pads_on(slot):
+            b = self.pads.get(n)
+            out.append((n, b.battery_percent if b else None, bool(b and b.battery_charging)))
+        return out
+
+    def _update_cell_headers(self) -> None:
+        """Шапки клеток из снимков: эфир, слежение, симулятор, питание, разрешение и анализ в углу видео."""
+        for i, c in enumerate(self.grid.cells):
+            cell = self.cells[i]
+            if c is None:
+                cell.set_header(None, None, False, None)
+                cell.set_info("")
+                continue
+            s = c.session
+            _inp, tally, _known = self._tally_per[i]
+            if s.power in ("standby", "switching"):
+                state = "standby"
+            elif s.analyzer is None:
+                state = "no_analysis"
+            else:
+                state = {"on": "on", "lost": "lost"}.get(self._current_view(c).kind, "off")
+            cell.set_header(tally, state, c.cfg.kind == "sim", "standby" if s.power == "standby" else "on")
+            st = s.frames.stats()
+            info = f"{st.width}×{st.height} · {st.fps:.0f}" if st.connected and st.width else ""
+            r = s.analyzer.latest() if s.analyzer else None
+            if info and r is not None and r.fps:
+                info += f" · анализ {r.fps:.0f}"
+            cell.set_info(info)
 
     def _current_cfg(self) -> CameraConfig | None:
         c = self.selected_cell
@@ -1049,6 +1105,8 @@ class MainWindow(QMainWindow):
         if key == self._tally_shown:
             return
         self._tally_shown = key
+        self._tally_per = [(inp, state if online else None, known) for inp, state, known in per]
+        self._update_cell_headers()
         for cell, (_inp, state, _known) in zip(self.cells, per):
             cell.video_frame.set_tally(state if online else None)
         inp, state, known = per[self.grid.selected or 0]
@@ -1367,6 +1425,9 @@ class MainWindow(QMainWindow):
             self._remember_speed_scale(s, i)
             self._remember_camera_info(s)
             self._update_target_label(cell, s)
+        self._update_cell_headers()
+        for i, cell in enumerate(self.cells):
+            cell.set_pads(self._cell_pads(i))  # заряд меняется сам по себе
         self._update_selected_status()
 
     def _update_selected_status(self) -> None:
@@ -1827,7 +1888,7 @@ class MainWindow(QMainWindow):
         for f in fb:
             self._pad_feedback(f)
         for i, cell in enumerate(self.cells):
-            cell.set_pads(len(self.pad_router.pads_on(i)))
+            cell.set_pads(self._cell_pads(i))
         if moves:
             self._sync_pad_player()
 
