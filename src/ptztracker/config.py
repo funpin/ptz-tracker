@@ -83,6 +83,7 @@ class AppConfig:
     # геймпады — своя у каждого по опознавателю (серийный номер или «GUID:имя»), имя — для окна «Геймпады…»
     stick_sensitivity: int = 50
     slow_on_tele: bool = True  # на теле тот же наклон поворачивает медленнее
+    preset_rows: list = field(default_factory=list)  # строки панели пресетов: клетки 0–3 сверху вниз; пусто — выбранная
     tele_strength: int = 100  # насколько медленнее на теле: 100 — как раньше, 50 — мягче (manual_curve.tele_scale)
     pad_sensitivity: dict = field(default_factory=dict)
     pad_names: dict = field(default_factory=dict)
@@ -251,6 +252,8 @@ def _fix_control_settings(cfg: AppConfig) -> None:
     cfg.stick_sensitivity = d.stick_sensitivity if s is None else s
     if not isinstance(cfg.slow_on_tele, bool):
         cfg.slow_on_tele = d.slow_on_tele
+    pr = cfg.preset_rows if isinstance(cfg.preset_rows, list) else []
+    cfg.preset_rows = list(dict.fromkeys(v for v in pr if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 4))
     ts = cfg.tele_strength
     cfg.tele_strength = (d.tele_strength if isinstance(ts, bool) or not isinstance(ts, int)
                          else ts if 0 <= ts <= 100 else d.tele_strength)

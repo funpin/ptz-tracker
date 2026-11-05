@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
+    QPushButton,
     QScrollArea,
     QSlider,
     QToolButton,
@@ -132,17 +133,21 @@ class _WheelScroll(QScrollArea):
 
 class PresetRow(QWidget):
     CARD_GAP = SP[1] - 1
-    HEAD_W = 44
+    HEAD_W = 84
     EDGE_W = 20
+    HANDLE_W = 12
 
     def __init__(self, drawer: PresetsDrawer, parent: QWidget | None = None):
         super().__init__(parent)
         self.drawer = drawer
         self.slot = -1
+        self.selected = False
         lay = QHBoxLayout(self)
         lay.setContentsMargins(SP[0], SP[0], SP[0], SP[0])
         lay.setSpacing(SP[1])
-        # слева — номер клетки, как в шапке камеры (у выбранной — белый); имя — в подсказке; эфир — под номером
+        # слева — ⋮⋮ (потянуть — поменять порядок строк), номер клетки (у выбранной — белый), имя и эфир
+        self.handle = _Handle(self)
+        lay.addWidget(self.handle)
         head_box = QWidget()
         head_box.setFixedWidth(self.HEAD_W)
         head_box.setStyleSheet("background: transparent;")
@@ -152,10 +157,13 @@ class PresetRow(QWidget):
         self.number = QLabel()
         self.number.setFixedSize(22, 22)
         self.number.setAlignment(Qt.AlignCenter)
+        self.name_label = QLabel()
+        self.name_label.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION - 1}px; background: transparent;")
         self.tag = StateTag("pgm")
         head.addStretch(1)
-        head.addWidget(self.number, 0, Qt.AlignHCenter)
-        head.addWidget(self.tag, 0, Qt.AlignHCenter)
+        head.addWidget(self.number, 0, Qt.AlignLeft)
+        head.addWidget(self.name_label, 0, Qt.AlignLeft)
+        head.addWidget(self.tag, 0, Qt.AlignLeft)
         head.addStretch(1)
         lay.addWidget(head_box)
         strip = QWidget()
@@ -194,7 +202,7 @@ class PresetRow(QWidget):
         """В строке только целые карточки: ширина ленты — кратна карточке, «›» сразу за последней."""
         super().resizeEvent(e)
         m = self._lay.contentsMargins()
-        fixed = m.left() + m.right() + self.HEAD_W + self.EDGE_W + 2 * self._lay.spacing()
+        fixed = m.left() + m.right() + self.HANDLE_W + self.HEAD_W + self.EDGE_W + 3 * self._lay.spacing()
         step = CARD_W + self.CARD_GAP
         n = max(1, min(SLOTS, (self.width() - fixed + self.CARD_GAP) // step))
         self.scroll.setFixedWidth(n * step - self.CARD_GAP)
@@ -223,7 +231,9 @@ class PresetRow(QWidget):
 
     def set(self, row: DrawerRow, selected: bool) -> None:
         self.slot = row.slot
+        self.selected = selected
         self.number.setText(str(row.slot + 1))
+        self.name_label.setText(self.name_label.fontMetrics().elidedText(row.name, Qt.ElideRight, self.HEAD_W - 4))
         self.number.setToolTip(f"Камера {row.slot + 1}: {row.name}")
         self.number.setStyleSheet(
             f"background: {C.TEXT if selected else C.RAISED_HI}; color: {C.BG if selected else C.TEXT};"
@@ -250,37 +260,32 @@ class PresetRow(QWidget):
         m.exec(card.mapToGlobal(pos))
 
 
-class _Grip(QWidget):
-    """Верхний край панели: потяните вверх — строки других камер, вниз — обратно."""
+class _Handle(QLabel):
+    """⋮⋮ слева у строки: потяните вверх или вниз — строка встанет на новое место (порядок строк пресетов)."""
 
-    def __init__(self, drawer: PresetsDrawer):
-        super().__init__(drawer)
-        self.drawer = drawer
-        self.setFixedHeight(10)
-        self.setCursor(Qt.SizeVerCursor)
-        self.setToolTip("Потяните вверх — пресеты других камер")
+    def __init__(self, row: PresetRow):
+        super().__init__("⠿")
+        self.row = row
+        self.setFixedWidth(PresetRow.HANDLE_W)
+        self.setCursor(Qt.OpenHandCursor)
+        self.setToolTip("Потяните вверх или вниз — поменять порядок строк")
+        self.setStyleSheet(f"color: {C.GREY}; font-size: 15px; font-weight: 700; background: transparent;")
         self._y0: float | None = None
-        self._rows0 = 1
-
-    def paintEvent(self, _e):  # noqa: N802
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(Qt.NoPen)
-        p.setBrush(qcolor(C.GREY))
-        p.drawRoundedRect(QRectF(self.width() / 2 - 22, 3, 44, 4), 2, 2)
-        p.end()
 
     def mousePressEvent(self, e):  # noqa: N802
-        self._y0, self._rows0 = e.position().y(), self.drawer.rows_shown
-
-    def mouseMoveEvent(self, e):  # noqa: N802
-        if self._y0 is not None:
-            dy = self._y0 - e.position().y()
-            self.drawer.set_rows_shown(self._rows0 + round(dy / self.drawer.ROW_H))
+        self._y0 = e.globalPosition().y()
+        self.setCursor(Qt.ClosedHandCursor)
 
     def mouseReleaseEvent(self, e):  # noqa: N802
-        self.mouseMoveEvent(e)
+        if self._y0 is None:
+            return
+        steps = round((e.globalPosition().y() - self._y0) / self.row.drawer.ROW_H)
         self._y0 = None
+        self.setCursor(Qt.OpenHandCursor)
+        if steps:
+            d = self.row.drawer
+            order = [r.slot for r in d.rows]
+            d.move_row(self.row.slot, order.index(self.row.slot) + steps)
 
 
 class PresetsDrawer(QWidget):
@@ -288,6 +293,7 @@ class PresetsDrawer(QWidget):
     storeRequested = Signal(int, int)
     eraseRequested = Signal(int, int)
     rowsShownChanged = Signal(int)
+    rowsOrderChanged = Signal(list)  # клетки строк сверху вниз — кнопки камер и ⋮⋮
     speedChanged = Signal(int)  # скорость переезда в пресет 1…30 — для выбранной камеры (первой строки)
     ROW_H = CARD_H + 12  # строка: карточки и отступы
 
@@ -300,8 +306,11 @@ class PresetsDrawer(QWidget):
         self.rows: list[DrawerRow] = []
         self.row_widgets: list[PresetRow] = []
         self.rows_shown = 1
-        self.grip = _Grip(self)
-        title = QLabel("<b>Пресеты</b> · клик — вызвать, Shift+клик — записать · потяните за край — другие камеры")
+        self.chips: dict[int, QPushButton] = {}
+        self._shown: list[int] = []
+        title = QLabel("<b>Пресеты</b> · строки:")
+        title.setToolTip("Клик по карточке — вызвать пресет, Shift+клик — записать. Кнопки камер — какие строки"
+                         " показать; ⋮⋮ слева у строки — поменять порядок")
         title.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION - 0.5}px;")
         # скорость переезда в пресет (камера помнит её сама) — для выбранной камеры
         self.speed_slider = QSlider(Qt.Horizontal)
@@ -316,7 +325,11 @@ class PresetsDrawer(QWidget):
         hl = QHBoxLayout(head)
         hl.setContentsMargins(0, 0, 0, 0)
         hl.setSpacing(SP[1])
-        hl.addWidget(title, 1)
+        hl.addWidget(title)
+        self._chips_lay = QHBoxLayout()
+        self._chips_lay.setSpacing(SP[0])
+        hl.addLayout(self._chips_lay)
+        hl.addStretch(1)
         speed = QLabel("Скорость переезда")
         speed.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION - 0.5}px;")
         hl.addWidget(speed)
@@ -331,19 +344,69 @@ class PresetsDrawer(QWidget):
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(SP[2], 0, SP[2], SP[1])
         self._lay.setSpacing(2)
-        self._lay.addWidget(self.grip)
+        self._lay.setContentsMargins(SP[2], SP[1], SP[2], SP[1])
         self._lay.addWidget(head)
 
-    def set_rows(self, rows: list[DrawerRow]) -> None:
+    def set_rows(self, rows: list[DrawerRow], selected: int | None = None) -> None:
+        """Строки сверху вниз; selected — клетка выбранной камеры (белый номер), по умолчанию — первая строка."""
         self.rows = list(rows)
         while len(self.row_widgets) < len(rows):
             w = PresetRow(self)
             self.row_widgets.append(w)
             self._lay.addWidget(w)
+        sel = selected if selected is not None else (rows[0].slot if rows else None)
         for i, w in enumerate(self.row_widgets):
             if i < len(rows):
-                w.set(rows[i], i == 0)
+                w.set(rows[i], rows[i].slot == sel)
+        self.rows_shown = len(rows)
         self._apply_rows()
+        self.rowsShownChanged.emit(self.rows_shown)
+
+    def set_cameras(self, cams: list[tuple[int, str]], shown: list[int]) -> None:
+        """Кнопки камер в заголовке: нажата — строка этой камеры показана."""
+        self._shown = list(shown)
+        if [k for k, _n in cams] != list(self.chips) or any(
+                self.chips[k].text() != f"{k + 1} {n}" for k, n in cams):
+            for b in self.chips.values():
+                self._chips_lay.removeWidget(b)
+                b.deleteLater()
+            self.chips = {}
+            for k, name in cams:
+                b = QPushButton(f"{k + 1} {name}")
+                b.setProperty("variant", "seg")
+                b.setCheckable(True)
+                b.setFocusPolicy(Qt.NoFocus)
+                b.setStyleSheet(
+                    f"QPushButton {{ min-height: 22px; padding: 0 {SP[1]}px; font-size: {FS_CAPTION}px;"
+                    f" background: transparent; color: {C.TEXT_DIM}; border: 1px solid {C.LINE}; border-radius: 7px; }}"
+                    f"QPushButton:hover {{ background: {C.RAISED_HI}; }}"
+                    f"QPushButton:checked {{ background: {C.TEXT}; color: {C.BG}; border-color: {C.TEXT};"
+                    f" font-weight: 600; }}")
+                b.clicked.connect(lambda _=False, k=k: self._toggle(k))
+                self.chips[k] = b
+                self._chips_lay.addWidget(b)
+        for k, b in self.chips.items():
+            b.setChecked(k in self._shown)
+
+    def _toggle(self, slot: int) -> None:
+        order = list(self._shown)
+        if slot in order:
+            if len(order) > 1:  # последнюю строку не убрать: панель пресетов без строк бесполезна
+                order.remove(slot)
+        else:
+            order.append(slot)
+        for k, b in self.chips.items():
+            b.setChecked(k in order)
+        self.rowsOrderChanged.emit(order)
+
+    def move_row(self, slot: int, index: int) -> None:
+        """Строку клетки slot — на место index (0 — самая верхняя)."""
+        order = [r.slot for r in self.rows]
+        if slot not in order:
+            return
+        order.remove(slot)
+        order.insert(max(0, min(len(order), index)), slot)
+        self.rowsOrderChanged.emit(order)
 
     def set_speed(self, n: int | None) -> None:
         """Показать скорость выбранной камеры без команды; None — камера ещё не ответила."""

@@ -435,6 +435,7 @@ class MainWindow(QMainWindow):
         self.presets_drawer.storeRequested.connect(self.store_preset)
         self.presets_drawer.eraseRequested.connect(self._erase_preset)
         self.presets_drawer.rowsShownChanged.connect(lambda _n: self._fit_drawer_height())
+        self.presets_drawer.rowsOrderChanged.connect(self._on_preset_rows)
         self.presets_drawer.speedChanged.connect(lambda n: self.session and self.session.set_preset_speed(n))
         left = QWidget()
         left.setObjectName("leftCol")
@@ -1286,19 +1287,37 @@ class MainWindow(QMainWindow):
             self._thumb_cache[cam_id] = self.thumbs.load(cam_id)
         return self._thumb_cache[cam_id]
 
+    def _preset_rows(self) -> list[int]:
+        """Строки панели пресетов сверху вниз: выбранные кнопками камер (config.preset_rows); пока не выбирали —
+        только выбранная камера. Выбор другой камеры порядок не меняет."""
+        cells = self.grid.cells
+        rows = [i for i in self.cfg.preset_rows if 0 <= i < len(cells) and cells[i] is not None]
+        if rows:
+            return rows
+        sel = self.grid.selected
+        if sel is not None and cells[sel] is not None:
+            return [sel]
+        return [i for i, c in enumerate(cells) if c is not None][:1]
+
+    def _on_preset_rows(self, order: list[int]) -> None:
+        self.cfg.preset_rows = list(order)
+        self._save()
+        self._refresh_drawer()
+        self._fit_drawer_height()
+
     def _refresh_drawer(self) -> None:
         if not hasattr(self, "presets_drawer") or self.presets_drawer.isHidden():
             return
         sel = self.grid.selected
-        order = [sel] + [i for i in range(GRID_SLOTS) if i != sel] if sel is not None else range(GRID_SLOTS)
+        order = self._preset_rows()
         rows = []
         for i in order:
-            c = self.grid.cells[i] if i is not None else None
-            if c is None:
-                continue
+            c = self.grid.cells[i]
             rows.append(DrawerRow(i, c.cfg.name, self._tally_per[i][1], dict(self._thumbs_of(c.cfg.id)),
                                   self._last_preset.get(i)))
-        self.presets_drawer.set_rows(rows)
+        self.presets_drawer.set_cameras([(i, c.cfg.name) for i, c in enumerate(self.grid.cells) if c is not None],
+                                        order)
+        self.presets_drawer.set_rows(rows, selected=sel)
         s = self.session
         self.presets_drawer.set_speed(s.image.preset_speed if s is not None else None)
 

@@ -20,14 +20,12 @@ def test_rows_and_cards(qtbot):
     d.set_rows(rows())
     d.show()
     assert len(d.row_widgets) == 2 and len(d.row_widgets[0].cards) == SLOTS
-    assert d.rows_shown == 1 and d.row_widgets[1].isHidden()
+    assert not d.row_widgets[1].isHidden()  # строки — те, что выбраны кнопками камер
     card = d.row_widgets[0].cards[1]
     assert card.last
     head = d.row_widgets[0].number
-    assert head.text() == "2" and "Зал" in head.toolTip()  # номер клетки, имя — в подсказке
+    assert head.text() == "2" and d.row_widgets[0].name_label.text() == "Зал"  # номер и имя под ним
     assert not d.row_widgets[0].cards[0].last
-    d.set_rows_shown(5)
-    assert d.rows_shown == 2 and not d.row_widgets[1].isHidden()
 
 
 def test_click_and_shift_click(qtbot):
@@ -44,16 +42,32 @@ def test_click_and_shift_click(qtbot):
     assert got == [("recall", 1, 3), ("store", 1, 3)]
 
 
-def test_grip_drag_shows_more_rows(qtbot):
+def test_camera_chips_toggle_rows(qtbot):
     d = PresetsDrawer()
     qtbot.addWidget(d)
+    got = []
+    d.rowsOrderChanged.connect(got.append)
+    d.set_cameras([(0, "Сцена"), (1, "Зал"), (3, "Общий")], shown=[1])
+    assert [c.isChecked() for c in d.chips.values()] == [False, True, False]
+    assert d.chips[0].text() == "1 Сцена"
+    d.chips[3].click()
+    assert got[-1] == [1, 3]
+    d.set_cameras([(0, "Сцена"), (1, "Зал"), (3, "Общий")], shown=[1, 3])
+    d.chips[1].click()
+    assert got[-1] == [3]
+    d.set_cameras([(0, "Сцена"), (1, "Зал"), (3, "Общий")], shown=[3])
+    d.chips[3].click()  # последнюю строку не убрать
+    assert got[-1] == [3]
+
+
+def test_move_row(qtbot):
+    d = PresetsDrawer()
+    qtbot.addWidget(d)
+    got = []
+    d.rowsOrderChanged.connect(got.append)
     d.set_rows(rows())
-    d.show()
-    g = d.grip
-    qtbot.mousePress(g, Qt.LeftButton, pos=QPoint(10, 3))
-    qtbot.mouseMove(g, QPoint(10, 3 - d.ROW_H - 5))
-    qtbot.mouseRelease(g, Qt.LeftButton, pos=QPoint(10, 3 - d.ROW_H - 5))
-    assert d.rows_shown == 2
+    d.move_row(0, 0)  # «Сцена» (клетка 0) — наверх
+    assert got[-1] == [0, 1]
 
 
 def make(qtbot, tmp_path):
@@ -73,11 +87,17 @@ def test_toggle_by_button_and_p(qtbot, tmp_path):
     w.close()
 
 
-def test_selected_camera_first(qtbot, tmp_path):
+def test_rows_from_chips_saved_and_stable(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     w.presets_btn.click()
     w.select_slot(1)
+    assert [r.slot for r in w.presets_drawer.rows] == [1]  # по умолчанию — только выбранная камера
+    w.presets_drawer.chips[0].click()
     assert [r.slot for r in w.presets_drawer.rows] == [1, 0]
+    assert ConfigStore(tmp_path / "c.json").load().preset_rows == [1, 0]
+    w.select_slot(0)
+    assert [r.slot for r in w.presets_drawer.rows] == [1, 0]  # выбор камеры порядок не меняет
+    assert w.presets_drawer.row_widgets[1].selected
     w.close()
 
 
@@ -147,7 +167,7 @@ def test_opening_presets_grows_window_not_cameras(qtbot, tmp_path):
     qtbot.waitUntil(lambda: w.height() > h0 + 50, timeout=2000)
     qtbot.wait(100)
     assert abs(w.grid_host.height() - cell0) <= 4
-    w.presets_drawer.set_rows_shown(2)
+    w.presets_drawer.chips[1].click()  # вторая строка
     qtbot.wait(100)
     assert abs(w.grid_host.height() - cell0) <= 4
     w.presets_btn.click()
