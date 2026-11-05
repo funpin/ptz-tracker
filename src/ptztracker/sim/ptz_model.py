@@ -107,6 +107,7 @@ class SimPtz:
         self.color_temp = 0x1A
         # затвор, Synchro, уровень чёрного, резкость, скорость пресетов — как у HE42 после сброса ⚠ по документации
         self.shutter, self.synchro, self.pedestal, self.detail, self.preset_speed = 0x0, 0x001, 0x096, 1, 625
+        self.scene = 2  # Manual 1 (protocol.SCENES): в симуляторе картинку можно настраивать
         self.osd_open = False  # меню Panasonic на камере (DUS); картинку меню симулятор не рисует
         self.received: deque[str] = deque(maxlen=5000)
         self._target: tuple[float, float] | None = None
@@ -277,6 +278,11 @@ class SimPtz:
         if m := re.fullmatch(r"ODT:([0-2])", cmd):
             self.detail = int(m[1])
             return cmd
+        if cmd == "QSF":
+            return f"OSF:{self.scene}"
+        if m := re.fullmatch(r"XSF:([1-4])", cmd):
+            self.scene = int(m[1])
+            return f"OSF:{self.scene}"
         if cmd == "#UPVS":
             return f"uPVS{self.preset_speed:03d}"
         if m := re.fullmatch(r"#UPVS(\d{3})", cmd):

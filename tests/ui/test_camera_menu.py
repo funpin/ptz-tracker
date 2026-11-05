@@ -522,3 +522,51 @@ def test_osd_mode_is_compact_on_the_left(qtbot):
     m._leave_osd()
     m._render()
     assert m.placement() == "center"
+
+
+# --- выключить камеру и сцена (Full Auto) из быстрых настроек (пользователь 2026-11-06) ---------------
+
+
+class PowerSceneSession(OsdSession):
+    def __init__(self):
+        super().__init__()
+        self.power = "on"
+        self.image = dataclasses.replace(ImageState(), shutter=0, pedestal=0, detail=1, scene=1)
+
+    def set_power(self, on):
+        self.calls.append(("power", on))
+
+    def set_scene(self, n):
+        self.calls.append(("scene", n))
+
+
+def test_power_off_needs_second_press(qtbot):
+    s = PowerSceneSession()
+    m, _ = build(qtbot, s)
+    m.open()
+    keys = m.visible_keys()
+    assert keys[-3:] == ["scene", "standby", "osd"] or keys[-2:] == ["standby", "osd"]
+    m.click_item("standby")
+    assert ("power", False) not in s.calls and "ещё раз" in m._rows["standby"].value.text()
+    m.accept()
+    assert ("power", False) in s.calls
+
+
+def test_power_off_confirm_expires(qtbot, monkeypatch):
+    monkeypatch.setattr(cm, "CONFIRM_S", 0.05)
+    s = PowerSceneSession()
+    m, _ = build(qtbot, s)
+    m.open()
+    m.click_item("standby")
+    qtbot.wait(120)
+    m.accept()
+    assert ("power", False) not in s.calls  # подтверждение просрочено — снова первое нажатие
+
+
+def test_scene_cycles_and_names_full_auto(qtbot):
+    s = PowerSceneSession()
+    m, _ = build(qtbot, s)
+    m.open()
+    assert "Full Auto" in m.values()["scene"]
+    m.click_item("scene")  # × или → — следующая сцена
+    assert s.calls[-1] == ("scene", 2) and "Manual 1" in m.values()["scene"]

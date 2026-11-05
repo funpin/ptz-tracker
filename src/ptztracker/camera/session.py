@@ -72,6 +72,7 @@ class ImageState:
     pedestal: int | None = None  # уровень чёрного −10…+10
     detail: int | None = None  # резкость 0 выкл, 1 низкая, 2 высокая
     preset_speed: int | None = None  # скорость переезда в пресет 1…30
+    scene: int | None = None  # сцена: 1 Full Auto, 2–4 Manual 1–3 (protocol.SCENES) ⚠
 
 
 @dataclasses.dataclass(frozen=True)
@@ -532,7 +533,7 @@ class CameraSession:
         for key, cmd in (
             ("q_gain", P.Q_GAIN), ("q_wb", P.Q_WB), ("q_ctemp", P.Q_COLOR_TEMP), ("q_iris", P.Q_IRIS),
             ("q_shutter", P.Q_SHUTTER), ("q_synchro", P.Q_SYNCHRO), ("q_pedestal", P.Q_PEDESTAL),
-            ("q_detail", P.Q_DETAIL), ("q_preset_speed", P.Q_PRESET_SPEED),
+            ("q_detail", P.Q_DETAIL), ("q_preset_speed", P.Q_PRESET_SPEED), ("q_scene", P.Q_SCENE),
         ):
             self.scheduler.submit(key, cmd, Priority.QUERY, only_if_changed=False)
 
@@ -646,6 +647,10 @@ class CameraSession:
                 self._upd(pedestal=P.parse_pedestal(reply))
             elif ok and (cmd == P.Q_DETAIL or str(cmd).startswith("ODT:")):
                 self._upd(detail=P.parse_detail(reply))
+            elif ok and (cmd == P.Q_SCENE or str(cmd).startswith("XSF:")):
+                self._upd(scene=P.parse_scene(reply))
+                if str(cmd).startswith("XSF:"):
+                    self.refresh_image()  # другая сцена — другие ирис, gain, баланс белого
             elif ok and str(cmd).startswith(P.Q_PRESET_SPEED):
                 self._upd(preset_speed=P.parse_preset_speed(reply))
             elif ok and cmd == P.Q_IRIS:
@@ -770,6 +775,11 @@ class CameraSession:
 
     def set_detail(self, mode: int) -> None:
         self._submit("detail", P.detail(mode), only_if_changed=False)
+
+    def set_scene(self, n: int) -> None:
+        """Сцена камеры (Full Auto / Manual 1–3): выход из Full Auto — чтобы ирис, gain и баланс белого
+        стали доступны."""
+        self._submit("scene", P.scene(n), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
 
     def set_preset_speed(self, n: int) -> None:
         self._submit("preset_speed", P.preset_speed(n), only_if_changed=False)

@@ -280,6 +280,24 @@ def parse_detail(body: str) -> int:
     return _parse_hex(r"ODT:([0-2])", body, "резкости")
 
 
+# Сцена (scene file): у HE40/HE42 — Full Auto, Manual1, Manual2, Manual3. В Full Auto камера сама держит ирис,
+# gain, баланс белого и затвор и отвечает ER3 на их команды. Запрос QSF → OSF:n, выбор XSF:n
+# (Panasonic «HD Integrated Camera Interface Specifications», раздел Scene file) ⚠ номера сцен не сверены
+# на живой камере — подписи ниже по порядку в меню камеры.
+Q_SCENE = "QSF"
+SCENES: dict[int, str] = {1: "Full Auto", 2: "Manual 1", 3: "Manual 2", 4: "Manual 3"}
+
+
+def scene(n: int) -> str:
+    if n not in SCENES:
+        raise ValueError(f"scene={n!r}: допустимы {sorted(SCENES)}")
+    return f"XSF:{n}"
+
+
+def parse_scene(body: str) -> int:
+    return _parse_hex(r"OSF:([0-9])", body, "сцены")
+
+
 def preset_speed(n: int) -> str:
     """Скорость переезда в пресет 1 (медленно) … 30 (быстро) → #UPVS250…999."""
     _check_range("preset_speed", n, 1, 30)

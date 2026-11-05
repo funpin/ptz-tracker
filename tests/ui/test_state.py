@@ -11,7 +11,7 @@ def test_view_off_without_reason():
 
 def test_view_off_with_reason():
     v = tracking_view(False, "ручное управление", 3, None)
-    assert v.kind == "off" and v.why == "Выключено: ручное управление"
+    assert v.kind == "off" and v.why == "Слежение выключено: ручное управление"
 
 
 def test_view_on():
@@ -132,3 +132,9 @@ def test_recalibration_hint_old_calibration_without_model():
     h = recalibration_hint({"pan": {}}, None, None)
     assert h and "заново" in h and "прежн" in h
     assert recalibration_hint({"model": None}, "AW-HE42", None) == h
+
+
+
+def test_operator_off_is_short():
+    v = tracking_view(False, "выключено оператором", None, None)
+    assert v.why == "Слежение выключено"  # без «Выключено: выключено оператором»

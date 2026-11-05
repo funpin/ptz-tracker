@@ -46,7 +46,8 @@ def tracking_view(
             "swing", "РАСКАЧКА",
             "Слежение остановлено: камера быстрее, чем ожидалось.",
             "РАСКАЧКА", C.FAULT, True)
-    why = (f"Выключено: {reason}" if reason else
+    why = ("Слежение выключено" if reason == "выключено оператором" else
+           f"Слежение выключено: {reason}" if reason else
            "Кликните по человеку на видео, затем нажмите Пробел.")
     return TrackingView("off", "ВЫКЛ", why, "ВЫКЛ", C.TEXT_FAINT, False)
 

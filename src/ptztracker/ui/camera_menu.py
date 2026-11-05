@@ -67,6 +67,10 @@ WHY = {
     "pedestal": "Уровень чёрного: подогнать картинку под соседние камеры, чтобы при переключении не было скачка.",
     "detail": "Резкость контуров: подогнать под соседние камеры; «Высокая» делает лица жёстче.",
     "power": "Камера в режиме ожидания. × или → — включить (видео появится секунд через 8).",
+    "scene": "Сцена камеры. Full Auto — камера сама держит ирис, gain и баланс белого, вручную их не поменять;"
+             " Manual 1–3 — можно настраивать.",
+    "standby": "Перевести камеру в режим ожидания: видео пропадёт, включение — около 8 секунд."
+               " Нажмите × два раза — защита от случайного нажатия.",
     "osd": "Всё остальное, что умеет камера, — в её собственном меню Panasonic. Оно появляется в видео камеры"
            " (у камеры в эфире — и в эфире).",
 }
@@ -76,9 +80,11 @@ TITLE_OSD = "Меню Panasonic на камере"
 KEYS_QUICK = "↑↓ пункт · ←→ значение · ○ закрыть"
 KEYS_OSD = "↑↓  пункт\n→  выбрать\n←  назад\n○  закрыть"
 OSD_WIDTH = 150  # в меню Panasonic — узкая плашка слева: середину кадра занимает меню самой камеры
-ORDER = ("power", "focus", "wb", "ctemp", "iris", "gain", "shutter", "synchro", "pedestal", "detail", "osd")
-REFUSED_HINT = ("Камера не принимает эту настройку: она в режиме Full Auto. Выключите Full Auto "
-                "(«Меню Panasonic на камере» → Scene) — тогда настройки заработают.")
+ORDER = ("power", "focus", "wb", "ctemp", "iris", "gain", "shutter", "synchro", "pedestal", "detail", "scene",
+         "standby", "osd")
+CONFIRM_S = 3.0  # «Выключить камеру»: второе нажатие × должно прийти за это время
+REFUSED_HINT = ("Камера не принимает эту настройку: она в режиме Full Auto. Выберите «Сцена» → Manual 1"
+                " ниже — тогда настройки заработают.")
 OSD_HINT = "Меню рисует сама камера — смотрите на картинку этой клетки. ○ или Esc — закрыть меню камеры."
 HZ50 = True  # ⚠ сеть 50 Гц (Россия): подписи затвора и частоты Synchro; формат камеры пока не спрашиваем
 
@@ -123,6 +129,7 @@ class CameraMenu(QFrame):
         self.on_air: Callable[[], bool] = lambda: False  # окно подставляет: камера меню сейчас в PGM
         self.on_power_on: Callable[[], None] = lambda: None  # окно подставляет: включить камеру меню
         self._placement = "center"
+        self._confirm_until = 0.0  # «Выключить камеру»: ждём второе нажатие до этого момента
         self._rows: dict[str, _Row] = {}
         for key in ORDER:
             r = _Row(key)
@@ -211,6 +218,10 @@ class CameraMenu(QFrame):
             return self._has(RARE[key]) and self._val(key) is not None
         if key == "osd":
             return self._has("set_osd", "osd_key")
+        if key == "scene":
+            return self._has("set_scene") and self._val("scene") is not None
+        if key == "standby":
+            return self._has("set_power") and self._power() == "on"
         return False
 
     def visible_keys(self) -> list[str]:
@@ -229,6 +240,10 @@ class CameraMenu(QFrame):
             keys.append("pedestal")
         if self._has("set_detail"):
             keys.append("detail")
+        if self._has("set_scene") and self._val("scene") is not None:
+            keys.append("scene")
+        if self._has("set_power"):
+            keys.append("standby")
         if self._has("set_osd"):
             keys.append("osd")
         return keys
@@ -255,6 +270,12 @@ class CameraMenu(QFrame):
         out["detail"] = "—" if dt is None else P.DETAIL_MODES.get(dt, "?")
         out["osd"] = "›"
         out["power"] = "включается…" if self._power() == "switching" else "×"
+        sc = self._val("scene")
+        out["scene"] = "—" if sc is None else f"{P.SCENES.get(sc, sc)}  ◀ ▶"
+        if time.monotonic() < self._confirm_until:
+            out["standby"] = ("В ЭФИРЕ! × ещё раз" if self.on_air() else "× ещё раз — выключить")
+        else:
+            out["standby"] = "×"
         return out
 
     def _set_hint_color(self, color: str) -> None:
@@ -274,7 +295,7 @@ class CameraMenu(QFrame):
             above = [k for k in ORDER[:i] if k in keys and self._enabled(k)]
             self._cursor = above[-1] if above else next((k for k in keys if self._enabled(k)), keys[0])
         vals = self.values()
-        titles = {"power": "Включить камеру", "focus": "Фокус", "wb": "Баланс белого", "ctemp": "   Цвет. температура",
+        titles = {"scene": "Сцена", "standby": "Выключить камеру", "power": "Включить камеру", "focus": "Фокус", "wb": "Баланс белого", "ctemp": "   Цвет. температура",
                   "iris": "Ирис", "gain": "Gain", "shutter": "Затвор", "synchro": "   Частота Synchro",
                   "pedestal": "Уровень чёрного", "detail": "Резкость", "osd": "Меню Panasonic на камере"}
         self.title_label.setText(TITLE_OSD if self.osd_mode else TITLE_QUICK)
@@ -384,6 +405,13 @@ class CameraMenu(QFrame):
             if d > 0:
                 self.on_power_on()
             return
+        if k == "standby":
+            if d > 0:
+                self._standby_press()
+            return
+        if k == "scene":
+            self._scene_step(d)
+            return
         self._light(k)
         if k == "focus":
             if not self._controls.af_check.isChecked():
@@ -415,6 +443,10 @@ class CameraMenu(QFrame):
                 self.on_power_on()
             self._render()
             return
+        if k == "standby":
+            self._standby_press()
+            self._render()
+            return
         if self._enabled(k):
             self._light(k)
             if k == "osd":
@@ -423,6 +455,8 @@ class CameraMenu(QFrame):
                 self._wb_step(+1)
             elif k in ("shutter", "detail"):
                 self._rare_step(k, +1)
+            elif k == "scene":
+                self._scene_step(+1)
             elif k not in ("ctemp", "synchro", "pedestal"):
                 self._toggle(k)
         self._render()
@@ -481,6 +515,32 @@ class CameraMenu(QFrame):
         self.osd_mode = True
         self._render()
         self._restart()
+
+    def _standby_press(self) -> None:
+        """Первое нажатие — «× ещё раз»; второе за CONFIRM_S — в режим ожидания (как ⋯ → режим ожидания)."""
+        if not self._enabled("standby"):
+            return
+        now = time.monotonic()
+        if now < self._confirm_until:
+            self._confirm_until = 0.0
+            self._s().set_power(False)
+        else:
+            self._confirm_until = now + CONFIRM_S
+            QTimer.singleShot(int(CONFIRM_S * 1000) + 50, self._render)  # подпись вернётся к «×»
+
+    def _scene_step(self, d: int) -> None:
+        cur = self._val("scene")
+        keys = sorted(P.SCENES)
+        i = keys.index(cur) if cur in keys else 0
+        new = keys[(i + (1 if d >= 0 else -1)) % len(keys)]
+        if self.on_air():
+            from PySide6.QtWidgets import QMessageBox
+
+            q = "Камера сейчас в эфире (PGM). Смена сцены меняет картинку — зрители это увидят.\n\nСменить?"
+            if QMessageBox.question(self.window(), "Сцена камеры", q) != QMessageBox.Yes:
+                return
+        self._remember("scene", new)
+        self._s().set_scene(new)
 
     def _leave_osd(self) -> None:
         if self.osd_mode:
