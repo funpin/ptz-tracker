@@ -135,3 +135,19 @@ def test_service_replaced_and_none_without_service(qtbot):
     c.set_service(a)
     c.set_service(b)
     assert b.isVisible() and a.parent() is None
+
+
+def test_number_tile_takes_tally_color(qtbot):
+    """Эфир видно издалека: номер клетки красный в PGM, зелёный в PVW (пользователь 2026-11-05)."""
+    from ptztracker.ui.theme import C
+
+    c = make(qtbot)
+    c.set_selected(True)
+    c.set_header("pgm", "on", False, "on")
+    assert f"background: {C.PGM}" in c.number_label.styleSheet()
+    c.set_header("pvw", "on", False, "on")
+    assert f"background: {C.PVW}" in c.number_label.styleSheet()
+    c.set_header(None, "on", False, "on")
+    assert f"background: {C.TEXT}" in c.number_label.styleSheet()  # без эфира — как раньше: выбранная белая
+    c.set_selected(False)
+    assert f"background: {C.RAISED_HI}" in c.number_label.styleSheet()

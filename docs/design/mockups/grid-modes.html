@@ -1,0 +1,53 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Режимы сетки</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A;--pgm:#E8202A;--pvw:#2FB65E;--lost:#F0A020}
+*{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:16px 18px;font-size:12px}
+h1{font-size:18px;margin:0 0 4px}.sub{color:var(--dim);font-size:12.5px;margin:0 0 12px;line-height:1.45;max-width:1150px}
+.g{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.v h3{margin:0 0 3px;font-size:13.5px}.v p{color:var(--dim);font-size:11.5px;line-height:1.4;margin:0 0 8px;min-height:64px}
+.win{background:var(--bg);border:1px solid var(--line);border-radius:8px;height:250px;display:flex;flex-direction:column;overflow:hidden}
+.top{height:20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:6px;padding:0 6px;font-size:9px;color:var(--faint)}
+.seg{margin-left:auto;display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}.seg span{padding:1px 6px;font-size:9px}.seg span.on{background:var(--white);color:var(--bg);font-weight:700}
+.body{flex:1;display:flex;gap:4px;padding:4px}
+.grid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:4px}
+.side{width:52px;background:var(--surface);border:1px solid var(--line);border-radius:5px}
+.c{border:1px solid var(--line);border-radius:5px;background:var(--surface);position:relative;padding:4px;font-size:9px;color:var(--dim);overflow:hidden}
+.c.cam{background:linear-gradient(180deg,#4f5866,#3e434c 55%,#4d3c2e 56%,#3a2d22)}
+.c .n{position:absolute;left:4px;top:4px;background:var(--raised-hi);color:var(--white);border-radius:3px;padding:0 4px;font-weight:700;font-size:9px}
+.c.sel{border-color:var(--white)}.c.pgm{outline:2px solid var(--pgm);outline-offset:-2px}
+.lab{position:absolute;left:24px;top:4px;color:var(--white);font-weight:600}
+.dd{position:absolute;right:4px;top:3px;font-size:9px;color:var(--white);border:1px solid var(--line);border-radius:4px;padding:0 4px;background:var(--raised)}
+.menu{position:absolute;left:22px;top:18px;background:var(--raised);border:1px solid var(--line);border-radius:5px;padding:3px;width:120px;z-index:3}
+.menu div{padding:2px 5px;border-radius:3px;font-size:9.5px;color:var(--dim)}.menu div.on{background:var(--raised-hi);color:var(--white)}.menu div.on:before{content:"✓ ";color:var(--lime)}
+.prog{position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--raised-hi)}.prog i{display:block;height:100%;width:60%;background:var(--lime)}
+.strip{height:40px;display:flex;gap:4px;margin-top:4px}.strip .c{flex:1}
+.note{color:var(--faint);font-size:10.5px;margin-top:6px;line-height:1.35}
+.choice{display:inline-flex;margin:14px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:var(--dim)}.choice.selected{border-color:var(--lime);color:var(--lime)}
+</style></head><body>
+<h1>Режимы «4 камеры» и «1 камера»</h1>
+<p class="sub">Сейчас режима «1 камера» нет: всегда сетка 2×2, а пустые клетки заполняются служебными («Сводка», «Положение камер», «Графики PTZ»). Ниже — как предлагаю сделать. Переключение — кнопка ▦/▢ в верхней строке, клавиша <b>G</b> или двойной клик по шапке клетки.</p>
+<div class="g">
+<div class="v"><h3>Режим «1 камера»</h3><p>Выбранная камера на всю ширину. Под ней — полоска остальных камер: клик переключает, рамка эфира видна и тут. Панель справа без изменений.</p>
+<div class="win"><div class="top">PTZ TRACKER<span class="seg"><span>▦ 4</span><span class="on">▢ 1</span></span></div>
+<div class="body"><div style="flex:1;display:flex;flex-direction:column"><div class="c cam sel pgm" style="flex:1"><span class="n" style="background:var(--pgm)">1</span><span class="lab">Сцена</span></div>
+<div class="strip"><div class="c cam"><span class="n" style="background:var(--pvw);color:var(--bg)">2</span></div><div class="c cam"><span class="n">3</span></div><div class="c"><span class="n">≡</span><span class="lab" style="left:20px">Сводка</span></div></div></div><div class="side"></div></div></div>
+<div class="note">Полоска — 40–60 px по высоте, видео в ней живое, но с меньшей частотой кадров.</div></div>
+
+<div class="v"><h3>Одна камера в режиме «4»</h3><p>Предлагаю: при одной подключённой камере программа сама открывается в «1 камера» — сетка с тремя служебными клетками для неё не нужна. В «4» можно перейти кнопкой.</p>
+<div class="win"><div class="top">PTZ TRACKER<span class="seg"><span class="on">▦ 4</span><span>▢ 1</span></span></div>
+<div class="body"><div class="grid"><div class="c cam sel"><span class="n">1</span></div><div class="c"><span class="n">2</span><span class="lab">Сводка</span></div><div class="c"><span class="n">3</span><span class="lab">Положение камер</span></div><div class="c"><span class="n">4</span><span class="lab">Графики PTZ</span></div></div><div class="side"></div></div></div>
+<div class="note">Так сейчас: камера + три служебные клетки.</div></div>
+
+<div class="v"><h3>Три камеры — одна свободная клетка</h3><p>Ваше предложение: в шапке клетки — выбор «Сводка», «Положение камер» или «По очереди». По очереди — смена раз в 30 с, внизу тонкая полоска до следующей смены.</p>
+<div class="win"><div class="top">PTZ TRACKER<span class="seg"><span class="on">▦ 4</span><span>▢ 1</span></span></div>
+<div class="body"><div class="grid"><div class="c cam sel pgm"><span class="n" style="background:var(--pgm)">1</span></div><div class="c cam"><span class="n" style="background:var(--pvw);color:var(--bg)">2</span></div><div class="c cam"><span class="n">3</span></div>
+<div class="c"><span class="n">4</span><span class="dd" style="left:22px;right:auto">По очереди ⌄</span><div class="menu"><div>Сводка</div><div>Положение камер</div><div class="on">По очереди · 30 с</div></div><div class="prog"><i></i></div></div></div><div class="side"></div></div></div>
+<div class="note">Наведение мыши на клетку ставит смену на паузу.</div></div>
+
+<div class="v"><h3>Две камеры</h3><p>Как сейчас: две служебные клетки — «Сводка» и «Положение камер». В шапке каждой — тот же выбор: что показывать в этой клетке («Сводка», «Положение камер», «Графики PTZ»).</p>
+<div class="win"><div class="top">PTZ TRACKER<span class="seg"><span class="on">▦ 4</span><span>▢ 1</span></span></div>
+<div class="body"><div class="grid"><div class="c cam sel"><span class="n">1</span></div><div class="c cam"><span class="n">2</span></div><div class="c"><span class="n">3</span><span class="dd" style="left:22px;right:auto">Сводка ⌄</span></div><div class="c"><span class="n">4</span><span class="dd" style="left:22px;right:auto">Положение камер ⌄</span></div></div><div class="side"></div></div></div></div>
+</div>
+<div><span class="choice" data-choice="ok">Так нравится</span><span class="choice" data-choice="change">Поменять (напишу)</span></div>
+</body></html>

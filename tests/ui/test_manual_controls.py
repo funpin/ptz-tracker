@@ -238,3 +238,19 @@ def test_slider_handle_not_clipped(qtbot):
     finally:
         app.setStyleSheet(old_style)
         app.setPalette(old_pal)
+
+
+def test_iris_and_wb_show_values(qtbot):
+    """Как у Gain: у ириса — насколько открыт, у баланса белого — режим или кельвины (пользователь 2026-11-05)."""
+    from ptztracker.camera import protocol as P
+
+    c, _ = make(qtbot)
+    c.iris_slider.setValue(45)
+    assert c.iris_value.text() == "45 %"
+    labels = {}
+    for mode in (0, 1, 4, 5, P.WB_VAR):
+        c.wb_combo.setCurrentIndex(c.wb_combo.findData(mode))
+        labels[mode] = c.ctemp_value.text()
+    assert labels[0] == "авто" and labels[1] == "память"
+    assert labels[4] == "3200 K" and labels[5] == "5600 K"
+    assert labels[P.WB_VAR].startswith("≈") and labels[P.WB_VAR].endswith("K")

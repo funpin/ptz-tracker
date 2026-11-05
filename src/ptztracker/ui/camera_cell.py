@@ -34,6 +34,7 @@ class CameraCell(QFrame):
         super().__init__(parent)
         self.slot = slot
         self._selected = False
+        self._tally: str | None = None
         self.setObjectName("cameraCell")
 
         self.preview = PreviewWidget()
@@ -78,8 +79,9 @@ class CameraCell(QFrame):
             f"QComboBox:hover {{ background: {C.RAISED}; }}"
             "QComboBox::drop-down { border: none; width: 14px; }"
             # шапка чистая, как раньше; галочка ⌄ — только при наведении, что тут можно выбрать камеру
-            "QComboBox::down-arrow { image: none; }"
-            f"QComboBox:hover::down-arrow {{ image: url({CHEVRON}); width: 10px; height: 10px; }}")
+            # «image: none» на Mac возвращает крупную системную стрелку — прячем нулевым размером
+            f"QComboBox::down-arrow {{ image: url({CHEVRON}); width: 0px; height: 0px; }}"
+            "QComboBox:hover::down-arrow { width: 10px; height: 10px; }")
         self.tally_tag = StateTag("pgm")
         self.state_tag = StateTag("off")
         self.sim_tag = StateTag("sim")
@@ -172,9 +174,11 @@ class CameraCell(QFrame):
         self.setStyleSheet(
             f"QFrame#cameraCell {{ background: {C.SURFACE}; border: 1px solid {border};"
             f" border-radius: {R_PANEL}px; }}")
-        on = self._selected
+        # номер клетки — цветом эфира, чтобы PGM/PVW было видно издалека; без эфира у выбранной — белый
+        bg, fg = {"pgm": (C.PGM, C.TEXT), "pvw": (C.PVW, C.BG)}.get(
+            self._tally or "", (C.TEXT, C.BG) if self._selected else (C.RAISED_HI, C.TEXT))
         self.number_label.setStyleSheet(
-            f"background: {C.TEXT if on else C.RAISED_HI}; color: {C.BG if on else C.TEXT};"
+            f"background: {bg}; color: {fg};"
             f" border-radius: {R_TAG + 1}px; font-weight: 700; font-size: {FS_CAPTION}px;")
 
     def set_pads(self, pads: list[tuple[int, int | None, bool]]) -> None:
@@ -197,6 +201,9 @@ class CameraCell(QFrame):
         self.tally_tag.setVisible(tally is not None)
         if tally:
             self.tally_tag.set(tally)
+        if tally != self._tally:
+            self._tally = tally
+            self._apply_border()
         self.state_tag.setVisible(state is not None)
         if state:
             self.state_tag.set(state)

@@ -1,0 +1,60 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Сводка — варианты</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A;--pgm:#E8202A;--pvw:#2FB65E;--lost:#F0A020}
+*{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:16px 18px;font-size:13px}
+h1{font-size:18px;margin:0 0 4px}.sub{color:var(--dim);font-size:12.5px;margin:0 0 12px;max-width:1150px;line-height:1.45}
+.g{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.v h3{margin:0 0 3px;font-size:14px}.v p{color:var(--dim);font-size:12px;line-height:1.4;margin:0 0 8px;min-height:50px}
+.cell{background:var(--surface);border:1px solid var(--line);border-radius:10px;height:300px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+.hd{display:flex;align-items:center;gap:8px;font-weight:600}.n{width:20px;height:20px;border-radius:5px;background:var(--raised-hi);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+.n.pgm{background:var(--pgm)}.n.pvw{background:var(--pvw);color:var(--bg)}
+.lbl{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.big{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-1px;line-height:1}
+.mid{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.tl{height:10px;border-radius:3px;display:flex;overflow:hidden;background:var(--raised);flex:1}.tl i{height:100%}
+.air{height:3px;border-radius:2px;display:flex;margin-top:2px}.air i{height:100%}
+.ax{display:flex;justify-content:space-between;color:var(--faint);font-size:10px}
+.lg{display:flex;gap:10px;font-size:10px;color:var(--faint)}.lg span:before{content:"";display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:4px;background:var(--c)}
+.foot{margin-top:auto;color:var(--faint);font-size:11px;border-top:1px solid var(--line);padding-top:6px}
+.tile{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.ring{width:84px;height:84px;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative}
+.ring:after{content:"";position:absolute;inset:9px;border-radius:50%;background:var(--surface)}
+.ring b{position:relative;z-index:1;font-size:15px;font-variant-numeric:tabular-nums}
+.choice{display:inline-flex;margin:14px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:var(--dim)}.choice.selected{border-color:var(--lime);color:var(--lime)}
+</style></head><body>
+<h1>«Сводка»: лента времени + эфирные часы</h1>
+<p class="sub">Клетка «Сводка» в настоящем размере окна 1640×850. Что в окне уже есть (ярлыки состояния, кадры в секунду), здесь не повторяем. Без ATEM вместо «в эфире» часы считают слежение.</p>
+<div class="g">
+
+<div class="v"><h3>1 · Табло сверху, дорожки снизу</h3><p>Крупно: кто в эфире и сколько, сколько ведёт без потери. Под ним — дорожки всех камер за 10 минут.</p>
+<div class="cell"><div class="hd"><span class="n">3</span>Сводка</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+<div class="tile"><div class="lbl" style="color:var(--pgm)">в эфире · 1 Сцена</div><div class="big">04:37</div></div>
+<div class="tile"><div class="lbl" style="color:var(--lime)">ведёт без потери</div><div class="big">02:12</div></div></div>
+<div><div style="display:flex;align-items:center;gap:8px"><span class="n pgm">1</span><div class="tl"><i style="width:18%;background:var(--grey)"></i><i style="width:30%;background:var(--lime)"></i><i style="width:5%;background:var(--lost)"></i><i style="width:47%;background:var(--lime)"></i></div></div>
+<div style="display:flex;align-items:center;gap:8px;margin-top:7px"><span class="n pvw">2</span><div class="tl"><i style="width:60%;background:var(--grey)"></i><i style="width:40%;background:var(--lime)"></i></div></div>
+<div class="ax" style="margin:4px 0 0 28px"><span>−10 мин</span><span>−5</span><span>сейчас</span></div></div>
+<div class="lg"><span style="--c:var(--lime)">ведёт</span><span style="--c:var(--lost)">ищет</span><span style="--c:var(--grey)">вручную</span></div>
+<div class="foot">Сегодня: в эфире Сцена 38 мин, Зал 21 мин · цель терялась 3 раза</div></div></div>
+
+<div class="v"><h3>2 · Строка на камеру</h3><p>Каждая камера — строка: дорожка за 10 минут и справа её собственные часы. Эфир — красной чертой под дорожкой.</p>
+<div class="cell"><div class="hd"><span class="n">3</span>Сводка</div>
+<div class="tile" style="display:flex;gap:10px;align-items:center"><span class="n pgm">1</span><div style="flex:1"><div class="tl"><i style="width:18%;background:var(--grey)"></i><i style="width:30%;background:var(--lime)"></i><i style="width:5%;background:var(--lost)"></i><i style="width:47%;background:var(--lime)"></i></div><div class="air"><i style="width:45%"></i><i style="width:55%;background:var(--pgm)"></i></div></div>
+<div style="text-align:right;min-width:78px"><div class="lbl" style="color:var(--pgm)">в эфире</div><div class="mid">04:37</div></div></div>
+<div class="tile" style="display:flex;gap:10px;align-items:center"><span class="n pvw">2</span><div style="flex:1"><div class="tl"><i style="width:60%;background:var(--grey)"></i><i style="width:40%;background:var(--lime)"></i></div><div class="air"><i style="width:100%"></i></div></div>
+<div style="text-align:right;min-width:78px"><div class="lbl" style="color:var(--lime)">ведёт</div><div class="mid">03:58</div></div></div>
+<div class="ax" style="margin-left:30px;margin-right:88px"><span>−10 мин</span><span>сейчас</span></div>
+<div class="lg"><span style="--c:var(--lime)">ведёт</span><span style="--c:var(--lost)">ищет</span><span style="--c:var(--grey)">вручную</span><span style="--c:var(--pgm)">эфир</span></div>
+<div class="foot">Сегодня: в эфире Сцена 38 мин, Зал 21 мин · цель терялась 3 раза</div></div></div>
+
+<div class="v"><h3>3 · Кольца</h3><p>У каждой камеры — кольцо: доля времени «ведёт / ищет / вручную» за 10 минут, в центре — её часы. Красивее, но менее точно, чем дорожка.</p>
+<div class="cell"><div class="hd"><span class="n">3</span>Сводка</div>
+<div style="display:flex;justify-content:space-around;align-items:center;flex:1">
+<div style="text-align:center"><div class="ring" style="background:conic-gradient(var(--lime) 0 77%,var(--lost) 77% 82%,var(--grey) 82% 100%);outline:2px solid var(--pgm);outline-offset:3px"><b>04:37</b></div><div style="margin-top:8px;display:flex;gap:6px;align-items:center;justify-content:center"><span class="n pgm">1</span>Сцена</div><div class="lbl" style="color:var(--pgm);margin-top:3px">в эфире</div></div>
+<div style="text-align:center"><div class="ring" style="background:conic-gradient(var(--lime) 0 40%,var(--grey) 40% 100%)"><b>03:58</b></div><div style="margin-top:8px;display:flex;gap:6px;align-items:center;justify-content:center"><span class="n pvw">2</span>Зал</div><div class="lbl" style="color:var(--lime);margin-top:3px">ведёт</div></div></div>
+<div class="lg"><span style="--c:var(--lime)">ведёт</span><span style="--c:var(--lost)">ищет</span><span style="--c:var(--grey)">вручную</span></div>
+<div class="foot">Сегодня: в эфире Сцена 38 мин, Зал 21 мин · цель терялась 3 раза</div></div></div>
+</div>
+<div><span class="choice" data-choice="1">1 · Табло + дорожки</span><span class="choice" data-choice="2">2 · Строка на камеру</span><span class="choice" data-choice="3">3 · Кольца</span></div>
+</body></html>

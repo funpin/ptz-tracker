@@ -31,6 +31,7 @@ ZOOM_ROCKER_H = 112  # вместе с клавишами и подписями 
 STICK_MIN, STICK_MAX = 176, 260  # стик: в окне 1640×850 и на высоком экране (MacBook Pro 16 во весь экран)
 LABEL_W = 52  # колонка подписей «Изображения» (спека «Всё влезает и стоит ровно»)
 H_SMALL = 28  # кнопки фокуса
+VALUE_W = 56  # колонка значений справа: 50 %, 6 dB, 5600 K — одним краем
 ROW_LIT_S = 1.5  # столько горит строка после действия оператора (мышь, клавиши, быстрые настройки)
 TOUCH_HOLD_S = 1.5  # столько опрос камеры не перебивает ползунок, который оператор только что тронул
 
@@ -239,9 +240,16 @@ class ManualControls(QWidget):
         self.iris_slider.setRange(0, 100)
         self.iris_slider.setValue(50)
         self.iris_slider.setEnabled(False)
+        # насколько открыт ирис; диафрагма F по шкале камеры не сверена — поэтому проценты
+        self.iris_value = QLabel("")
+        self.iris_value.setMinimumWidth(VALUE_W)
+        self.iris_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.iris_value.setToolTip("Насколько открыт ирис: 0 % — закрыт, 100 % — открыт")
         self.iris_auto.toggled.connect(self._on_iris_auto)
         self.iris_slider.valueChanged.connect(self._on_iris)
-        il = self._row("Ирис", self.iris_auto, self.iris_slider)
+        self.iris_slider.valueChanged.connect(lambda v: self.iris_value.setText(f"{v} %"))
+        self.iris_value.setText(f"{self.iris_slider.value()} %")
+        il = self._row("Ирис", self.iris_auto, self.iris_slider, self.iris_value)
 
         # gain: шаги по 3 dB (коды GAIN_CODES) и «Авто»
         self._touched: dict[str, float] = {}  # что оператор трогал недавно — опрос камеры это не перебивает
@@ -250,7 +258,8 @@ class ManualControls(QWidget):
         self.gain_slider.setRange(0, len(P.GAIN_CODES) - 1)
         self.gain_slider.setPageStep(1)
         self.gain_value = QLabel("")
-        self.gain_value.setMinimumWidth(48)
+        self.gain_value.setMinimumWidth(VALUE_W)
+        self.gain_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.gain_auto.toggled.connect(self._on_gain_auto)
         self.gain_slider.valueChanged.connect(self._on_gain)
         gl = self._row("Gain", self.gain_auto, self.gain_slider, self.gain_value)
@@ -270,7 +279,8 @@ class ManualControls(QWidget):
         self.ctemp_slider.setRange(0, P.COLOR_TEMP_MAX)
         self.ctemp_slider.setEnabled(False)
         self.ctemp_value = QLabel("")
-        self.ctemp_value.setMinimumWidth(56)
+        self.ctemp_value.setMinimumWidth(VALUE_W)
+        self.ctemp_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.ctemp_value.setToolTip("Кельвины приблизительно: шкала камеры не сверена с её меню")
         self.wb_combo.currentIndexChanged.connect(self._on_wb)
         self.ctemp_slider.valueChanged.connect(self._on_ctemp)
@@ -459,7 +469,10 @@ class ManualControls(QWidget):
         self.gain_slider.setEnabled(not self.gain_auto.isChecked())
         var = self.wb_combo.currentData() == P.WB_VAR
         self.ctemp_slider.setEnabled(var)
-        self.ctemp_value.setText(f"≈{P.color_temp_kelvin(self.ctemp_slider.value())} K" if var else "")
+        mode = self.wb_combo.currentData()
+        fixed = {0: "авто", 3: "авто", 1: "память", 2: "память", 4: "3200 K", 5: "5600 K"}  # ATW, AWB A/B, лампы
+        self.ctemp_value.setText(f"≈{P.color_temp_kelvin(self.ctemp_slider.value())} K" if var
+                                 else fixed.get(mode, ""))
 
     def _on_gain_auto(self, on: bool) -> None:
         self._touch("gain")
