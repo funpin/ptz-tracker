@@ -27,6 +27,9 @@ from .intents import Disconnected
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 os.environ.setdefault("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")  # без видеосистемы event.pump() бросает pygame.error
+# MFi-драйвер (GameController) зовёт SDL из своей очереди: при подключении геймпада он брал замок джойстиков SDL,
+# а поток опроса ждал этот замок, держа GIL, — программа зависала (Mac, 2026-11-06). DualSense идёт через HIDAPI
+os.environ.setdefault("SDL_JOYSTICK_MFI", "0")
 
 BUTTONS = ("cross", "circle", "square", "triangle", "l1", "r1", "l3", "r3",
            "dpad_up", "dpad_down", "dpad_left", "dpad_right", "touchpad", "options", "create")

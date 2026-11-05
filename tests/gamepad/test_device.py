@@ -381,3 +381,12 @@ def test_touchpad_finger_read_into_rawpad():
     assert sb._touch() is None  # пальца нет
     assert sb._touch() is None  # сбой SDL не бросает
     assert sb._touch() == (0.75, 0.5)
+
+
+def test_sdl_mfi_driver_disabled_before_sdl_starts():
+    """MFi-драйвер SDL на Mac зовёт SDL из очереди GameController, пока поток опроса держит GIL и ждёт замок
+    джойстиков SDL — программа зависала при подключении DualSense (2026-11-06). DualSense идёт через HIDAPI."""
+    import os
+
+    import ptztracker.gamepad.device  # noqa: F401
+    assert os.environ.get("SDL_JOYSTICK_MFI") == "0"
