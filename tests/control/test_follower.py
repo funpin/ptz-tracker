@@ -163,8 +163,12 @@ def test_enable_reads_zoom_immediately():
         s.sim.zoom = 0.5
         time.sleep(0.2)
         select_person(s)
-        assert s.follower.enable()
-        assert abs(s.follower._zoom_pos - (0x555 + 0.5 * (0xFFF - 0x555))) < 30
+        assert s.follower.enable()  # Qt не ждёт #GZ: зум спрашивает поток опроса сразу после включения
+        want = 0x555 + 0.5 * (0xFFF - 0x555)
+        deadline = time.monotonic() + 1.0
+        while abs(s.follower._zoom_pos - want) >= 30 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert abs(s.follower._zoom_pos - want) < 30
     finally:
         s.stop()
 

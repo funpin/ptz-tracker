@@ -290,3 +290,26 @@ def test_deactivation_while_holding_stops_focus(qtbot, tmp_path, monkeypatch):
     w.changeEvent(QEvent(QEvent.ActivationChange))
     assert sent and sent[-1] == 0.0
     w.close()
+
+
+class NoGainSession(FullSession):
+    def __init__(self, unsupported):
+        super().__init__()
+        self.unsupported = set(unsupported)
+
+    def supports(self, feature):
+        return feature not in self.unsupported
+
+
+def test_menu_items_follow_session_supports(qtbot):
+    s = NoGainSession({"gain", "color_temp"})
+    s.image = ImageState(gain=0x20, wb=P.WB_VAR, color_temp=10)
+    m, _ = build(qtbot, s)
+    m.open()
+    assert m._enabled("wb") and m._enabled("iris")
+    assert not m._enabled("gain") and not m._enabled("ctemp")
+    m._cursor = "gain"
+    m.accept()
+    assert not [x for x in s.calls if x[0] == "gain"]
+    s.unsupported = {"wb"}  # без баланса белого температура тоже недоступна
+    assert not m._enabled("wb") and not m._enabled("ctemp") and m._enabled("gain")

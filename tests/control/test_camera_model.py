@@ -162,3 +162,44 @@ def test_old_calibration_gets_default_latency_for_new_stream_kinds():
     c = Calibration.from_json(d)
     assert c.latency_for("mjpeg") == 0.2
     assert c.latency_for("mjpeg_2") == he42.VIDEO_LATENCY_S["mjpeg_2"]
+
+
+def test_measured_tilt_replaces_pan_table_for_tilt_axis():
+    """Наклон, измеренный мастером (доля от поворота по коду), заменяет допущение «наклон = поворот»: скорость,
+    код и потолок оси tilt — по нему; поворот не меняется. Между кодами — линейно, за крайними — крайний."""
+    c = default_calibration()
+    pan70, pan_max = c.pan_fw(70, Z), c.pan_max_fw(Z)
+    c.tilt = [(63, 0.8), (75, 0.6)]
+    assert c.pan_fw(70, Z) == pan70  # поворот прежний
+    r70 = 0.8 + (0.6 - 0.8) * (70 - 63) / (75 - 63)
+    assert abs(c.pan_fw(70, Z, axis="tilt") / (r70 * pan70) - 1) < 1e-9
+    assert abs(c.pan_fw(30, Z, axis="tilt") + c.pan_fw(70, Z, axis="tilt")) < 1e-12  # зеркально
+    assert abs(c.pan_fw(55, Z, axis="tilt") / (0.8 * c.pan_fw(55, Z)) - 1) < 1e-9  # ниже 63 — доля 63
+    assert abs(c.pan_max_fw(Z, axis="tilt") / (0.6 * pan_max) - 1) < 1e-9  # выше 75 — доля 75
+    for code in (60, 63, 67, 70, 75, 80):
+        v = c.pan_fw(code, Z, axis="tilt")
+        assert c.pan_code(v, Z, axis="tilt") == code, code
+        assert c.pan_code(-v, Z, axis="tilt") == 100 - code, code
+    c.tilt_scale = 1.5  # поправка слежения — поверх замера
+    assert abs(c.pan_fw(70, Z, axis="tilt") / (1.5 * r70 * pan70) - 1) < 1e-9
+
+
+def test_calibration_metadata_roundtrip_and_old_json_loads():
+    """Модель, прошивка, поток, дата, зум-точки и наклон сохраняются; калибровка, сохранённая до них, читается
+    как прежде (наклон — как поворот)."""
+    c = default_calibration()
+    c.model, c.firmware, c.stream_kind, c.created = "AW-HE42", None, "mjpeg", "2026-11-05T10:00:00"
+    c.zoom_points = [0x555, 0x800, 0xD55, 0xFFF]
+    c.tilt = [(63, 0.9), (75, 0.95)]
+    c2 = Calibration.from_json(c.to_json())
+    assert (c2.model, c2.firmware, c2.stream_kind, c2.created) == ("AW-HE42", None, "mjpeg", "2026-11-05T10:00:00")
+    assert c2.zoom_points == [0x555, 0x800, 0xD55, 0xFFF]
+    assert c2.tilt == [(63, 0.9), (75, 0.95)]
+    assert c2.pan_fw(70, Z, axis="tilt") == c.pan_fw(70, Z, axis="tilt")
+    old = {k: v for k, v in c.to_json().items()
+           if k not in ("model", "firmware", "stream_kind", "zoom_points", "tilt")}
+    c3 = Calibration.from_json(old)
+    assert c3.model is None and c3.firmware is None and c3.stream_kind is None and c3.tilt is None
+    assert c3.zoom_points == sorted(c3.pan.points)  # у старой — по таблице
+    assert c3.pan_fw(70, Z, axis="tilt") == c3.pan_fw(70, Z)
+    assert default_calibration().tilt is None

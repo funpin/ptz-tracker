@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from ptztracker.camera.scheduler import Priority
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import CameraConfig
@@ -152,6 +154,42 @@ def test_standby_roundtrip_blocks_motion():
         s.set_power(True)
         assert _wait(lambda: s.power in ("switching", "on"), 1.0)
         assert _wait(lambda: s.power == "on", 4.0)
+    finally:
+        s.stop()
+
+
+def test_power_on_from_unknown_state_keeps_emergency_stop():
+    """Состояние питания неизвестно (нет ответа опроса), а камера включена: ответ p1 на #O1 не должен переводить
+    в «switching» — там аварийный стоп стопов не шлёт (и теряет MANUAL-стопы, которые только что поставил disable())."""
+    from ptztracker.camera import protocol as P
+
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.power == "on")
+        s._power = "unknown"
+        s._on_reply({"cmd": P.POWER_ON, "reply": "p1", "ok": True})
+        assert s.power == "on"
+        s.set_pan_tilt_velocity(0.5, 0)
+        time.sleep(0.3)
+        n = len([c for c in s.sim.received if c.startswith("#PTS")])
+        s.emergency_stop()
+        assert _wait(lambda: len([c for c in s.sim.received if c.startswith("#PTS")]) > n and
+                     [c for c in s.sim.received if c.startswith("#PTS")][-1] == "#PTS5050", 1.5)
+    finally:
+        s.stop()
+
+
+def test_power_on_from_standby_goes_through_switching():
+    from ptztracker.camera import protocol as P
+
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.power == "on")
+        s._power = "standby"
+        s._on_reply({"cmd": P.POWER_ON, "reply": "p1", "ok": True})
+        assert s.power == "switching"
     finally:
         s.stop()
 
@@ -431,15 +469,127 @@ def test_gain_resent_after_remote_change():
         s.stop()
 
 
-# --- Task 5 (несколько камер): анализ на ходу и положение P/T/Z ---------------------------------
+# --- модель камеры и возможности, которых у неё нет ---------------------
 
-def _wait(cond, t=3.0):
-    end = time.monotonic() + t
-    while time.monotonic() < end:
-        if cond():
-            return True
-        time.sleep(0.05)
-    return cond()
+def test_session_asks_model_on_connect_and_exposes_it():
+    s = CameraSession(sim_cfg(), analysis=False)
+    assert s.model is None and s.firmware is None
+    s.start()
+    try:
+        assert _wait(lambda: s.model == "AW-HE42", 2.0)
+        assert s.sim.received.count("QID") == 1  # один раз, не на каждом пульсе
+        time.sleep(2.2)
+        assert s.sim.received.count("QID") == 1
+        info = s.camera_info()
+        assert (info.model, info.firmware, info.unsupported) == ("AW-HE42", None, ())
+        assert s.profile.name == "AW-HE42"
+    finally:
+        s.stop()
+
+
+def test_model_from_config_is_shown_before_the_answer_and_replaced_by_it():
+    cfg = sim_cfg()
+    cfg.model, cfg.firmware = "AW-HE40", "1.54"
+    s = CameraSession(cfg, analysis=False)
+    assert (s.model, s.firmware) == ("AW-HE40", "1.54")
+    s.start()
+    try:
+        assert _wait(lambda: s.model == "AW-HE42", 2.0)  # камера по тому же адресу другая — верим ответу
+        assert s.firmware == "1.54"
+    finally:
+        s.stop()
+
+
+def test_model_query_does_not_block_start():
+    s = CameraSession(sim_cfg(), analysis=False)
+    t0 = time.monotonic()
+    s.start()
+    try:
+        assert time.monotonic() - t0 < 1.0
+    finally:
+        s.stop()
+
+
+def test_model_is_asked_again_after_busy_and_not_after_er1():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s._on_reply({"cmd": "QID", "reply": "Камера ответила ошибкой er2: ER2:QID", "ok": False})
+    assert s._model_answered is False  # занята или в ожидании — спросим позже
+    s._on_reply({"cmd": "QID", "reply": "Камера ответила ошибкой er1: ER1:QID", "ok": False})
+    assert s._model_answered is True and s.model is None  # QID не знает — больше не спрашиваем
+    s2 = CameraSession(sim_cfg(), analysis=False)
+    s2._on_reply({"cmd": "QID", "reply": "OID:AW-HE40", "ok": True})
+    assert s2._model_answered is True and s2.model == "AW-HE40"
+    s3 = CameraSession(sim_cfg(), analysis=False)
+    s3._on_reply({"cmd": "QID", "reply": "мусор", "ok": True})
+    assert s3._model_answered is True and s3.model is None
+
+
+def test_changed_model_forgets_unsupported_features():
+    cfg = sim_cfg()
+    cfg.model, cfg.unsupported = "AW-HE40", ["gain"]
+    s = CameraSession(cfg, analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.model == "AW-HE42", 2.0)
+        assert s.camera_info().unsupported == ()
+    finally:
+        s.stop()
+
+
+@pytest.mark.parametrize("cmd,feature", [
+    ("QGU", "gain"), ("OGU:0B", "gain"), ("QAW", "wb"), ("OAW:4", "wb"),
+    ("QSD:B1", "color_temp"), ("OSD:B1:01A", "color_temp"), ("#O", "power"), ("#O1", "power"), ("#O0", "power"),
+])
+def test_er1_marks_feature_unsupported_and_success_clears_it(cmd, feature):
+    s = CameraSession(sim_cfg(), analysis=False)  # без start: только разбор ответов
+    s._on_reply({"cmd": cmd, "reply": "Камера ответила ошибкой er1: ER1:X", "ok": False})
+    assert s.camera_info().unsupported == (feature,)
+    assert s.supports(feature) is False
+    s._on_reply({"cmd": cmd, "reply": "OGU:08", "ok": True})
+    assert s.camera_info().unsupported == () and s.supports(feature) is True
+
+
+def test_other_errors_and_other_commands_do_not_mark_anything():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s._on_reply({"cmd": "OGU:09", "reply": "Камера ответила ошибкой er3: ER3:OGU", "ok": False})  # вне диапазона
+    s._on_reply({"cmd": "QGU", "reply": "ER2:QGU", "ok": False})  # занята / ожидание
+    s._on_reply({"cmd": "#GI", "reply": "ER1", "ok": False})  # ирис не из списка
+    s._on_reply({"cmd": "#PTS5050", "reply": "ER1", "ok": False})
+    assert s.camera_info().unsupported == ()
+
+
+def test_unsupported_from_config_is_remembered_and_listed_sorted():
+    cfg = sim_cfg()
+    cfg.unsupported = ["wb", "gain"]
+    s = CameraSession(cfg, analysis=False)
+    assert s.camera_info().unsupported == ("gain", "wb")
+    assert s.supports("gain") is False and s.supports("power") is True
+
+
+def test_er1_on_a_live_session_reaches_the_snapshot():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        orig = s.sim._dispatch
+        s.sim._dispatch = lambda cmd: "ER1:QGU" if cmd == "QGU" else orig(cmd)
+        s.refresh_image()
+        assert _wait(lambda: not s.supports("gain"), 2.0)
+        assert s.supports("wb")
+    finally:
+        s.stop()
+
+
+def test_recording_meta_has_live_model():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.model is not None, 2.0)
+        assert s.recording_meta()["camera_model"] == "AW-HE42"
+    finally:
+        s.stop()
+
+
+# --- Task 5 (несколько камер): анализ на ходу и положение P/T/Z ---------------------------------
 
 
 def test_analysis_on_off_at_runtime():

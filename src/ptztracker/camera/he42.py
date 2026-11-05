@@ -29,6 +29,11 @@ TELE_PAN_DEG_S: dict[int, dict[int, float]] = {
 }
 TELE_START_GZ = 0xD54  # выше этого положения #GZ поворот замедляется
 
+# AW-HE40 на кодах 70–90 быстрее таблицы PAN_DEG_S на 2–17% (клуб, 2026-10-30). Только справка для профиля модели
+# (camera.models): таблица одна, расхождение ловит подстройка скорости (control.speed_adapt).
+HE40_FASTER_CODES = (70, 90)
+HE40_FASTER_PCT = (2, 17)
+
 
 def pan_base_deg_s(code: int) -> float:
     """Скорость pan/tilt на зуме до 0xD54, °/с (по модулю): линейно между точками PAN_DEG_S, код 50 — 0,

@@ -168,7 +168,7 @@ class SpeedAdapter:
         """В камеру ушла команда #PTS (момент отправки): скорости по таблице без поправки, в °/с."""
         hfov = _hfov_at(zoom_pos)
         for axis, code in (("pan", pan_code), ("tilt", tilt_code)):
-            v = self.calib.pan.speed(code, zoom_pos)
+            v = self.calib.table_fw(code, zoom_pos, axis)  # наклон — с замером мастера, без поправки
             self._axes[axis].sent(t, v * hfov, abs(v) >= ADAPT_MIN_FW_S)
 
     def zoom_sent(self, t: float, code: int) -> None:

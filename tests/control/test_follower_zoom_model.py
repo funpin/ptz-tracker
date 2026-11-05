@@ -77,3 +77,43 @@ def test_stale_zoom_after_quick_disable_enable_ignored():
     assert sched.pump() == "#Z99"
     assert f.enabled
     assert f.controller.zdyn.velocity(1e9) == 0.0
+
+
+def test_enable_does_not_wait_for_zoom_query():
+    """enable() зовёт поток Qt: запрос зума (до 1 с) в нём недопустим — берётся последнее известное положение,
+    а поток опроса поправляет его сам."""
+    import threading
+    import time
+
+    gate = threading.Event()
+    calls = []
+
+    def slow_query():
+        calls.append(time.monotonic())
+        gate.wait(1.5)
+        return 0x900
+
+    clock = FakeClock()
+    sched = CommandScheduler(lambda cmd: cmd.lstrip("#"), min_interval=0.130, clock=clock)
+    f = Follower(FakeAnalyzer(), sched, default_calibration(), lambda: 0.15, COMPOSITIONS["waist_center"],
+                 EffortProfile.at(0.5), query_zoom=slow_query)
+    f._tick = lambda *a, **k: None  # такты слежения не нужны, только включение и опрос зума
+    try:
+        f._set_zoom_pos(0x777)
+        t0 = time.monotonic()
+        assert f.enable()
+        assert time.monotonic() - t0 < 0.2
+        assert f._zoom_pos == 0x777 and f._zoom_pos_t is None  # не опора модели, пока не ответит #GZ
+        # поток опроса спрашивает #GZ сразу, а не через секунды
+        deadline = time.monotonic() + 1.0
+        while not calls and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert calls
+        gate.set()
+        deadline = time.monotonic() + 1.0
+        while f._zoom_pos != 0x900 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert f._zoom_pos == 0x900 and f._zoom_pos_t is not None
+    finally:
+        gate.set()
+        f._stop.set()

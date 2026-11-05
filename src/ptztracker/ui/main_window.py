@@ -65,14 +65,22 @@ from ptztracker.tally.atem import AtemTally
 from ptztracker.ui.agent_panel import AgentPanel, revokes_agent
 from ptztracker.ui.atem_dialog import AtemDialog
 from ptztracker.ui.camera_cell import CameraCell
-from ptztracker.ui.camera_dialog import CameraDialog
+from ptztracker.ui.camera_dialog import CameraDialog, merge_edit
 from ptztracker.ui.camera_menu import CameraMenu
 from ptztracker.ui.follow_panel import FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.service_cell import KINDS, ServiceCell, ServiceRow
-from ptztracker.ui.state import TrackingView, analysis_pill, atem_pill, power_view, tracking_view, video_pill
+from ptztracker.ui.state import (
+    TrackingView,
+    analysis_pill,
+    atem_pill,
+    power_view,
+    recalibration_hint,
+    tracking_view,
+    video_pill,
+)
 from ptztracker.ui.theme import FS_CAPTION, SP, C
 from ptztracker.ui.widgets import StatusPill, VideoFrame, keycap_width, paint_keycap
 from ptztracker.updates import CHECK_INTERVAL_S, RELEASE_PAGE, UpdateChecker, UpdateInfo, is_newer
@@ -270,6 +278,17 @@ class MainWindow(QMainWindow):
         for c in self.cells:
             c.preview.setMinimumSize(240, 135)  # четыре превью в одном окне
         self.camera_menu = CameraMenu(self._menu_session, self.controls)
+        # виртуальную камеру нельзя принять за живую: метка поверх видео каждой клетки с симулятором
+        self._sim_badges: list[QLabel] = []
+        for c in self.cells:
+            badge = QLabel("СИМУЛЯТОР")
+            badge.setStyleSheet(
+                f"background: {C.REMOTE}; color: {C.BG}; border-radius: 6px; padding: 4px 12px;"
+                f" font-size: {FS_CAPTION}px; font-weight: 700;")
+            badge.setAttribute(Qt.WA_TransparentForMouseEvents)
+            c.video_frame.add_overlay(badge, "top-center")
+            badge.hide()
+            self._sim_badges.append(badge)
         self.camera_menu.openChanged.connect(self._on_menu_changed)
 
         side = QWidget()
@@ -359,6 +378,7 @@ class MainWindow(QMainWindow):
         self.atem_action = menu.addAction("ATEM…", self._edit_atem)
         self.agent_action = menu.addAction("Агент…", self._show_agent_window)
         self.power_action = menu.addAction("Перевести камеру в режим ожидания…", self._power_menu)
+        self.sim_action = menu.addAction("Симулятор (для тренировки)", self._open_sim_camera)
         menu.addSeparator()
         self.save_moment_action = QAction("Сохранить момент (F9)", self)  # не ручное управление: слежение не трогаем
         self.save_moment_action.triggered.connect(lambda: self.save_moment())
@@ -416,6 +436,9 @@ class MainWindow(QMainWindow):
         self.on_operator_follow: Callable[[bool], None] | None = None
 
         self._speed_scale_saved_t = float("-inf")
+        self._recalib_hinted: set[str] = set()  # камеры, которым подсказка «откалибруйте заново» уже показана в этот запуск
+        self._recalib_hint_for: str | None = None  # камера, у которой подсказка видна в нынешнем подключении
+        self._unsupported_shown: tuple = ()
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._update_status)
         self._status_timer.start(500)
@@ -472,7 +495,44 @@ class MainWindow(QMainWindow):
     # --- список камер и клетки ------------------------------------------
 
     def _cameras(self) -> list[CameraConfig]:
-        return self.cfg.cameras + self._sim_cams
+        # --sim добавляет временные камеры; если такая уже в настройках с тем же id, второй не нужно
+        stored = {c.id for c in self.cfg.cameras}
+        return self.cfg.cameras + [c for c in self._sim_cams if c.id not in stored]
+
+    def _is_stored(self, cam: CameraConfig | None) -> bool:
+        """Камера записана в настройки (её можно изменить и удалить); временный --sim — нет."""
+        return cam is not None and any(c.id == cam.id for c in self.cfg.cameras)
+
+    def _open_sim_camera(self) -> None:
+        """☰ → «Симулятор (для тренировки)»: добавить виртуальную камеру (один раз) и открыть её —
+        в её клетке, если она уже открыта; иначе в первой пустой клетке, а без пустых — в выбранной."""
+        sim = next((c for c in self.cfg.cameras if c.kind == "sim"), None)
+        if sim is None:
+            sim = dataclasses.replace(SIM_CAMERA, name="Тренировка")
+            self.cfg.cameras.append(sim)
+            self._save()
+        slot = self.grid.slot_of(sim.id)
+        if slot is None:
+            empty = [i for i, c in enumerate(self.grid.cells) if c is None]
+            slot = empty[0] if empty else (self.grid.selected or 0)
+            self.set_cell_camera(slot, sim.id)
+        self.select_slot(slot)
+        self._refresh_cell_choices()
+
+    @staticmethod
+    def _choice_label(c: CameraConfig) -> str:
+        if c.kind == "sim":  # «Симулятор» в названии и так всё говорит: «(симулятор)» не дублируем
+            return c.name if "симулятор" in c.name.lower() else f"{c.name} (симулятор)"
+        return f"{c.name} · {c.ip}"
+
+    @property
+    def sim_badge(self) -> QLabel:
+        """Метка «СИМУЛЯТОР» выбранной клетки (совместимость: окно на одну камеру)."""
+        return self._sim_badges[self.grid.selected if self.grid.selected is not None else 0]
+
+    def _sync_sim_badges(self) -> None:
+        for c, badge in zip(self.grid.cells, self._sim_badges):
+            badge.setVisible(c is not None and c.cfg.kind == "sim")
 
     def _current_cfg(self) -> CameraConfig | None:
         c = self.selected_cell
@@ -489,7 +549,7 @@ class MainWindow(QMainWindow):
         """В списке клетки — камеры, не стоящие в других клетках (одна камера — одна клетка)."""
         for i, cell in enumerate(self.cells):
             items = [
-                (c.id, c.name if c.kind == "sim" else f"{c.name} · {c.ip}")
+                (c.id, self._choice_label(c))
                 for c in self._cameras() if self.grid.slot_of(c.id) in (None, i)
             ]
             cur = self.grid.cells[i]
@@ -498,8 +558,11 @@ class MainWindow(QMainWindow):
     def _initial_grid(self) -> None:
         by_id = {c.id: c for c in self._cameras()}
         ids = ["sim1", "sim2", None, None] if self.use_sim else list(self.cfg.grid)
-        if not any(i in by_id for i in ids) and self.cfg.cameras and not self.use_sim:
-            ids[0] = self.cfg.cameras[0].id  # как раньше: без выбора открывается первая камера
+        if not self.use_sim:  # на эфир не стартуем с симулятором: он открывается только из меню ☰
+            ids = [i if i in by_id and by_id[i].kind != "sim" else None for i in ids]
+            real = [c for c in self.cfg.cameras if c.kind != "sim"]
+            if not any(ids) and real:
+                ids[0] = real[0].id  # как раньше: без выбора открывается первая настоящая камера
         ids = [i if i in by_id else None for i in ids]
         occupied = [i for i, cid in enumerate(ids) if cid]
         want = self.cfg.last_camera_id if not self.use_sim else None
@@ -540,9 +603,15 @@ class MainWindow(QMainWindow):
             cell.set_selected(i == sel)
         self._move_overlays(self._cell.video_frame)
         cam, cell = self._current_cfg(), self.selected_cell
+        self._recalib_hint_for = None  # подсказка не возвращается после переключения туда-обратно
+        # то, что про камеру уже известно, сразу: скрытые строки не мигают при каждом переключении
+        known = tuple(sorted(f for f in cam.unsupported if isinstance(f, str))) if cam is not None else ()
+        self._unsupported_shown = known
+        self.controls.set_unsupported(known)
         real = cam is not None and cam.kind != "sim"
-        self.edit_action.setEnabled(real)
-        self.del_action.setEnabled(real)
+        self.edit_action.setEnabled(self._is_stored(cam))
+        self.del_action.setEnabled(self._is_stored(cam))
+        self._sync_sim_badges()
         want = cam.stream if cam else "auto"
         for act in self.stream_actions.actions():
             act.setChecked(act.data() == want)
@@ -684,6 +753,7 @@ class MainWindow(QMainWindow):
         if selected:
             self._select_effects()
         self._reallocate_analysis()
+        self._sync_sim_badges()
         self._refresh_cell_choices()
         self._refresh_service_cells()
         self._save_grid()
@@ -972,7 +1042,7 @@ class MainWindow(QMainWindow):
         if cam is None:
             return
         cam.composition = key
-        if cam.kind != "sim":
+        if self._is_stored(cam):
             self._save()
         if f := self._follower():
             f.set_composition(COMPOSITIONS[key])
@@ -982,7 +1052,7 @@ class MainWindow(QMainWindow):
         if cam is None:
             return
         cam.effort = x
-        if cam.kind != "sim":
+        if self._is_stored(cam):
             self._save()
         if f := self._follower():
             f.set_effort(EffortProfile.at(x))
@@ -1017,7 +1087,8 @@ class MainWindow(QMainWindow):
         d = CameraDialog(parent=self)
         if d.exec():
             cam = d.result_config()
-            set_password(cam.id, d.password())
+            if cam.kind != "sim":
+                set_password(cam.id, d.password())
             self.cfg.cameras.append(cam)
             self._save()
             slot = self.grid.selected
@@ -1028,12 +1099,17 @@ class MainWindow(QMainWindow):
 
     def _edit_camera(self) -> None:
         cur = self._current_cfg()
-        if not cur or cur.kind == "sim":
+        if not self._is_stored(cur):
             return
         d = CameraDialog(cur, get_password(cur.id) if cur.username else None, parent=self)
         if d.exec():
-            cam = d.result_config()
-            set_password(cam.id, d.password())
+            result = d.result_config()
+            if result.kind != "sim":
+                set_password(result.id, d.password())
+            # пока диалог был открыт, окно могло узнать модель или сохранить поправку скорости: берём свежую запись
+            # и меняем в ней только то, что оператор тронул
+            latest = next((c for c in self.cfg.cameras if c.id == result.id), None)
+            cam = merge_edit(latest, d.snapshot, result, d.reset_calibration) if latest is not None else result
             self.cfg.cameras = [cam if c.id == cam.id else c for c in self.cfg.cameras]
             self._save()
             slot = self.grid.slot_of(cam.id)
@@ -1044,7 +1120,7 @@ class MainWindow(QMainWindow):
 
     def _delete_camera(self) -> None:
         cur = self._current_cfg()
-        if not cur or cur.kind == "sim":
+        if not self._is_stored(cur):
             return
         if QMessageBox.question(self, "Удалить камеру", f"Удалить «{cur.name}» из списка?") != QMessageBox.Yes:
             return
@@ -1052,7 +1128,8 @@ class MainWindow(QMainWindow):
         if slot is not None:
             self._open_cell(slot, None)  # сначала клетка «нет»
         self.cfg.cameras = [c for c in self.cfg.cameras if c.id != cur.id]
-        set_password(cur.id, None)
+        if cur.kind != "sim":
+            set_password(cur.id, None)
         self._save()
         self._refresh_cell_choices()
         self._save_grid()
@@ -1069,15 +1146,20 @@ class MainWindow(QMainWindow):
             s.follower.disable("калибровка")
         kind = s.stream_kind()
 
-        def factory(progress):
+        def factory(progress, cancel=None, on_sample=None):
             s.quiet_for_calibration()  # опросы положения и пульс сбивают команды мастера (eR2)
-            return CalibrationRunner(s.client.send, s.frames, progress, stream_kind=kind)
+            return CalibrationRunner(
+                s.client.send, s.frames, progress, stream_kind=kind,
+                model=getattr(s, "model", None), firmware=getattr(s, "firmware", None),  # поля сессии — с задачи 2
+                cancel=cancel, on_sample=on_sample,
+            )
 
         def saved(calib: dict) -> None:
+            if cam.kind == "sim":  # симулятору калибровка не нужна: в настройки не пишем
+                return
             cam.calibration = calib
             cam.speed_scale = None  # новая таблица скоростей: прежняя поправка к ней не относится
-            if cam.kind != "sim":
-                self._save()
+            self._save()
 
         dlg = CalibrationDialog(factory, saved, parent=self)
         dlg.setWindowTitle(f"{dlg.windowTitle()} — {cam.name}")
@@ -1247,9 +1329,10 @@ class MainWindow(QMainWindow):
                 self._update_target_label(cell, None)
                 continue
             s = c.session
-            cell.power_overlay.set_view(power_view(s.power, s.online), s.cfg.name)
+            cell.power_overlay.set_view(power_view(s.power, s.online), s.cfg.name, s.supports("power"))
             self._remember_rtsp_url(s)
             self._remember_speed_scale(s, i)
+            self._remember_camera_info(s)
             self._update_target_label(cell, s)
         self._update_selected_status()
 
@@ -1257,15 +1340,18 @@ class MainWindow(QMainWindow):
         """Значки верхней строки и правая панель — для выбранной клетки."""
         s = self.session
         cam = self._current_cfg()
+        can_power = s is not None and s.supports("power")  # ER1 на питание: кнопка остаётся, но серая
         self.power_action.setText("Включить камеру" if s and s.power == "standby"
                                   else "Перевести камеру в режим ожидания…")
-        self.power_action.setEnabled(s is not None)
+        self.power_action.setEnabled(can_power)
+        self.power_action.setToolTip("" if can_power or s is None else "Камера не принимает команду питания от программы")
         if not s:
             self.video_pill.set(*video_pill(None, ""))
             self.analysis_pill.set("", "off", "Анализ: камера не выбрана")
             self.blackbox_btn.set("", "off", "Чёрный ящик: камера не выбрана")
             self._fit_top_bar()
             return
+        self._update_recalibration_hint(s, cam)
         stream = STREAM_CHOICES.get(cam.stream if cam else "auto", "Авто")
         st = s.frames.stats()
         text, kind, tip = video_pill(st, stream)
@@ -1280,6 +1366,10 @@ class MainWindow(QMainWindow):
         )
         self._update_analysis_status(s)
         self.controls.sync_image(s.image)
+        unsupported = s.camera_info().unsupported
+        if unsupported != self._unsupported_shown:
+            self._unsupported_shown = unsupported
+            self.controls.set_unsupported(unsupported)
         self._fit_top_bar()
 
     def _update_analysis_status(self, s: CameraSession) -> None:
@@ -1372,14 +1462,45 @@ class MainWindow(QMainWindow):
             self._save()
             self.statusBar().showMessage(f"Найден адрес видео: {url}", 8000)
 
+    def _remember_camera_info(self, s: CameraSession) -> None:
+        """Модель, прошивку и найденные «не умею» — в настройки камеры (сессия настройки не пишет).
+        Известную модель не затираем пустым ответом; симулятору сведения не нужны."""
+        cam = next((c for c in self.cfg.cameras if c.id == s.cfg.id), None)
+        if cam is None or cam.kind == "sim":
+            return
+        info = s.camera_info()
+        model = info.model or cam.model
+        # прошивка: новая модель — прошивка из ответа (она могла быть None), та же — известную не теряем
+        firmware = info.firmware or (cam.firmware if model == cam.model else None)
+        unsupported = list(info.unsupported)
+        if (model, firmware, set(unsupported)) == (cam.model, cam.firmware, set(cam.unsupported)):
+            return
+        cam.model, cam.firmware, cam.unsupported = model, firmware, unsupported
+        self._save()
+        log.info("Сведения о камере %s сохранены: %s %s, не умеет: %s", cam.name, model, firmware, unsupported)
+
+    def _update_recalibration_hint(self, s: CameraSession, cam: CameraConfig | None) -> None:
+        """Мягкая подсказка под кнопками кадра, если калибровка сделана на другой камере или в прежней версии.
+        Не блокирует ничего; для каждой камеры показывается один раз за запуск (до смены камеры)."""
+        hint = None
+        info = s.camera_info()
+        if cam is not None and cam.kind != "sim" and (info.model is not None or s.online):
+            hint = recalibration_hint(cam.calibration, info.model, info.firmware)
+        if hint and (cam.id == self._recalib_hint_for or cam.id not in self._recalib_hinted):
+            self._recalib_hinted.add(cam.id)
+            self._recalib_hint_for = cam.id
+        else:
+            hint = None
+        self.follow_panel.set_calibration_note(hint)
+
     def _remember_speed_scale(self, s: CameraSession, slot: int) -> None:
         """Поправку скорости, найденную слежением, — в настройки камеры (не чаще раза в SPEED_SCALE_SAVE_S).
         Поток слежения настройки не пишет: только читает поправку отсюда, из потока Qt."""
         f = s.follower
         if f is None or f.polling_paused or time.monotonic() - self._speed_scale_saved.get(slot, float('-inf')) < SPEED_SCALE_SAVE_S:
             return  # идёт калибровка: её итог сбросит поправку
-        cam = next((c for c in self.cfg.cameras if c.id == s.cfg.id), None)  # симулятор в настройки не пишем
-        if cam is None:
+        cam = next((c for c in self.cfg.cameras if c.id == s.cfg.id), None)
+        if cam is None or cam.kind == "sim":  # симулятору поправка скорости не нужна, в настройки её не пишем
             return
         scale: dict = {k: round(v, 3) for k, v in f.speed_scale.items()}
         old = cam.speed_scale if isinstance(cam.speed_scale, dict) else {}

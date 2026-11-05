@@ -1,11 +1,11 @@
-"""Мастер калибровки: измеряет реальные скорости камеры (~3–4 минуты).
+"""Мастер калибровки: измеряет реальные скорости камеры (~3 минуты).
 
-Камера ненадолго поворачивается в обе стороны на разных кодах скорости и зумах; перед каждым
+Камера ненадолго поворачивается на разных кодах скорости и зумах (и наклоняется вверх и вниз); перед каждым
 пробегом она возвращается в исходную точку (#APC) и ждёт там остановки, зум — пока #GZ не перестанет
 меняться. Скорость и разгон считаются по положению камеры (#APC, градусы) и переводятся в доли
 кадра по углу обзора на этом зуме. Картинка нужна для задержки видео («камера сдвинулась → кадр
-сдвинулся»), проверки шкалы и скорости зума. Итог — таблица «код → доли кадра в секунду», τ разгона,
-задержка видео, скорость зума.
+сдвинулся»), проверки шкалы и скорости зума. Итог — таблица «код → доли кадра в секунду», наклон к повороту,
+τ разгона, задержка видео, скорость зума и сведения о камере (модель, прошивка, поток, зумы замеров).
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from typing import Callable
 from ptztracker.camera import he42
 from ptztracker.camera import protocol as P
 from ptztracker.control.camera_model import Calibration, SpeedTable, ZoomTable, default_calibration
+from ptztracker.control.framing import TILT_FROM_FH
 from ptztracker.diagnostics.motion import estimate_scale, measure_shift
 from ptztracker.diagnostics.probe import Pacer
 from ptztracker.video.frames import Frame, FrameSource
@@ -27,6 +28,19 @@ from ptztracker.video.frames import Frame, FrameSource
 log = logging.getLogger(__name__)
 
 DEFAULT_CODES = (53, 55, 57, 59, 61, 63, 65, 67, 70, 75, 80, 90)
+# Тело (#GZ выше he42.TELE_START_GZ): поворот там замедлен (HE40 2026-10-30), регулятор ведёт до 0xD55. Мастер
+# меряет точки TELE_ZOOMS и 0xFFF по #APC несколькими кодами TELE_CODES; быстрее последнего кода — по форме
+# паспортной кривой от замера (he42 держит долю замедления кода 75). Пробег на теле — до TELE_PROBE_MAX_S и
+# до PROBE_MAX_FRACTION кадра РАБОЧЕГО зума (с которого начат мастер): полкадра теле (2–3°) код 75 проходит за
+# 0,1–0,2 с — это 1–2 опроса #APC; полкадра рабочего плана дают 0,5–1,5 с и камера не уходит со сцены.
+TELE_ZOOMS = (0xD55, 0xEA9)
+TELE_CODES = (55, 59, 63, 70, 75)
+TELE_PROBE_MAX_S = 1.5
+# Наклон: коды TILT_CODES вверх и вниз, короткие пробеги (до PROBE_MAX_FRACTION высоты кадра) на самом широком
+# зуме замеров (по умолчанию 0x555) — сразу после его кривой поворота, без лишних переездов зума. На узком рабочем
+# зуме полкадра по высоте — 1–3°, код 75 проходит их за 1–2 опроса #APC; доля «наклон ÷ поворот» от зума не
+# зависит (замедление на теле у наклона то же). Если самый широкий зум уже уже PREDICT_MIN_HFOV — не меряем.
+TILT_CODES = (63, 75)
 FLAT_FW_S = 0.004  # быстрые коды дали меньше — камера по командам скорости не поворачивается
 STEP_CODE = 70
 STEP_RUN_S = 2.2
@@ -61,6 +75,16 @@ MONOTONE_TOL_ABS, MONOTONE_TOL_REL = 0.002, 0.05  # «скорость не па
 TAU_GRID = [round(0.10 + 0.01 * i, 2) for i in range(91)]  # 0,10…1,00 с
 T0_GRID_S = [0.01 * i for i in range(51)]  # начало движения: 0…0,5 с после команды
 
+CANCEL_POLL_S = 0.1  # отмена проверяется не реже (в паузах мастера и в каждом опросе пробега)
+
+
+class CalibrationCancelled(RuntimeError):
+    """Оператор прервал мастер: камера остановлена и возвращена на место, калибровка не сохраняется."""
+
+    def __init__(self) -> None:
+        super().__init__("Калибровка прервана — камера возвращена на место, прежние настройки не изменились.")
+
+
 FLAT_SCENE_WARNING = (
     "Картинка однотонная: задержка видео не измерена, взято типовое значение для этого потока. "
     "Для точной настройки наведите камеру на сцену с деталями и повторите."
@@ -68,8 +92,27 @@ FLAT_SCENE_WARNING = (
 
 
 def default_zooms(start_zoom: int) -> list[int]:
-    """Широкий угол, текущий зум (рабочий) и тело — регулятор не должен экстраполировать."""
-    return sorted({P.LENS_MIN, start_zoom, (start_zoom + P.LENS_MAX) // 2, P.LENS_MAX})
+    """Широкий угол, текущий зум (рабочий), середина до тела, точки тела и 0xFFF — регулятор не должен
+    экстраполировать (было до 2026-11-05: без 0xD55 и 0xEA9 — между AAA и FFF таблица занижала камеру)."""
+    return sorted({P.LENS_MIN, start_zoom, (start_zoom + P.LENS_MAX) // 2, *TELE_ZOOMS, P.LENS_MAX})
+
+
+def is_tele(zoom: int) -> bool:
+    return zoom > he42.TELE_START_GZ
+
+
+def extend_tele_curve(curve: list[tuple[int, float]], zoom: int, codes: tuple[int, ...]) -> list[tuple[int, float]]:
+    """Коды codes быстрее последнего замеренного на теле — по форме he42.pan_deg_s от этого замера (камера на
+    теле быстрые коды за полкадра рабочего плана не разгоняет). Без этого таблица держала бы скорость последнего
+    кода до 99, а камера на 99 — в разы быстрее: регулятор раскачал бы её."""
+    if not curve:
+        return curve
+    top, v_top = max(curve)
+    deg_top = he42.pan_deg_s(top, zoom)
+    if deg_top <= 0:
+        return curve
+    extra = [(c, round(v_top * he42.pan_deg_s(c, zoom) / deg_top, 5)) for c in codes if c > top]
+    return sorted(curve + extra)
 
 
 def hfov_at(zoom: int) -> float:
@@ -152,20 +195,39 @@ def _time_to_travel(dist: float, v: float, tau: float) -> float:
     return hi
 
 
+def tilt_ratio(tilt_deg: dict[int, float], pan: SpeedTable, zoom: int) -> list[tuple[int, float]] | None:
+    """Наклон ÷ поворот по коду на зуме замера наклона (поворот — по таблице мастера); None — нечем делить."""
+    hfov = hfov_at(zoom)
+    out = []
+    for code, deg in sorted(tilt_deg.items()):
+        pan_deg = pan.speed(code, zoom) * hfov
+        if pan_deg > 0 and deg > 0:
+            out.append((code, round(deg / pan_deg, 3)))
+    return out or None
+
+
 class _Sender:
-    """Pacer поверх произвольной функции отправки (клиент сессии или отдельный)."""
+    """Pacer поверх произвольной функции отправки (клиент сессии или отдельный); команды (не запросы
+    положения) — в on_cmd."""
 
-    def __init__(self, send: Callable[[str], str]):
-        self.send = send
+    def __init__(self, send: Callable[[str], str], on_cmd: Callable[[str], None] | None = None):
+        self._send, self._on_cmd = send, on_cmd
+
+    def send(self, cmd: str) -> str:
+        if self._on_cmd is not None and cmd not in (P.Q_PAN_TILT, P.Q_ZOOM):
+            self._on_cmd(cmd)
+        return self._send(cmd)
 
 
-def _nominal_deg_s(code: int) -> float:
-    """Паспортная скорость кода, °/с (линейно между точками he42.PAN_DEG_S; для кода < 50 — по модулю)."""
+def _nominal_deg_s(code: int, zoom: int | None = None) -> float:
+    """Паспортная скорость кода, °/с (линейно между точками he42.PAN_DEG_S; для кода < 50 — по модулю); с zoom —
+    с замедлением на теле (he42.tele_pan_ratio)."""
     n = 50 + abs(code - 50)
     pts = sorted(he42.PAN_DEG_S.items())
     for (c0, v0), (c1, v1) in zip(pts, pts[1:], strict=False):
         if c0 <= n <= c1:
-            return v0 + (v1 - v0) * (n - c0) / (c1 - c0)
+            v = v0 + (v1 - v0) * (n - c0) / (c1 - c0)
+            return v * he42.tele_pan_ratio(n, zoom) if zoom is not None else v
     return 0.0
 
 
@@ -178,19 +240,63 @@ class CalibrationRunner:
         zooms: list[int] | None = None,
         codes: tuple[int, ...] = DEFAULT_CODES,
         stream_kind: str = "mjpeg",
+        model: str | None = None,
+        firmware: str | None = None,
+        tele_codes: tuple[int, ...] | None = None,
+        tilt_codes: tuple[int, ...] = TILT_CODES,
+        cancel: threading.Event | None = None,
+        on_sample: Callable[[str, dict], None] | None = None,
     ):
-        self.pacer = Pacer(_Sender(client_send))
+        # cancel — оператор прервал: стоп, камера домой, CalibrationRunner.run бросает CalibrationCancelled.
+        # on_sample(kind, data) — наблюдатель (окно мастера): "apc" {t, pan, tilt, zoom}, "cmd" {t, cmd},
+        # "step" {index, total, title}, "result" {name, …}. Вызывается в потоке мастера между опросами камеры —
+        # он НЕ должен ждать (только положить в буфер под замком); его ошибки мастер не прерывают.
+        self.cancel = cancel
+        self.on_sample = on_sample
+        self._restoring = False
+        self._zoom_pos: int | None = None
+        self.pacer = Pacer(_Sender(client_send, lambda c: self._emit("cmd", {"t": time.monotonic(), "cmd": c})))
         self.source = source
         self.progress = progress
         self.zooms = zooms
         self.codes = codes
+        # на теле — TELE_CODES при кодах по умолчанию; заданные коды (проверки) — те же на всех зумах
+        self.tele_codes = tele_codes or (TELE_CODES if codes == DEFAULT_CODES else codes)
+        self.tilt_codes = tilt_codes
         self.stream_kind = stream_kind
+        self.model = model
+        self.firmware = firmware
+
+    # --- отмена и наблюдатель ---------------------------------------------
+
+    def _emit(self, kind: str, data: dict) -> None:
+        """Передать замер наблюдателю; его ошибка — только в лог (как у записи: наблюдение не мешает)."""
+        if self.on_sample is None:
+            return
+        try:
+            self.on_sample(kind, data)
+        except Exception as e:
+            log.warning("Наблюдатель мастера (%s): %s", kind, e)
+
+    def _check_cancel(self) -> None:
+        if self.cancel is not None and self.cancel.is_set() and not self._restoring:
+            raise CalibrationCancelled()
+
+    def _sleep(self, s: float) -> None:
+        """Пауза с проверкой отмены каждые CANCEL_POLL_S."""
+        end = time.monotonic() + s
+        while (left := end - time.monotonic()) > 0:
+            self._check_cancel()
+            time.sleep(min(CANCEL_POLL_S, left))
+        self._check_cancel()
 
     # --- положение камеры -------------------------------------------------
 
     def _pan_tilt(self) -> tuple[int, int, float]:
+        self._check_cancel()
         body, t = self.pacer.timed_send(P.Q_PAN_TILT)
         p, tl = P.parse_pan_tilt(body)
+        self._emit("apc", {"t": t, "pan": p, "tilt": tl, "zoom": self._zoom_pos})
         return p, tl, t
 
     def _wait_zoom_settled(self, target: int | None = None) -> int:
@@ -198,7 +304,8 @@ class CalibrationRunner:
         deadline = time.monotonic() + ZOOM_SETTLE_TIMEOUT_S
         last, same = None, 0
         while True:
-            z = P.parse_zoom(self.pacer.send(P.Q_ZOOM))
+            self._check_cancel()
+            z = self._zoom_pos = P.parse_zoom(self.pacer.send(P.Q_ZOOM))
             same = same + 1 if last is not None and abs(z - last) <= 1 else 0
             last = z
             there = target is None or abs(z - target) <= ZOOM_ARRIVE_UNITS
@@ -242,25 +349,34 @@ class CalibrationRunner:
 
     # --- пробег ------------------------------------------------------------
 
-    def _run(self, code: int, hfov: float, max_s: float, snapshots: tuple[float, ...] = ()) -> dict:
-        """Пробег с кодом code из состояния покоя: замеры #APC (t, градусы от начала) до max_s или
-        PROBE_MAX_FRACTION кадра, затем стоп. snapshots — через сколько секунд после команды взять кадры."""
-        p0, _, _ = self._pan_tilt()
-        max_deg = PROBE_MAX_FRACTION * hfov
-        _, t_cmd = self.pacer.timed_send(P.pan_tilt_speed(code, 50))
+    def _run(
+        self, code: int, hfov: float, max_s: float, snapshots: tuple[float, ...] = (),
+        tilt: bool = False, max_deg: float | None = None, zoom: int | None = None, predict: bool | None = None,
+    ) -> dict:
+        """Пробег с кодом code из состояния покоя: замеры #APC (t, градусы от начала) до max_s или max_deg
+        (по умолчанию PROBE_MAX_FRACTION кадра), затем стоп. snapshots — через сколько секунд после команды взять
+        кадры. tilt — пробег наклоном; zoom — для паспортной скорости на теле. predict — ранний стоп по прогнозу
+        (по умолчанию — при угле обзора ≥ PREDICT_MIN_HFOV)."""
+        axis = 1 if tilt else 0
+        x0 = self._pan_tilt()[axis]
+        max_deg = max_deg or PROBE_MAX_FRACTION * hfov
+        if predict is None:
+            predict = hfov >= PREDICT_MIN_HFOV
+        _, t_cmd = self.pacer.timed_send(P.pan_tilt_speed(50, code) if tilt else P.pan_tilt_speed(code, 50))
         samples, frames, pending = [], [], list(snapshots)
         try:
             while time.monotonic() - t_cmd < max_s:
-                p, _, t = self._pan_tilt()
-                x = (p - p0) * he42.APC_DEG_PER_UNIT
+                pt = self._pan_tilt()
+                t = pt[2]
+                x = (pt[axis] - x0) * he42.APC_DEG_PER_UNIT
                 samples.append((t, x))
                 while pending and t - t_cmd >= pending[0]:
                     pending.pop(0)
                     frames.append(self._frame())
                 if abs(x) >= max_deg:
                     break
-                if hfov >= PREDICT_MIN_HFOV:
-                    v = PRIOR_SPEED_FRACTION * _nominal_deg_s(code)
+                if predict:
+                    v = PRIOR_SPEED_FRACTION * _nominal_deg_s(code, zoom)
                     if len(samples) >= MIN_FIT_SAMPLES:
                         (ta, xa), (tb, xb) = samples[-2], samples[-1]
                         if tb > ta:
@@ -362,22 +478,59 @@ class CalibrationRunner:
                 "Скорости могут быть неточными — пришлите отчёт «Диагностика камеры»."
             )
 
-    def _pan_curve(self, zoom: int, start: tuple[int, int], tau: float) -> list[tuple[int, float]]:
+    def _pan_curve(
+        self, zoom: int, start: tuple[int, int], tau: float, scene_hfov: float
+    ) -> list[tuple[int, float]]:
+        """Кривая «код → fw/s» на зуме zoom. scene_hfov — угол обзора рабочего зума: на теле пробег до
+        PROBE_MAX_FRACTION его кадра (см. TELE_CODES)."""
         self._go_to(start)  # сначала домой на прежнем зуме: на теле полкадра — это уже другой угол
         self.pacer.send(P.zoom_abs(zoom))
-        hfov = hfov_at(self._wait_zoom_settled(zoom))  # угол — по фактическому #GZ
+        gz = self._wait_zoom_settled(zoom)
+        hfov = hfov_at(gz)  # угол — по фактическому #GZ
+        tele = is_tele(zoom)
+        codes, max_s = (self.tele_codes, TELE_PROBE_MAX_S) if tele else (self.codes, PROBE_MAX_S)
+        max_deg = PROBE_MAX_FRACTION * max(hfov, scene_hfov) if tele else None
         curve = []
-        for code in self.codes:
+        for code in codes:
             c = self._toward_centre(code, start)
             self._go_to(start)
             self.progress(f"Зум {zoom:03X}: скорость {code}…")
-            run = self._run(c, hfov, PROBE_MAX_S)
+            # на теле предел — полкадра рабочего плана: прогноз — по нему, а не по углу теле
+            predict = max(hfov, scene_hfov) >= PREDICT_MIN_HFOV
+            run = self._run(c, hfov, max_s, max_deg=max_deg, zoom=gz, predict=predict)
             v, _, _ = fit_ramp(run["samples"], run["t_cmd"], tau=tau)
             curve.append((code, round(abs(v) / hfov, 5)))  # град/с → доли кадра (у центра кадра)
         kept, dropped = monotone_curve(curve)
         if dropped:
             log.warning("Зум %03X: выбросы на кодах %s отброшены", zoom, dropped)
-        return kept
+        return extend_tele_curve(kept, gz, self.codes) if tele else kept
+
+    def _emit_pan_result(self, zoom: int, curve: list[tuple[int, float]]) -> None:
+        """Наблюдателю: °/с камеры на этом зуме по кодам рядом с таблицей без калибровки (he42.pan_deg_s)."""
+        hfov = hfov_at(zoom)
+        self._emit("result", {
+            "name": "pan", "zoom": zoom,
+            "codes": [[c, round(v * hfov, 3), round(he42.pan_deg_s(c, zoom), 3)] for c, v in curve],
+        })
+
+    def _tilt_deg_s(self, start: tuple[int, int], hfov: float, tau: float) -> dict[int, float]:
+        """Наклон, °/с, на кодах tilt_codes: пробег вверх и вниз из исходной точки (короткий — до
+        PROBE_MAX_FRACTION высоты кадра), между ними — домой. Берётся больший из двух: упор в край диапазона
+        или тяжесть камеры только замедляют, а «камера медленнее модели» для регулятора безопасна."""
+        out = {}
+        for code in self.tilt_codes:
+            speeds = []
+            for c in (code, 100 - code):
+                self._go_to(start)
+                self.progress(f"Наклон: скорость {code}…")
+                # прогноз стопа — по углу обзора, как у поворота (пробег по высоте короче, но сцена та же)
+                run = self._run(c, hfov, PROBE_MAX_S, tilt=True, max_deg=PROBE_MAX_FRACTION * hfov * TILT_FROM_FH,
+                                predict=hfov >= PREDICT_MIN_HFOV)
+                v, _, _ = fit_ramp(run["samples"], run["t_cmd"], tau=tau)
+                speeds.append(abs(v))
+            out[code] = max(speeds)
+            log.info("Наклон %d: %.2f / %.2f °/с (вверх / вниз)", code, *speeds)
+        return out
 
     def _zoom_rates(self) -> list[tuple[int, float]]:
         rates = []
@@ -385,22 +538,27 @@ class CalibrationRunner:
             self.progress(f"Скорость зума {code}…")
             before = self._frame().image
             self.pacer.send(P.zoom_speed(code))
-            time.sleep(ZOOM_RUN_S)
-            self.pacer.send(P.STOP_ZOOM)
-            time.sleep(1.5)  # дождаться полной остановки: тогда сдвиг = скорость × время
+            try:
+                self._sleep(ZOOM_RUN_S)
+            finally:
+                self.pacer.send(P.STOP_ZOOM)
+            self._sleep(1.5)  # дождаться полной остановки: тогда сдвиг = скорость × время
             after = self._frame().image
             scale = estimate_scale(before, after)
             if scale and scale > 1.0:
                 rates.append((code, round(math.log(scale) / ZOOM_RUN_S, 4)))
             self.pacer.send(P.zoom_speed(100 - code))
-            time.sleep(ZOOM_RUN_S)
-            self.pacer.send(P.STOP_ZOOM)
-            time.sleep(1.2)
+            try:
+                self._sleep(ZOOM_RUN_S)
+            finally:
+                self.pacer.send(P.STOP_ZOOM)
+            self._sleep(1.2)
         return rates
 
     # --- прогон ---------------------------------------------------------
 
     def _restore(self, start: tuple[int, int], start_zoom: int) -> None:
+        self._restoring = True  # возврат домой отмена не прерывает
         self.pacer.try_send(P.STOP_PT)
         self.pacer.try_send(P.STOP_ZOOM)
         self.progress("Возвращаю камеру на место…")
@@ -414,32 +572,75 @@ class CalibrationRunner:
             time.sleep(3.0)
 
     def run(self) -> Calibration:
+        """Прогон мастера. Отмена (cancel) — CalibrationCancelled после возврата камеры на место."""
+        self._restoring = False
         start_zoom = self._wait_zoom_settled()
         start = self._wait_at_rest()
         zooms = self.zooms or default_zooms(start_zoom)
+        scene_hfov = hfov_at(start_zoom)
+        tilt_zoom = min(zooms)
+        if not self.tilt_codes or hfov_at(tilt_zoom) < PREDICT_MIN_HFOV:
+            tilt_zoom = None  # узкий угол: пробег по высоте — 1–2 опроса #APC; наклон — как поворот
+            log.info("Наклон не меряется: нет кодов или самый широкий зум замеров узкий")
+        titles = ["Разгон и задержка видео"]
+        for z in zooms:
+            titles += [f"Поворот на зуме {z:03X}"] + (["Наклон"] if z == tilt_zoom else [])
+        titles += ["Скорость зума", "Возврат на место"]
+        step = iter(range(len(titles)))
+
+        def next_step() -> None:
+            self._check_cancel()
+            i = next(step)
+            self._emit("step", {"index": i, "total": len(titles), "title": titles[i]})
+
         try:
-            latency, tau = self._step_response(hfov_at(start_zoom), start)
-            curves = drop_flat_curves({z: self._pan_curve(z, start, tau) for z in zooms})
+            next_step()
+            latency, tau = self._step_response(scene_hfov, start)
+            self._emit("result", {"name": "tau", "value": round(tau, 3)})
+            self._emit("result", {"name": "video_latency", "value": round(latency, 3), "stream": self.stream_kind})
+            raw, tilt_deg = {}, {}
+            for z in zooms:
+                next_step()
+                raw[z] = self._pan_curve(z, start, tau, scene_hfov)
+                self._emit_pan_result(z, raw[z])
+                if z == tilt_zoom:
+                    next_step()
+                    tilt_deg = self._tilt_deg_s(start, hfov_at(z), tau)  # зум уже здесь — без переезда
+            curves = drop_flat_curves(raw)
             if not curves:
                 raise RuntimeError(
                     "Камера не поворачивается по командам скорости. Проверьте, что её не держит пульт, и повторите."
                 )
+            next_step()
             self._go_to(start)  # домой до смены зума: на широком угле полкадра — больше, чем было на теле
             self.pacer.send(P.zoom_abs(start_zoom))
             self._wait_zoom_settled(start_zoom)
             zoom_pts = self._zoom_rates() or default_calibration().zoom.points
+            self._emit("result", {"name": "zoom", "points": [list(p) for p in zoom_pts]})
         finally:
+            self._emit("step", {"index": len(titles) - 1, "total": len(titles), "title": titles[-1]})
             self._restore(start, start_zoom)
+        self._restoring = False
+        self._check_cancel()  # отмена в самом конце (камера уже дома): калибровку всё равно не отдаём
         base = default_calibration()
         video_latency = dict(base.video_latency)
         video_latency[self.stream_kind] = round(latency, 3)
         n = sum(len(c) for c in curves.values())
         self.progress(f"Готово: {n} замеров скорости")
+        pan = SpeedTable(curves)
+        tilt = tilt_ratio(tilt_deg, pan, tilt_zoom) if tilt_zoom is not None else None
+        self._emit("result", {"name": "dead_time", "value": base.dead_time})
+        self._emit("result", {"name": "tilt", "codes": [[c, round(tilt_deg[c], 3), r] for c, r in tilt or []]})
         return Calibration(
-            pan=SpeedTable(curves),
+            pan=pan,
             zoom=ZoomTable(zoom_pts),
             dead_time=base.dead_time,
             tau=round(tau, 3),
             video_latency=video_latency,
             created=datetime.now().isoformat(timespec="seconds"),
+            tilt=tilt,
+            model=self.model,
+            firmware=self.firmware,
+            stream_kind=self.stream_kind,
+            zoom_points=sorted(curves),
         )

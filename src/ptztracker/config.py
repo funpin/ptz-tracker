@@ -52,6 +52,10 @@ class CameraConfig:
     atem_input: int = 0  # вход ATEM (1…), 0 — не задан
     pad_number: int | None = None  # устарело: точки на геймпаде = номер клетки; читается из старых конфигов
     tracking: bool = True  # камеру можно вести слежением (иначе только ручное управление)
+    model: str | None = None  # ответ камеры на QID («AW-HE40»); ставит сессия при подключении, окно сохраняет
+    firmware: str | None = None  # версия прошивки, если камера её сообщает; None — не известна
+    # возможности, на которые камера ответила ER1 (camera.models.IMAGE_FEATURES): их кнопки скрываются или гаснут
+    unsupported: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -141,6 +145,13 @@ def _camera_from(d) -> CameraConfig | None:
     if c.speed_scale is not None and not isinstance(c.speed_scale, dict):
         log.warning("Неправильная поправка скорости у камеры %s — сбрасываю", c.name)
         c.speed_scale = None  # значения внутри проверяет Calibration.set_speed_scale
+    for name in ("model", "firmware"):
+        if getattr(c, name) is not None and not isinstance(getattr(c, name), str):
+            log.warning("Неправильное поле %s у камеры %s — сбрасываю", name, c.name)
+            setattr(c, name, None)
+    if not isinstance(c.unsupported, list):
+        c.unsupported = []
+    c.unsupported = list(dict.fromkeys(f for f in c.unsupported if isinstance(f, str)))
     if c.composition not in COMPOSITION_KEYS:
         c.composition = "waist_center"
     if not isinstance(c.effort, (int, float)):

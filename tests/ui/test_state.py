@@ -1,4 +1,4 @@
-from ptztracker.ui.state import TrackingView, tally_chip, tracking_view
+from ptztracker.ui.state import TrackingView, recalibration_hint, tally_chip, tracking_view
 from ptztracker.ui.theme import C
 
 
@@ -107,3 +107,28 @@ def test_power_view():
     assert power_view("on", False) == "offline"
     assert power_view("unknown", True) == "on"
     assert power_view("standby", False) == "offline"
+
+
+def test_recalibration_hint_none_when_consistent_or_uncalibrated():
+    calib = {"model": "AW-HE42", "firmware": "1.54"}
+    assert recalibration_hint(calib, "AW-HE42", "1.54") is None
+    assert recalibration_hint(calib, None, None) is None  # камера ещё не ответила на QID
+    assert recalibration_hint(calib, "AW-HE42", None) is None  # прошивку камера не сообщила: сравнивать нечего
+    assert recalibration_hint(calib, "aw-he42 ", "1.54") is None  # регистр и пробелы не в счёт
+    assert recalibration_hint(None, "AW-HE40", None) is None  # без калибровки есть своё сообщение
+
+
+def test_recalibration_hint_other_model_names_both():
+    h = recalibration_hint({"model": "AW-HE42"}, "AW-HE40", None)
+    assert h and "AW-HE42" in h and "AW-HE40" in h and "заново" in h
+
+
+def test_recalibration_hint_other_firmware():
+    h = recalibration_hint({"model": "AW-HE40", "firmware": "1.54"}, "AW-HE40", "1.60")
+    assert h and "1.54" in h and "1.60" in h and "прошив" in h.lower()
+
+
+def test_recalibration_hint_old_calibration_without_model():
+    h = recalibration_hint({"pan": {}}, None, None)
+    assert h and "заново" in h and "прежн" in h
+    assert recalibration_hint({"model": None}, "AW-HE42", None) == h
