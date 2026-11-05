@@ -51,7 +51,11 @@ def test_side_panel_fits_without_scroll(qtbot, tmp_path):
                    w.controls.near_btn, w.controls.iris_slider):
             # по высоте не обрезано (панель не прокручивается); по ширине допускаем 1–2 px округления
             r = wd.visibleRegion().boundingRect()
-            assert wd.isVisible() and r.height() == wd.height() and r.width() >= wd.width() - 2
+            scr = w.screen().availableGeometry()
+            where = (f"{type(wd).__name__} {getattr(wd, 'text', lambda: '')()!r} видно {r} размер {wd.size()}"
+                     f" y в области {wd.mapTo(w.side_scroll.viewport(), wd.rect().topLeft()).y()};"
+                     f" экран {scr.width()}x{scr.height()}, окно {w.geometry()}\n{_heights(w)}")
+            assert wd.isVisible() and r.height() == wd.height() and r.width() >= wd.width() - 2, where
     finally:
         w.close()
         app.setStyleSheet(old_style)
