@@ -140,11 +140,6 @@ def make_pad_hub():
     return SdlHub()
 
 
-class _NoDevice:
-    def open(self):
-        return False
-
-
 _PAD_SIZES = ("waist", "full", "wide")  # L1/R1: только крупность, от ближнего к общему
 
 
@@ -216,7 +211,7 @@ class MainWindow(QMainWindow):
         self._bridges: list[GamepadBridge] = []  # по индексам хаба; self.pad — первый
         if gamepad_backend is None and gamepad_hub is None:
             gamepad_hub = make_pad_hub()
-        if gamepad_hub is not None and gamepad_hub.open():
+        if gamepad_hub is not None:  # SDL запускает сам поток опроса, не поток Qt (на Mac иначе падение)
             threads: list[GamepadThread] = []
             for i in range(4):
                 def make_thread(mapper, on_intents, on_conn, on_batt, i=i):
@@ -226,8 +221,6 @@ class MainWindow(QMainWindow):
                 self._bridges.append(GamepadBridge(menu_open=self._menu_is_open, parent=self, driver=make_thread))
             self._pad_multi = MultiPadThread(gamepad_hub, threads)
             self._pad_multi.start()
-        elif gamepad_hub is not None:
-            self._bridges.append(GamepadBridge(_NoDevice(), menu_open=self._menu_is_open, parent=self))
         else:
             self._bridges.append(GamepadBridge(gamepad_backend if gamepad_backend is not None else make_pad_backend(),
                                                menu_open=self._menu_is_open, parent=self))
@@ -2591,6 +2584,8 @@ class MainWindow(QMainWindow):
                     rem = b.battery_remaining_s()
                     tip += f"\nЗаряд {pct}%, " + ("считаю, на сколько хватит…" if rem is None
                                                   else f"хватит на {fmt_remaining(rem)}")
+            elif chg:  # SDL при зарядке уровня не даёт
+                tip += "\nЗаряжается"
             badge.setToolTip(tip + "\nКлик — окно «Геймпады…»")
             badge.show()
         self.top_pads.setVisible(bool(live))

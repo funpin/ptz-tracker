@@ -61,6 +61,10 @@ def test_gamepad_chip_shows_number_and_battery(qtbot, tmp_path):
     assert "≈3 ч 10 мин" in badge.toolTip()
     w.pad._on_batt(60, True)
     assert "заряжается" in badge.toolTip()
+    w.pad._on_batt(None, True)  # SDL при зарядке уровня не даёт
+    assert badge.battery_text() == "—" and "Заряжается" in badge.toolTip()
+    w.pad._on_batt(None, None)
+    assert "аряжается" not in badge.toolTip()
     w.close()
 
 

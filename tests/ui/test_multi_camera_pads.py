@@ -202,8 +202,11 @@ class FakeHub:
     def __init__(self):
         self.backends = [FakeBackend() for _ in range(4)]
         self.closed = False
+        self.open_threads = []
 
     def open(self):
+        import threading
+        self.open_threads.append(threading.current_thread().name)
         return True
 
     def backend(self, i):
@@ -305,3 +308,10 @@ def test_unplugging_pad_closes_its_menu(qtbot, tmp_path):
     w.pad_disconnected(pad)
     assert not w.camera_menu.is_open  # меню геймпада не остаётся висеть над чужой камерой
     w.close()
+
+
+def test_window_starts_sdl_off_the_qt_thread(qtbot, tmp_path):
+    """На Mac запуск SDL в потоке Qt ронял программу через несколько минут с DualSense."""
+    w, hub, _ = make_hub(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: bool(hub.open_threads), timeout=2000)
+    assert hub.open_threads == ["gamepads"]

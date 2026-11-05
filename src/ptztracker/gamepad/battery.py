@@ -1,31 +1,6 @@
-"""Заряд DualSense: разбор сырого отчёта и оценка времени до разряда. Чистые функции, без Qt и SDL."""
+"""Заряд геймпада: оценка времени до разряда. Чистые функции, без Qt и SDL."""
 
 from __future__ import annotations
-
-REPORT_BT = 0x31   # Bluetooth: байт состояния по индексу 54
-REPORT_USB = 0x01  # USB: индекс 53
-_STATUS_INDEX = {REPORT_BT: 54, REPORT_USB: 53}
-
-
-def parse_dualsense_battery(report: bytes) -> tuple[int, bool] | None:
-    """(процент 0…100 шагом 10, заряжается) из отчёта DualSense; None — не тот отчёт или мусор.
-
-    Младшая тетрада — уровень 0…10, старшая: 0 разряжается, 1 заряжается, 2 полный (100 %, не заряжается)."""
-    if not report:
-        return None
-    idx = _STATUS_INDEX.get(report[0])
-    if idx is None or len(report) <= idx:
-        return None
-    b = report[idx]
-    level, state = b & 0x0F, b >> 4
-    pct = min(100, level * 10)
-    if state == 0:
-        return pct, False
-    if state == 1:
-        return pct, True
-    if state == 2:
-        return 100, False
-    return None
 
 
 class BatteryEstimator:

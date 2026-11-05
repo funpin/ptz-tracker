@@ -3,6 +3,10 @@
 
 pygame импортируется лениво, в SdlBackend.open(): без него модуль импортируется, тесты работают на фейке.
 Фоновые события нужны, чтобы стик работал, пока окно программы не в фокусе (оператор в другом окне).
+
+SDL запускается, опрашивается и закрывается в одном фоновом потоке (MultiPadThread), никогда в потоке Qt:
+на macOS SDL доставляет события HID в цикл того потока, где его запустили, и запуск из Qt портил память.
+Своё HID-подключение к геймпаду не открываем: его закрытие гонялось с потоком чтения SDL (падение на Mac).
 """
 
 from __future__ import annotations
@@ -18,7 +22,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .battery import parse_dualsense_battery
 from .intents import Disconnected
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
@@ -38,8 +41,8 @@ class RawPad:
 
 
 log = logging.getLogger(__name__)
-DUALSENSE_VID, DUALSENSE_PID = 0x054C, 0x0CE6
 BATTERY_PERIOD_S = 5.0
+_POWER_PCT = {"empty": 5, "low": 20, "medium": 70, "full": 100}  # верхние границы уровней SDL
 TOUCHPAD_BUTTON = 20  # SDL_CONTROLLER_BUTTON_TOUCHPAD в SDL2; в pygame-ce 2.5 константы нет (15 — это MISC1, кнопка микрофона)
 
 
@@ -55,6 +58,7 @@ class SdlHub:
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self.pg = None
+        self._failed = False
         self.mapping: dict[str, int] = {}
         self._controller = None
         self._clock = clock
@@ -62,15 +66,15 @@ class SdlHub:
         self._scan_next = 0.0
 
     def backend(self, index: int) -> SdlBackend:
-        """Вид одного контроллера; хаб уже открыт — вид сразу получает pygame и раскладку кнопок."""
-        b = SdlBackend(self, index)
-        b.open()
-        return b
+        """Вид одного контроллера. SDL не трогает (создаётся в потоке Qt): pygame берёт у хаба при первом опросе."""
+        return SdlBackend(self, index)
 
     def open(self) -> bool:
         """Запускает joystick/controller и пустое видео dummy (без окон и звука). Любой сбой SDL — False и одна строка в лог."""
         if self.pg is not None:
             return True
+        if self._failed:
+            return False
         try:
             import pygame
             import pygame._sdl2.controller as controller
@@ -92,7 +96,7 @@ class SdlHub:
             return True
         except Exception as e:
             log.warning("Геймпад недоступен: SDL не запустился (%s: %s)", type(e).__name__, e)
-            self.pg = None
+            self.pg, self._failed = None, True
             return False
 
     def controller(self, index: int):
@@ -142,6 +146,8 @@ class SdlHub:
             except Exception as e:
                 log.debug("Контроллер %s не открыт: %s: %s", i, type(e).__name__, e)
                 continue
+            if any(ctl is s for s in self._slots):
+                continue  # pygame отдаёт тот же объект: закрыть его — отключить свой же геймпад
             if iid in known:
                 try:
                     ctl.quit()  # тот же контроллер уже в списке
@@ -180,9 +186,6 @@ class SdlBackend:
         self._warned: set[str] = set()
         self._mapping: dict[str, int] = {}
         self._sdl = None
-        self._hid = None            # дескриптор SDL_hid для чтения заряда
-        self._hid_tried = False
-        self._last_battery: tuple[int | None, bool | None] = (None, None)
 
     def open(self) -> bool:
         if not self._hub.open():
@@ -192,13 +195,12 @@ class SdlBackend:
         return True
 
     def _attach(self) -> bool:
-        ctl = self._hub.controller(self._index)
-        if ctl is not self._ctl:
-            self._close_hid()
-            self._ctl = ctl
-        return ctl is not None
+        self._ctl = self._hub.controller(self._index)
+        return self._ctl is not None
 
     def poll(self) -> RawPad | None:
+        if self._pg is None and not self._own_hub and self._hub.pg is not None:
+            self._pg, self._mapping = self._hub.pg, self._hub.mapping  # общий хаб открыл поток опроса
         if self._pg is None:
             return None
         try:
@@ -329,58 +331,22 @@ class SdlBackend:
             idx = -1 if n is None else max(1, min(4, int(n))) - 1
             self._call("set_player_index", self._set_player_index, idx)
 
-    def _hid_lib(self):
-        lib = self._sdl_lib()
-        if not getattr(lib, "_hid_typed", False):
-            lib.SDL_hid_open.restype = ctypes.c_void_p
-            lib.SDL_hid_open.argtypes = [ctypes.c_ushort, ctypes.c_ushort, ctypes.c_wchar_p]
-            lib.SDL_hid_read_timeout.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int]
-            lib.SDL_hid_close.argtypes = [ctypes.c_void_p]
-            lib._hid_typed = True
-        return lib
-
-    def _close_hid(self) -> None:
-        h = self._hid
-        self._hid, self._hid_tried = None, False
-        self._last_battery = (None, None)
-        if h:
-            try:
-                self._hid_lib().SDL_hid_close(h)
-            except Exception:
-                pass
-
     def _read_battery(self) -> tuple[int | None, bool | None]:
-        if self._ctl is None or "dualsense" not in (self._ctl.name or "").lower():
+        if self._ctl is None:
             return (None, None)
-        lib = self._hid_lib()
-        if self._hid is None:
-            if self._hid_tried:
-                return (None, None)
-            self._hid_tried = True
-            self._hid = lib.SDL_hid_open(DUALSENSE_VID, DUALSENSE_PID, None) or None
-            if self._hid is None:
-                raise OSError("SDL_hid_open не открыл DualSense")
-        buf = ctypes.create_string_buffer(128)
-        for _ in range(32):  # вычитываем очередь, нужен самый свежий отчёт
-            n = lib.SDL_hid_read_timeout(self._hid, buf, 128, 0)
-            if n < 0:
-                raise OSError("SDL_hid_read_timeout вернул ошибку")
-            if n == 0:
-                break
-            parsed = parse_dualsense_battery(buf.raw[:n])
-            if parsed is not None:
-                self._last_battery = parsed
-        return self._last_battery
+        level = self._ctl.as_joystick().get_power_level()
+        if level == "wired":
+            return (None, True)
+        return (_POWER_PCT.get(level), False) if level in _POWER_PCT else (None, None)
 
     def battery(self) -> tuple[int | None, bool | None]:
-        """(процент шагом 10, заряжается) для DualSense; иначе или при сбое (None, None). Вызывать не чаще раза в 5 с."""
+        """(процент — верхняя граница уровня SDL, заряжается); неизвестно или сбой — (None, None). Раз в 5 с."""
         out: list = []
         if self._call("battery", lambda: out.append(self._read_battery()) or True):
             return out[0]
         return (None, None)
 
     def close(self) -> None:
-        self._close_hid()
         self._ctl = self._pg = None
         if self._own_hub:
             self._hub.close()
@@ -584,7 +550,8 @@ class GamepadThread:
 class MultiPadThread:
     """Один поток на все геймпады: за такт hub.pump() один раз, затем tick() каждого GamepadThread.
 
-    Потоки GamepadThread создаются, но не запускаются: SDL однопоточный, все его вызовы идут отсюда."""
+    Потоки GamepadThread создаются, но не запускаются: SDL однопоточный, все его вызовы идут отсюда —
+    и запуск (hub.open), и закрытие. SDL не запустился — поток тихо завершается, геймпадов нет."""
 
     def __init__(self, hub, threads: list[GamepadThread], hz: float = 100.0,
                  clock: Callable[[], float] = time.monotonic) -> None:
@@ -614,6 +581,8 @@ class MultiPadThread:
 
     def _run(self) -> None:
         try:
+            if not self._hub.open():
+                return
             while not self._stop.is_set():
                 t0 = self._clock()
                 self.tick()

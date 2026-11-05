@@ -1,26 +1,4 @@
-from ptztracker.gamepad.battery import BatteryEstimator, parse_dualsense_battery
-
-
-def rep(rid, idx, b):
-    r = bytearray(78)
-    r[0] = rid
-    r[idx] = b
-    return bytes(r)
-
-
-def test_parse_bluetooth_and_usb():
-    assert parse_dualsense_battery(rep(0x31, 54, 0x00)) == (0, False)
-    assert parse_dualsense_battery(rep(0x31, 54, 0x07)) == (70, False)
-    assert parse_dualsense_battery(rep(0x01, 53, 0x15)) == (50, True)
-    assert parse_dualsense_battery(rep(0x31, 54, 0x2A)) == (100, False)
-    assert parse_dualsense_battery(rep(0x31, 54, 0x0F)) == (100, False)  # зажим
-
-
-def test_parse_garbage():
-    assert parse_dualsense_battery(b"") is None
-    assert parse_dualsense_battery(rep(0x05, 54, 0x07)) is None
-    assert parse_dualsense_battery(bytes([0x31]) + bytes(10)) is None
-    assert parse_dualsense_battery(rep(0x31, 54, 0xF5)) is None
+from ptztracker.gamepad.battery import BatteryEstimator
 
 
 def test_estimator_needs_two_drops():
