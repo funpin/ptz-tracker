@@ -71,6 +71,7 @@ from ptztracker.ui.camera_dialog import CameraDialog, merge_edit
 from ptztracker.ui.camera_menu import CameraMenu
 from ptztracker.ui.follow_panel import FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge
+from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.service_cell import KINDS, ServiceCell, ServiceRow
@@ -266,6 +267,7 @@ class MainWindow(QMainWindow):
         self.pad_chip = StatusPill("gamepad")
         self.pad_chip.hide()
         self.hotkeys_dialog: HotkeysDialog | None = None
+        self.gamepads_dialog: GamepadsDialog | None = None
         self.main_menu_btn = self._menu_button("menu", "Меню")
         self.track_btn = self.follow_panel.follow_btn
 
@@ -398,6 +400,7 @@ class MainWindow(QMainWindow):
         self.diag_action = menu.addAction("Диагностика камеры…", self._run_diagnostics)
         self.atem_action = menu.addAction("ATEM…", self._edit_atem)
         self.agent_action = menu.addAction("Агент…", self._show_agent_window)
+        self.pads_action = menu.addAction("Геймпады…", self.show_gamepads)
         self.power_action = menu.addAction("Перевести камеру в режим ожидания…", self._power_menu)
         self.sim_action = menu.addAction("Симулятор (для тренировки)", self._open_sim_camera)
         menu.addSeparator()
@@ -1659,6 +1662,39 @@ class MainWindow(QMainWindow):
         self.cfg.slow_on_tele = bool(on)
         self._save()
         self._refresh_manual_speed()
+        if self.gamepads_dialog is not None:
+            self.gamepads_dialog.set_slow_on_tele(on)
+
+    def pad_rows(self) -> list[PadRow]:
+        """Геймпады для окна «Геймпады…»: все, что программа видела (config), и подключённые сейчас."""
+        live: dict[str, GamepadBridge] = {}
+        for b in self._bridges:
+            pid = (b.info or {}).get("id") if b.connected else None
+            if pid:
+                live.setdefault(pid, b)
+        rows = []
+        for pid in dict.fromkeys([*self.cfg.pad_names, *live]):
+            b = live.get(pid)
+            name = self.cfg.pad_names.get(pid) or ((b.info or {}).get("name") if b else None) or "Геймпад"
+            cell = self._pad_slot_number(self._pad_nums.get(b)) if b is not None else None
+            rows.append(PadRow(pid, name, self.pad_sensitivity({"id": pid}), b is not None, cell))
+        return rows
+
+    def show_gamepads(self) -> None:
+        if self.gamepads_dialog is None:
+            self.gamepads_dialog = GamepadsDialog(
+                self.pad_rows(), self.cfg.slow_on_tele, self.set_pad_sensitivity,
+                self.controls.slow_tele_check.setChecked, parent=self)
+        else:
+            self.gamepads_dialog.set_rows(self.pad_rows())
+            self.gamepads_dialog.set_slow_on_tele(self.cfg.slow_on_tele)
+        self.gamepads_dialog.show()
+        self.gamepads_dialog.raise_()
+
+    def _refresh_gamepads_dialog(self) -> None:
+        d = self.gamepads_dialog
+        if d is not None and d.isVisible():
+            d.set_rows(self.pad_rows())
 
     def _refresh_manual_speed(self) -> None:
         """Такт окна: зум камер для «медленнее на крупном плане» и пересчёт скорости, пока стик держат."""
@@ -1845,6 +1881,7 @@ class MainWindow(QMainWindow):
             self._pad_disconnect_bridge(b)
         self._sync_pad_player()
         self._update_pad_chip()
+        self._refresh_gamepads_dialog()
 
     def _pad_disconnect_bridge(self, b: GamepadBridge) -> None:
         n = self._pad_nums.get(b)
