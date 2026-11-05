@@ -18,6 +18,21 @@ def make(qtbot, tmp_path):
     return w
 
 
+def _heights(w) -> str:
+    """Высоты строк правой панели — чтобы по логу CI понять, что не поместилось."""
+    out = [f"окно {w.width()}x{w.height()}, область {w.side_scroll.viewport().height()},"
+           f" содержимое {w.side_scroll.widget().sizeHint().height()}"]
+    for panel in (w.follow_panel, w.controls):
+        lay = panel.layout()
+        for i in range(lay.count()):
+            it = lay.itemAt(i)
+            wd = it.widget()
+            name = type(wd).__name__ if wd else "layout"
+            text = getattr(wd, "text", lambda: "")() if wd and hasattr(wd, "text") else ""
+            out.append(f"{type(panel).__name__}[{i}] {name} {text[:20]!r} h={it.sizeHint().height()}")
+    return "\n".join(out)
+
+
 def recv(w, prefix):
     return [c for c in w.session.sim.received if c.startswith(prefix)]
 
@@ -31,7 +46,7 @@ def test_side_panel_fits_without_scroll(qtbot, tmp_path):
         w.resize(1640, 850)
         qtbot.waitExposed(w)
         qtbot.wait(1200)
-        assert w.side_scroll.verticalScrollBar().maximum() == 0
+        assert w.side_scroll.verticalScrollBar().maximum() == 0, _heights(w)  # на Windows видно, что выросло
         for wd in (w.controls.gain_slider, w.controls.wb_combo, w.controls.preset_buttons[-1],
                    w.controls.near_btn, w.controls.iris_slider):
             # по высоте не обрезано (панель не прокручивается); по ширине допускаем 1–2 px округления
