@@ -257,6 +257,7 @@ def test_sdl_backend_poll_pump_error_is_logged(caplog):
 
     b = SdlBackend()
     b._pg = types.SimpleNamespace(error=PgError, event=types.SimpleNamespace(pump=pump))
+    b._hub.pg = b._pg  # события SDL опрашивает хаб (с задачи 12 — общий для всех геймпадов)
     with caplog.at_level(logging.DEBUG, logger="ptztracker.gamepad.device"):
         assert b.poll() is None
         assert b.poll() is None
