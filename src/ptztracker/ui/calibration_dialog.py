@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 import threading
+import time
+from dataclasses import dataclass
 from typing import Callable
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QThread, QTimer, Signal
@@ -9,10 +11,12 @@ from PySide6.QtGui import QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -20,12 +24,18 @@ from PySide6.QtWidgets import (
 from ptztracker.camera import he42
 from ptztracker.camera import protocol as P
 from ptztracker.control.calibration import CalibrationCancelled
-from ptztracker.ui.theme import C, qcolor
+from ptztracker.ui.theme import FS_BUTTON, FS_CAPTION, FS_TEXT, R_BUTTON, R_PANEL, SP, C, qcolor
 
 REFRESH_MS = 100  # график и цифры обновляются ~10 раз в секунду
 GRAPH_WINDOW_S = 45.0  # график показывает последние секунды: весь мастер (3–4 минуты) не уместился бы читаемо
 MAX_SAMPLES = 20000  # запас по памяти: мастер даёт ~20 опросов #APC в секунду, 4 минуты — меньше 5000
 MIN_RANGE_DEG = 2.0
+TYPICAL_S = 210.0  # мастер обычно идёт 3–4 минуты: от этого считается «осталось ≈»
+TYPICAL_STEPS = 9
+FS_SECTION = 11  # подписи разделов — как в брендбуке
+# поворот — лайм (то, что сейчас движется); наклон и зум — серые: оранжевый и красный значат тревогу
+PAN_COLOR, TILT_COLOR, ZOOM_COLOR = C.LIME, C.TEXT_DIM, C.GREY
+LEGEND = ((PAN_COLOR, "поворот"), (TILT_COLOR, "наклон"), (ZOOM_COLOR, "зум"), (None, f"последние {int(GRAPH_WINDOW_S)} с"))
 
 CANCELLING_TEXT = "Останавливаю камеру и возвращаю на место…"
 CANCELLED_TEXT = "Калибровка прервана: камера возвращена на место, ничего не сохранено, прежние настройки целы."
@@ -37,11 +47,16 @@ def fmt(x: float, digits: int = 2) -> str:
 
 
 def cmd_label(cmd: str) -> str:
-    """Короткая подпись команды для графика: «П70/50» (поворот/наклон), «З70» (зум), «стоп», «домой»."""
+    """Короткая подпись команды для графика: «П70» (поворот), «Н63» (наклон), «П70/60» (оба), «З70» (зум), «стоп», «домой»."""
     if cmd == P.STOP_PT or cmd == P.STOP_ZOOM:
         return "стоп"
     if cmd.startswith("#PTS") and len(cmd) == 8:
-        return f"П{int(cmd[4:6])}/{int(cmd[6:8])}"
+        pan, tilt = int(cmd[4:6]), int(cmd[6:8])
+        if tilt == 50:
+            return f"П{pan}"
+        if pan == 50:
+            return f"Н{tilt}"
+        return f"П{pan}/{tilt}"
     if cmd.startswith("#Z") and len(cmd) == 4:
         return f"З{int(cmd[2:4])}"
     if cmd.startswith("#APC") or cmd.startswith("#AXZ"):
@@ -90,42 +105,161 @@ class LiveData:
             }
 
 
-def step_text(step: dict | None) -> str:
-    if not step:
-        return ""
-    return f"Шаг {step['index'] + 1} из {step['total']}: {step['title']}"
+@dataclass(frozen=True)
+class Row:
+    kind: str  # sec — заголовок группы, row — замер, now — меряю сейчас, wait — ещё не мерили
+    text: str
+    value: str = ""
+    dev: float | None = None  # замер / модель — для черты отклонения
 
 
-def numbers_text(snap: dict) -> str:
-    """Что уже измерено: мёртвое время, разгон, задержка видео, скорости поворота (измерено / по модели),
-    наклон, зум. Строки появляются по мере готовности."""
-    res, lines = snap["results"], []
-    if "dead_time" in res:
-        lines.append(f"Мёртвое время: {fmt(res['dead_time']['value'])} с")
-    if "tau" in res:
-        lines.append(f"Разгон τ: {fmt(res['tau']['value'])} с")
-    if "video_latency" in res:
-        r = res["video_latency"]
-        stream = f" ({r['stream']})" if r.get("stream") else ""
-        lines.append(f"Задержка видео: {fmt(r['value'])} с{stream}")
-    if snap["pan"]:
-        lines.append("")
-        lines.append("Поворот, °/с: измерено / по модели")
-        for zoom in sorted(snap["pan"]):
-            lines.append(f"Зум {zoom:03X}")
-            for c, measured, model in snap["pan"][zoom]:
-                lines.append(f"  код {c:>2d}: {fmt(measured, 1):>6} / {fmt(model, 1):>6}")
+def result_rows(snap: dict, running: bool) -> list[Row]:
+    """Строки «Результатов»: задержки, поворот по зумам (замер / модель), наклон, зум; пока идёт мастер —
+    ещё строка «меряю» и серые «ждёт» для того, что впереди."""
+    res, rows = snap["results"], [Row("sec", "Результаты")]
+
+    def single(name: str, text: str, value) -> None:
+        if name in res:
+            rows.append(Row("row", text, value(res[name])))
+        elif running:
+            rows.append(Row("wait", text, "ждёт"))
+
+    single("dead_time", "Мёртвое время", lambda r: f"{fmt(r['value'])} с")
+    single("tau", "Разгон τ", lambda r: f"{fmt(r['value'])} с")
+    single("video_latency", "Задержка видео",
+           lambda r: f"{fmt(r['value'])} с" + (f" · {r['stream']}" if r.get("stream") else ""))
+    for zoom in sorted(snap["pan"]):
+        rows.append(Row("sec", f"Поворот на зуме {zoom:03X}, °/с · замер / модель"))
+        for c, measured, model in snap["pan"][zoom]:
+            rows.append(Row("row", f"код {c}", f"{fmt(measured, 1)} / {fmt(model, 1)}",
+                            measured / model if model else None))
     if "tilt" in res and res["tilt"]["codes"]:
-        lines.append("")
-        lines.append("Наклон, °/с (доля от поворота):")
+        rows.append(Row("sec", "Наклон, °/с (доля от поворота)"))
         for c, deg, ratio in res["tilt"]["codes"]:
-            lines.append(f"  код {c}: {fmt(deg, 1)} (×{fmt(ratio)})")
+            rows.append(Row("row", f"код {c}", f"{fmt(deg, 1)} (×{fmt(ratio)})"))
     if "zoom" in res and res["zoom"]["points"]:
-        lines.append("")
-        lines.append("Скорость зума (во сколько раз в секунду):")
+        rows.append(Row("sec", "Скорость зума, раз в секунду"))
         for c, rate in res["zoom"]["points"]:
-            lines.append(f"  код {c}: ×{fmt(math.exp(rate))}")
-    return "\n".join(lines)
+            rows.append(Row("row", f"код {c}", f"×{fmt(math.exp(rate))}"))
+    if running:
+        step = snap.get("step")
+        if step:
+            rows.append(Row("now", f"{step['title']} — меряю…", "—"))
+        later = [t for t, name in (("Наклон", "tilt"), ("Скорость зума", "zoom")) if name not in res]
+        if later:
+            rows.append(Row("sec", "Дальше"))
+            rows += [Row("wait", t, "ждёт") for t in later]
+    return rows
+
+
+def numbers_text(rows: list[Row]) -> str:
+    """Те же строки текстом — для проверки и копирования."""
+    return "\n".join(f"{r.text}  {r.value}".rstrip() for r in rows)
+
+
+def mmss(sec: float) -> str:
+    sec = max(0, int(sec))
+    return f"{sec // 60}:{sec % 60:02d}"
+
+
+class StepBar(QWidget):
+    """Полоска шагов мастера: пройденные — лайм, текущий — заполнен наполовину, впереди — серые."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(4)
+        self.index, self.total = -1, TYPICAL_STEPS
+
+    def set_progress(self, index: int, total: int) -> None:
+        self.index, self.total = index, max(1, total)
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        gap = 3
+        w = (self.width() - gap * (self.total - 1)) / self.total
+        for i in range(self.total):
+            r = QRectF(i * (w + gap), 0, w, self.height())
+            p.setBrush(qcolor(C.RAISED_HI))
+            p.drawRoundedRect(r, 2, 2)
+            fill = 1.0 if i < self.index else 0.4 if i == self.index else 0.0
+            if fill:
+                p.setBrush(qcolor(C.LIME))
+                p.drawRoundedRect(QRectF(r.left(), 0, r.width() * fill, r.height()), 2, 2)
+        p.end()
+
+
+class ResultsView(QWidget):
+    """«Результаты» строками через одну, как в правой панели; строка «меряю» — лаймовая полоска слева."""
+
+    ROW_H = 24
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.rows: list[Row] = []
+
+    def set_rows(self, rows: list[Row]) -> None:
+        self.rows = rows
+        self.setMinimumHeight(len(rows) * self.ROW_H + SP[1])
+        self.update()
+
+    def toPlainText(self) -> str:  # noqa: N802 — как у QPlainTextEdit, что тут был раньше
+        return numbers_text(self.rows)
+
+    def now_row_y(self) -> int | None:
+        for i, r in enumerate(self.rows):
+            if r.kind == "now":
+                return i * self.ROW_H
+        return None
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), qcolor(C.SURFACE))
+        f = QFont(self.font())
+        w, h, n = self.width(), self.ROW_H, 0
+        for i, r in enumerate(self.rows):
+            y = i * h
+            rect = QRectF(0, y, w, h)
+            if r.kind == "sec":
+                n = 0
+                f.setPixelSize(FS_SECTION)
+                f.setWeight(QFont.DemiBold)
+                f.setCapitalization(QFont.AllUppercase)
+                f.setLetterSpacing(QFont.PercentageSpacing, 108)
+                p.setFont(f)
+                p.setPen(qcolor(C.TEXT_FAINT))
+                p.drawText(rect.adjusted(SP[2], 4, -SP[2], 0), Qt.AlignLeft | Qt.AlignVCenter,
+                           p.fontMetrics().elidedText(r.text, Qt.ElideRight, w - 2 * SP[2]))
+                continue
+            f.setPixelSize(FS_TEXT)
+            f.setWeight(QFont.Normal)
+            f.setCapitalization(QFont.MixedCase)
+            f.setLetterSpacing(QFont.PercentageSpacing, 100)
+            p.setFont(f)
+            if r.kind == "now":
+                p.fillRect(rect, qcolor(C.LIME, 20))
+                p.fillRect(QRectF(0, y, 3, h), qcolor(C.LIME))
+            elif n % 2:
+                p.fillRect(rect, qcolor(C.TEXT, 9))
+            n += 1
+            fg = {"wait": C.GREY, "now": C.TEXT}.get(r.kind, C.TEXT_DIM)
+            p.setPen(qcolor(fg))
+            p.drawText(rect.adjusted(SP[2], 0, -SP[2], 0), Qt.AlignLeft | Qt.AlignVCenter, r.text)
+            p.setPen(qcolor(C.GREY if r.kind == "wait" else C.TEXT))
+            p.drawText(rect.adjusted(SP[2], 0, -SP[2], 0), Qt.AlignRight | Qt.AlignVCenter, r.value)
+            if r.dev is not None:  # черта: где замер относительно модели, ±30 % на всю ширину
+                vw = p.fontMetrics().horizontalAdvance(r.value)
+                bar = QRectF(w - SP[2] - vw - SP[2] - 46, y + h / 2 - 2, 46, 4)
+                p.setPen(Qt.NoPen)
+                p.setBrush(qcolor(C.RAISED_HI))
+                p.drawRoundedRect(bar, 2, 2)
+                p.fillRect(QRectF(bar.center().x() - 0.5, bar.top() - 2, 1, 8), qcolor(C.GREY))
+                k = max(-1.0, min(1.0, (r.dev - 1.0) / 0.3))
+                p.fillRect(QRectF(bar.center().x() + k * bar.width() / 2 - 1, bar.top() - 2, 2, 8), qcolor(C.LIME))
+        p.end()
 
 
 class CalibrationGraph(QWidget):
@@ -155,21 +289,48 @@ class CalibrationGraph(QWidget):
     def _paint(self, p: QPainter) -> None:
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
-        p.fillRect(self.rect(), qcolor(C.SURFACE))
-        left, right, top, bottom, gap = 46, 10, 18, 8, 10
-        zoom_h = max(40, int((h - top - bottom) * 0.22))
-        plot = QRectF(left, top, w - left - right, h - top - bottom - zoom_h - gap)
-        zplot = QRectF(left, plot.bottom() + gap, plot.width(), zoom_h)
+        p.fillRect(self.rect(), qcolor(C.BG))
+        p.setPen(QPen(qcolor(C.LINE), 1))
+        p.setBrush(qcolor(C.SURFACE))
+        p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), R_PANEL, R_PANEL)
         small = QFont(self.font())
-        small.setPixelSize(11)
+        small.setPixelSize(FS_CAPTION - 1)
+        # заголовок и легенда — над графиком, а не поверх кривых
+        head = QFont(small)
+        head.setPixelSize(FS_SECTION)
+        head.setWeight(QFont.DemiBold)
+        head.setCapitalization(QFont.AllUppercase)
+        head.setLetterSpacing(QFont.PercentageSpacing, 108)
+        p.setFont(head)
+        p.setPen(qcolor(C.TEXT_FAINT))
+        p.drawText(QRectF(SP[2], SP[1], w / 2, 16), Qt.AlignLeft | Qt.AlignVCenter, "Движение камеры")
         p.setFont(small)
-        for r in (plot, zplot):
-            p.setPen(QPen(qcolor(C.LINE), 1))
-            p.drawRect(r)
+        x = w - SP[2]
+        for color, name in reversed(LEGEND):
+            tw = p.fontMetrics().horizontalAdvance(name)
+            x -= tw
+            p.setPen(qcolor(C.TEXT_DIM if color else C.TEXT_FAINT))
+            p.drawText(QRectF(x, SP[1], tw, 16), Qt.AlignLeft | Qt.AlignVCenter, name)
+            if color:
+                x -= 19
+                p.fillRect(QRectF(x, SP[1] + 7, 14, 2), qcolor(color))
+            x -= SP[2]
+        left, right, gap = 46, SP[2], SP[2]
+        strip = QRectF(left, SP[1] + 16 + SP[1], w - left - right, 16)  # строка кодов скорости
+        top, bottom = strip.bottom() + SP[0], h - SP[2]
+        zoom_h = max(30, int((bottom - top) * 0.14))
+        plot = QRectF(left, top, strip.width(), bottom - top - zoom_h - gap)
+        zplot = QRectF(left, plot.bottom() + gap, plot.width(), zoom_h)
+        p.setPen(Qt.NoPen)
+        p.setBrush(qcolor(C.RAISED))
+        p.drawRoundedRect(strip, 4, 4)
+        p.setPen(QPen(qcolor(C.LINE), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(zplot, 4, 4)
         apc, cmds = self._apc, self._cmds
         if len(apc) < 2:
             p.setPen(qcolor(C.TEXT_FAINT))
-            p.drawText(plot, Qt.AlignCenter, "Замеры появятся, когда мастер начнёт")
+            p.drawText(plot, Qt.AlignCenter, "График появится, когда камера начнёт двигаться")
             return
         t_end = apc[-1][0]
         t_start = max(apc[0][0], t_end - GRAPH_WINDOW_S)
@@ -187,35 +348,33 @@ class CalibrationGraph(QWidget):
             return plot.center().y() - deg / lim * plot.height() / 2
 
         # сетка и подписи осей
-        p.setPen(QPen(qcolor(C.LINE, 120), 1, Qt.DashLine))
-        for v in (-lim / 2, 0.0, lim / 2):
-            p.drawLine(QPointF(plot.left(), y_of(v)), QPointF(plot.right(), y_of(v)))
-        p.setPen(qcolor(C.TEXT_DIM))
         for v in (-lim, 0.0, lim):
-            p.drawText(QRectF(0, y_of(v) - 8, left - 4, 16), Qt.AlignRight | Qt.AlignVCenter, f"{fmt(v, 0)}°")
-        p.drawText(QRectF(0, zplot.top(), left - 4, 16), Qt.AlignRight | Qt.AlignVCenter, "зум")
+            p.setPen(QPen(qcolor(C.RAISED_HI if v else C.LINE), 1))
+            p.drawLine(QPointF(plot.left(), y_of(v)), QPointF(plot.right(), y_of(v)))
+        p.setPen(qcolor(C.TEXT_FAINT))
+        for v in (-lim, 0.0, lim):
+            p.drawText(QRectF(0, y_of(v) - 8, left - 6, 16), Qt.AlignRight | Qt.AlignVCenter, f"{fmt(v, 0)}°")
+        p.drawText(QRectF(0, zplot.top(), left - 6, zplot.height()), Qt.AlignRight | Qt.AlignVCenter, "зум")
 
-        # метки команд
-        for t, cmd in cmds:
-            if t < t_start:
-                continue
-            x = x_of(t)
-            stop = cmd_label(cmd) == "стоп"
-            p.setPen(QPen(qcolor(C.FAULT if stop else C.TEXT_FAINT, 160), 1))
-            p.drawLine(QPointF(x, plot.top()), QPointF(x, zplot.bottom()))
-        p.setPen(qcolor(C.TEXT_DIM))
+        # коды скорости: строка сверху и тонкие границы; «стоп» и «домой» не рисуются — их было слишком много
+        moves = [(t, cmd_label(c)) for t, c in cmds if cmd_label(c) not in ("стоп", "домой")]
+        visible = [(t, lab) for t, lab in moves if t >= t_start]
+        if moves and moves[-1][0] >= t_start:  # текущий участок подсвечен
+            x0 = x_of(moves[-1][0])
+            p.fillRect(QRectF(x0, plot.top(), plot.right() - x0, zplot.bottom() - plot.top()), qcolor(C.LIME, 12))
         last_label_x = -1e9
-        for t, cmd in cmds:
-            if t < t_start:
-                continue
+        for i, (t, lab) in enumerate(visible):
             x = x_of(t)
+            p.setPen(QPen(qcolor(C.RAISED_HI), 1))
+            p.drawLine(QPointF(x, strip.bottom()), QPointF(x, zplot.bottom()))
             if x - last_label_x < 34:  # подписи не налезают друг на друга
                 continue
             last_label_x = x
-            p.drawText(QRectF(x + 2, plot.top() + 1, 60, 14), Qt.AlignLeft | Qt.AlignVCenter, cmd_label(cmd))
+            p.setPen(qcolor(C.TEXT if i == len(visible) - 1 else C.TEXT_DIM))
+            p.drawText(QRectF(x + 4, strip.top(), 52, strip.height()), Qt.AlignLeft | Qt.AlignVCenter, lab)
 
-        def trace(color: str, getter, y_fn) -> None:
-            p.setPen(QPen(qcolor(color), 2))
+        def trace(color: str, width: float, getter, y_fn) -> None:
+            p.setPen(QPen(qcolor(color), width))
             prev = None
             for item in pts:
                 v = getter(item)
@@ -227,23 +386,17 @@ class CalibrationGraph(QWidget):
                     p.drawLine(prev, cur)
                 prev = cur
 
-        trace(C.ACCENT, lambda s: s[1], y_of)
-        trace(C.LOST, lambda s: s[2], y_of)
+        trace(TILT_COLOR, 1.5, lambda s: s[2], y_of)
+        trace(PAN_COLOR, 2, lambda s: s[1], y_of)
         span_z = P.LENS_MAX - P.LENS_MIN
         trace(
-            C.OK,
+            ZOOM_COLOR, 1.5,
             lambda s: None if s[3] is None else (s[3] - P.LENS_MIN) / span_z,
-            lambda f: zplot.bottom() - max(0.0, min(1.0, f)) * zplot.height(),
+            lambda f: zplot.bottom() - 3 - max(0.0, min(1.0, f)) * (zplot.height() - 6),
         )
-        # легенда
-        x = plot.left() + 6
-        for color, name in ((C.ACCENT, "поворот"), (C.LOST, "наклон")):
-            p.setPen(qcolor(color))
-            p.drawText(QRectF(x, plot.bottom() - 16, 70, 14), Qt.AlignLeft | Qt.AlignVCenter, name)
-            x += 70
-        p.setPen(qcolor(C.TEXT_FAINT))
-        p.drawText(QRectF(plot.right() - 110, plot.bottom() - 16, 106, 14), Qt.AlignRight | Qt.AlignVCenter,
-                   f"последние {int(GRAPH_WINDOW_S)} с")
+        p.setPen(Qt.NoPen)
+        p.setBrush(qcolor(PAN_COLOR))
+        p.drawEllipse(QPointF(x_of(pts[-1][0]), y_of(pts[-1][1])), 3.5, 3.5)
 
 
 class _Worker(QThread):
@@ -270,7 +423,8 @@ class _Worker(QThread):
 
 class CalibrationDialog(QDialog):
     """Мастер калибровки: камера ~3–4 минуты поворачивается и зумирует, затем возвращается на место.
-    Идёт живой график и цифры; «Прервать» работает всё время (камера остановится и вернётся домой)."""
+    Идёт живой график и цифры; «Прервать» работает всё время (камера остановится и вернётся домой).
+    Вид — по макету docs/design/mockups/calibration.html."""
 
     def __init__(self, runner_factory: Callable, on_saved: Callable[[dict], None], parent=None):
         super().__init__(parent)
@@ -283,54 +437,106 @@ class CalibrationDialog(QDialog):
         self._close_when_done = False
         self._live = LiveData()
         self._shown_version = -1
-        intro = QLabel(
-            "Программа измерит, как быстро эта камера поворачивается и зумирует на разных скоростях, "
-            "чтобы слежение было плавным. Камера будет поворачиваться влево-вправо и зумировать "
-            "3–4 минуты, затем вернётся на место. Наведите её на сцену с деталями (не на однотонную стену). "
-            "Прервать можно в любой момент: камера остановится и вернётся на место."
+        self._t0: float | None = None
+        self._t_end: float | None = None
+        # шапка: что меряем сейчас, номер шага, сколько прошло и осталось; под ней — полоска шагов
+        self.step_label = QLabel("Перед началом")
+        self.step_label.setStyleSheet(f"font-size: {FS_BUTTON}px; font-weight: 600;")
+        self.step_count_label = QLabel("")
+        self.step_count_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
+        self.eta_label = QLabel("займёт 3–4 минуты")
+        self.eta_label.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
+        self.step_bar = StepBar()
+        self.intro = QLabel(
+            f"<b style='color:{C.TEXT}'>Программа измерит, как быстро эта камера поворачивается и зумирует</b>"
+            " — чтобы слежение было плавным.<ul style='margin:6px 0 0 -20px'>"
+            "<li>Займёт 3–4 минуты: камера будет поворачиваться влево-вправо и зумировать, потом вернётся на место.</li>"
+            "<li>Наведите её на сцену с деталями, не на однотонную стену.</li>"
+            "<li>Прервать можно в любой момент — камера остановится и вернётся.</li></ul>"
         )
-        intro.setWordWrap(True)
-        self.off_air_check = QCheckBox("Камера НЕ в эфире — можно двигать")
-        self.step_label = QLabel("")
-        self.step_label.setProperty("variant", "section")
+        self.intro.setWordWrap(True)
+        self.intro.setStyleSheet(
+            f"background: {C.SURFACE}; border: 1px solid {C.LINE}; border-radius: {R_PANEL}px;"
+            f" padding: {SP[2]}px {SP[3]}px; color: {C.TEXT_DIM}; line-height: 140%;"
+        )
         self.graph = CalibrationGraph()
-        mono = QFont("Menlo")
-        mono.setStyleHint(QFont.Monospace)
-        mono.setPixelSize(12)
-        self.numbers_view = QPlainTextEdit()
-        self.numbers_view.setReadOnly(True)
-        self.numbers_view.setFont(mono)
-        self.numbers_view.setLineWrapMode(QPlainTextEdit.NoWrap)
-        self.numbers_view.setMinimumWidth(380)
-        self.numbers_view.setPlaceholderText("Цифры появятся по ходу замеров.")
-        self.log_view = QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setMaximumHeight(96)
+        self.numbers_view = ResultsView()
+        self.numbers_view.set_rows(result_rows({"results": {}, "pan": {}, "step": None}, running=True))
+        self.results_scroll = QScrollArea()
+        self.results_scroll.setWidget(self.numbers_view)
+        self.results_scroll.setWidgetResizable(True)
+        self.results_scroll.setMinimumWidth(340)
+        self.results_scroll.setStyleSheet(
+            f"QScrollArea {{ background: {C.SURFACE}; border: 1px solid {C.LINE}; border-radius: {R_PANEL}px; }}"
+        )
+        self.results_scroll.viewport().setStyleSheet(f"background: {C.SURFACE};")
+        # строка «Сейчас»: последняя запись журнала или итог; полный журнал — по кнопке
+        self.now_dot = QLabel()
+        self.now_dot.setFixedSize(8, 8)
+        self.now_label = QLabel("")
+        self.now_label.setStyleSheet(f"color: {C.TEXT_DIM};")
         self.result_label = QLabel("")
         self.result_label.setWordWrap(True)
+        self.result_label.hide()
+        self.log_toggle = QPushButton("Журнал ▾")
+        self.log_toggle.setProperty("variant", "ghost")
+        self.log_toggle.setCheckable(True)
+        self.log_toggle.setStyleSheet(f"font-size: {FS_CAPTION}px; color: {C.TEXT_FAINT}; min-height: 24px;")
+        self.now_row = QFrame()
+        self.now_row.setObjectName("nowRow")
+        now = QHBoxLayout(self.now_row)
+        now.setContentsMargins(SP[2], SP[0], SP[0], SP[0])
+        now.setSpacing(SP[2])
+        now.addWidget(self.now_dot)
+        now.addWidget(self.now_label, 1)
+        now.addWidget(self.result_label, 1)
+        now.addWidget(self.log_toggle)
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumHeight(110)
+        self.log_view.hide()
+        self.off_air_check = QCheckBox("Камера НЕ в эфире — можно двигать")
+        self.off_air_hint = QLabel("отметьте, чтобы начать")
+        self.off_air_hint.setStyleSheet(f"color: {C.LOST}; font-size: {FS_CAPTION}px;")
         self.start_button = QPushButton("Начать калибровку")
+        self.start_button.setProperty("variant", "primary")
         self.start_button.setDefault(True)
         self.start_button.setEnabled(False)
-        self.cancel_button = QPushButton("Прервать")
+        self.cancel_button = QPushButton("Прервать и вернуть на место")
         self.cancel_button.setProperty("variant", "stop")
         self.cancel_button.setEnabled(False)
+        self.cancel_button.hide()
         self.close_button = QPushButton("Закрыть")
+        self.close_button.setAutoDefault(False)
+        head = QHBoxLayout()
+        head.setSpacing(SP[1])
+        head.addWidget(self.step_label)
+        head.addWidget(self.step_count_label, 0, Qt.AlignBottom)
+        head.addStretch(1)
+        head.addWidget(self.eta_label)
         mid = QHBoxLayout()
+        mid.setSpacing(SP[2])
         mid.addWidget(self.graph, 3)
-        mid.addWidget(self.numbers_view, 2)
+        mid.addWidget(self.results_scroll, 2)
         row = QHBoxLayout()
-        row.addWidget(self.start_button)
-        row.addWidget(self.cancel_button)
+        row.setSpacing(SP[2])
+        row.addWidget(self.off_air_check)
+        row.addWidget(self.off_air_hint)
         row.addStretch(1)
+        row.addWidget(self.cancel_button)
         row.addWidget(self.close_button)
+        row.addWidget(self.start_button)
         lay = QVBoxLayout(self)
-        lay.addWidget(intro)
-        lay.addWidget(self.off_air_check)
-        lay.addWidget(self.step_label)
+        lay.setContentsMargins(SP[3], SP[3], SP[3], SP[3])
+        lay.setSpacing(SP[2])
+        lay.addLayout(head)
+        lay.addWidget(self.step_bar)
+        lay.addWidget(self.intro)
         lay.addLayout(mid, 1)
+        lay.addWidget(self.now_row)
         lay.addWidget(self.log_view)
-        lay.addWidget(self.result_label)
         lay.addLayout(row)
+        self._paint_now("idle")
         self._timer = QTimer(self)
         self._timer.setInterval(REFRESH_MS)
         self._timer.timeout.connect(self._refresh)
@@ -338,6 +544,40 @@ class CalibrationDialog(QDialog):
         self.start_button.clicked.connect(self._start)
         self.cancel_button.clicked.connect(self._request_cancel)
         self.close_button.clicked.connect(self.reject)
+        self.log_toggle.toggled.connect(self._toggle_log)
+
+    def _paint_now(self, state: str) -> None:
+        """Точка и рамка строки «Сейчас»: идёт — лайм, готово — лаймовая рамка, ошибка — красная, иначе серое."""
+        dot = {"run": C.LIME, "done": C.LIME, "fail": C.FAULT}.get(state, C.GREY)
+        border = {"done": C.LIME, "fail": C.FAULT}.get(state, C.LINE)
+        self.now_dot.setStyleSheet(f"background: {dot}; border-radius: 4px;")
+        self.now_row.setStyleSheet(
+            f"QFrame#nowRow {{ background: {C.SURFACE}; border: 1px solid {border}; border-radius: {R_BUTTON}px; }}"
+        )
+        if state == "idle":
+            self.now_label.setText("Камера стоит. Отметьте флажок внизу и нажмите «Начать калибровку».")
+
+    def _toggle_log(self, on: bool) -> None:
+        self.log_view.setVisible(on)
+        self.log_toggle.setText("Журнал ▴" if on else "Журнал ▾")
+
+    def _progress(self, text: str) -> None:
+        self.log_view.appendPlainText(text)
+        self.now_label.setText(f"Сейчас: {text}")
+
+    def _set_result(self, text: str, state: str) -> None:
+        self.result_label.setText(text)
+        self.result_label.setVisible(bool(text))
+        self.now_label.setVisible(not text)
+        self._paint_now(state)
+
+    def _set_phase(self, running: bool) -> None:
+        """Во время замеров — только «Прервать»; до и после — «Закрыть» и главная белая «Начать»/«Повторить»."""
+        self.cancel_button.setVisible(running)
+        self.start_button.setVisible(not running)
+        self.close_button.setVisible(not running)
+        self.intro.setVisible(False if running else self._t0 is None)
+        self.off_air_hint.setVisible(not running and not self.off_air_check.isChecked())
 
     # --- запуск и завершение -------------------------------------------
 
@@ -346,20 +586,24 @@ class CalibrationDialog(QDialog):
 
     def _sync_start(self, *_) -> None:
         self.start_button.setEnabled(self.off_air_check.isChecked() and not self._running())
+        self.off_air_hint.setVisible(not self.off_air_check.isChecked() and not self._running())
 
     def _start(self) -> None:
         self.start_button.setEnabled(False)
         self.off_air_check.setEnabled(False)
         self.close_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
-        self.result_label.setText("")
+        self._t0, self._t_end = time.monotonic(), None
+        self._set_phase(True)
+        self._set_result("", "run")
+        self.now_label.setText("Сейчас: камера готовится…")
         self.log_view.clear()
         self._cancel = threading.Event()
         self._close_when_done = False
         self._live = LiveData()
         self._shown_version = -1
         self._worker = _Worker(self._factory, self._cancel, self._live.on_sample)
-        self._worker.progress.connect(self.log_view.appendPlainText)
+        self._worker.progress.connect(self._progress)
         self._worker.done.connect(self._done)
         self._worker.cancelled.connect(self._cancelled)
         self._worker.failed.connect(self._failed)
@@ -374,15 +618,31 @@ class CalibrationDialog(QDialog):
             return
         self._cancel.set()
         self.cancel_button.setEnabled(False)
-        self.result_label.setText(CANCELLING_TEXT)
+        self._set_result(CANCELLING_TEXT, "run")
 
     def _refresh(self) -> None:
         snap = self._live.snapshot()
         self.graph.set_data(snap["apc"], snap["cmds"])
+        if self._t0 is not None:
+            end = self._t_end if self._t_end is not None else time.monotonic()
+            spent = end - self._t0
+            if self._t_end is not None:
+                self.eta_label.setText(f"заняло {mmss(spent)}")
+            elif spent < TYPICAL_S:
+                self.eta_label.setText(f"прошло {mmss(spent)} · осталось ≈ {mmss(TYPICAL_S - spent)}")
+            else:
+                self.eta_label.setText(f"прошло {mmss(spent)} · почти готово")
         if snap["version"] != self._shown_version:
             self._shown_version = snap["version"]
-            self.step_label.setText(step_text(snap["step"]))
-            self.numbers_view.setPlainText(numbers_text(snap))
+            step = snap["step"]
+            if step:
+                self.step_label.setText(step["title"])
+                self.step_count_label.setText(f"шаг {step['index'] + 1} из {step['total']}")
+                self.step_bar.set_progress(step["index"], step["total"])
+            self.numbers_view.set_rows(result_rows(snap, running=self._running()))
+            y = self.numbers_view.now_row_y()
+            if y is not None:
+                self.results_scroll.ensureVisible(0, y, 0, ResultsView.ROW_H * 2)
 
     def _finish(self) -> None:
         # «Закрыть» и «Начать» включаются в _ended: до конца потока мастер ещё может возвращать камеру
@@ -394,20 +654,26 @@ class CalibrationDialog(QDialog):
             return
         self._finish()
         self._on_saved(calib)
-        self.result_label.setText("Готово: калибровка сохранена для этой камеры.")
+        self.step_bar.set_progress(self.step_bar.total, self.step_bar.total)
+        self._set_result("Готово: калибровка сохранена для этой камеры.", "done")
 
     def _cancelled(self) -> None:
         self._finish()
-        self.result_label.setText(CANCELLED_TEXT)
+        self._set_result(CANCELLED_TEXT, "idle-done")
 
     def _failed(self, err: str) -> None:
         self._finish()
-        self.result_label.setText(f"Калибровка не удалась: {err}")
+        self._set_result(f"Калибровка не удалась: {err}", "fail")
 
     def _ended(self) -> None:
         """Поток мастера закончился (после done/cancelled/failed): последний кадр графика и цифр."""
         self._timer.stop()
+        if self._t0 is not None:
+            self._t_end = time.monotonic()
+        self._shown_version = -1  # «меряю» и «ждёт» больше не показываются
         self._refresh()
+        self.start_button.setText("Повторить")
+        self._set_phase(False)
         self.close_button.setEnabled(True)
         self.off_air_check.setEnabled(True)
         self.start_button.setEnabled(self.off_air_check.isChecked())

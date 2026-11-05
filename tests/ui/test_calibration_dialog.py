@@ -175,7 +175,9 @@ def test_numbers_appear_from_result_events(qtbot):
     assert "Задержка видео" in text and "0,14 с" in text
     assert "555" in text and "24,0" in text and "21,5" in text  # измерено и по модели
     assert "Наклон" in text and "9,8" in text
-    assert "Шаг 3 из 5: Поворот на зуме 555" in d.step_label.text()
+    assert d.step_label.text() == "Поворот на зуме 555"
+    assert d.step_count_label.text() == "шаг 3 из 5"
+    assert (d.step_bar.index, d.step_bar.total) == (2, 5)
     d.cancel_button.click()
     qtbot.waitUntil(lambda: runner.ended.is_set(), timeout=3000)
     qtbot.waitUntil(lambda: "прервана" in d.result_label.text(), timeout=3000)
@@ -256,3 +258,88 @@ def test_close_and_start_wait_for_runner_thread_end(qtbot):
     assert not d.close_button.isEnabled()
     d._ended()
     assert d.close_button.isEnabled()
+
+
+# --- новый вид (макет docs/design/mockups/calibration.html) ---------------------------
+
+
+def test_cmd_label_short_codes():
+    from ptztracker.ui.calibration_dialog import cmd_label
+
+    assert cmd_label("#PTS7050") == "П70"
+    assert cmd_label("#PTS5063") == "Н63"
+    assert cmd_label("#PTS7060") == "П70/60"
+    assert cmd_label("#PTS5050") == "стоп"
+    assert cmd_label("#Z70") == "З70"
+
+
+def test_result_rows_zebra_now_and_pending():
+    from ptztracker.ui.calibration_dialog import result_rows
+
+    snap = {"results": {"tau": {"name": "tau", "value": 0.1}}, "pan": {0x555: [[70, 6.0, 6.1]]},
+            "step": {"index": 2, "total": 9, "title": "Поворот на зуме 555"}}
+    rows = result_rows(snap, running=True)
+    kinds = {r.text: r.kind for r in rows}
+    assert kinds["Разгон τ"] == "row" and kinds["Мёртвое время"] == "wait"
+    assert kinds["код 70"] == "row"
+    assert any(r.kind == "now" and "Поворот на зуме 555" in r.text for r in rows)
+    assert kinds["Скорость зума"] == "wait" and kinds["Наклон"] == "wait"
+    dev = next(r for r in rows if r.text == "код 70").dev
+    assert dev is not None and abs(dev - 6.0 / 6.1) < 1e-6
+    done = result_rows(snap, running=False)  # после конца — ни «меряю», ни «ждёт»
+    assert not any(r.kind in ("now", "wait") for r in done)
+
+
+def test_buttons_follow_phase(qtbot):
+    d = CalibrationDialog(lambda progress, cancel, on_sample: StubRunner(progress), lambda c: None)
+    qtbot.addWidget(d)
+    d.show()
+    assert d.start_button.property("variant") == "primary"
+    assert d.start_button.isVisible() and d.close_button.isVisible() and not d.cancel_button.isVisible()
+    assert d.intro.isVisible() and d.off_air_hint.isVisible()
+    d.off_air_check.setChecked(True)
+    assert not d.off_air_hint.isVisible()
+    d.close()
+
+
+def test_running_shows_only_cancel_and_now_line(qtbot):
+    d, runner, cancel, _ = make_dialog(qtbot)
+    d.show()
+    assert d.cancel_button.isVisible() and d.cancel_button.text() == "Прервать и вернуть на место"
+    assert not d.start_button.isVisible() and not d.close_button.isVisible()
+    assert not d.intro.isVisible()
+    runner.progress("Зум 555: скорость 80…")
+    qtbot.waitUntil(lambda: "Зум 555: скорость 80" in d.now_label.text(), timeout=2000)
+    assert not d.log_view.isVisible()
+    d.log_toggle.click()
+    assert d.log_view.isVisible() and "скорость 80" in d.log_view.toPlainText()
+    d.cancel_button.click()
+    qtbot.waitUntil(lambda: runner.ended.is_set(), timeout=3000)
+    qtbot.waitUntil(lambda: d.close_button.isVisible(), timeout=3000)
+    assert d.start_button.text() == "Повторить" and not d.cancel_button.isVisible()
+
+
+def test_graph_has_no_alarm_colours(qtbot):
+    from ptztracker.ui.theme import C
+
+    d, runner, cancel, _ = make_dialog(qtbot)
+    d.show()
+    for i in range(40):
+        runner.on_sample("cmd", {"t": i * 0.05, "cmd": "#PTS7050" if i % 2 else "#PTS5050"})
+    qtbot.waitUntil(lambda: d.graph.sample_count() > 50, timeout=3000)
+    img = d.graph.grab().toImage()
+
+    def near(col, hexc, tol=40):
+        h = hexc.lstrip("#")
+        return all(abs(a - int(h[k:k + 2], 16)) < tol for a, k in zip((col.red(), col.green(), col.blue()), (0, 2, 4)))
+
+    found = {"lime": False, "lost": False, "fault": False}
+    for y in range(0, img.height(), 2):
+        for x in range(0, img.width(), 2):
+            c = img.pixelColor(x, y)
+            found["lime"] |= near(c, C.LIME)
+            found["lost"] |= near(c, C.LOST)
+            found["fault"] |= near(c, C.FAULT)
+    assert found["lime"] and not found["lost"] and not found["fault"]
+    d.cancel_button.click()
+    qtbot.waitUntil(lambda: runner.ended.is_set(), timeout=3000)
