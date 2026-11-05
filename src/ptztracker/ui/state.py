@@ -116,6 +116,27 @@ def power_view(power: str, online: bool) -> str:
     return power if power in ("standby", "switching") else "on"
 
 
+def _same(a: str | None, b: str | None) -> bool:
+    return (a or "").strip().upper() == (b or "").strip().upper()
+
+
+def recalibration_hint(calibration: dict | None, model: str | None, firmware: str | None) -> str | None:
+    """Почему стоит откалибровать камеру заново (простыми словами) или None, если причин нет.
+    calibration — сохранённая у камеры (dict); model/firmware — то, что камера сообщила сейчас (None — не знаем)."""
+    if not isinstance(calibration, dict):
+        return None  # без калибровки есть своё сообщение
+    done_model, done_fw = calibration.get("model"), calibration.get("firmware")
+    if not done_model:
+        return "Калибровка сделана в прежней версии программы — откалибруйте камеру заново (меню ☰ → Калибровка)"
+    if model and not _same(done_model, model):
+        return (f"Калибровка сделана на камере {done_model}, а подключена {model} — "
+                "откалибруйте заново (меню ☰ → Калибровка)")
+    if firmware and done_fw and not _same(done_fw, firmware):
+        return (f"Прошивка камеры другая: при калибровке {done_fw}, сейчас {firmware} — "
+                "откалибруйте заново (меню ☰ → Калибровка)")
+    return None
+
+
 _REASONS = (
     (("timed out", "timeout", "time out"), "камера не отвечает"),
     (("refused",), "камера отклонила подключение"),

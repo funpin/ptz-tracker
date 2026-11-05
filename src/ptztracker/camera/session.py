@@ -428,11 +428,12 @@ class CameraSession:
                 log.debug("Непонятный ответ на QID: %r", reply)
                 return
             with self._info_lock:
-                if self._model is not None and self._model != model:
-                    log.info("Камера %s теперь %s (была %s) — забываю найденные возможности",
-                             self.cfg.name, model, self._model)
+                was = self._model
+                if was is not None and was != model:
                     self._unsupported.clear()
                 self._model = model
+            if was is not None and was != model:  # журнал — вне блокировки
+                log.info("Камера %s теперь %s (была %s) — забываю найденные возможности", self.cfg.name, model, was)
         elif _ER_NO_RETRY.search(reply):
             self._model_answered = True
 
@@ -441,12 +442,15 @@ class CameraSession:
         feature = _feature_of(cmd)
         if feature is None or feature not in IMAGE_FEATURES:
             return
+        added = False
         with self._info_lock:
             if ok:
                 self._unsupported.discard(feature)
             elif _ER1.search(reply) and feature not in self._unsupported:
                 self._unsupported.add(feature)
-                log.info("Камера %s не знает %s (ER1) — запоминаю", self.cfg.name, cmd)
+                added = True
+        if added:  # журнал — вне блокировки
+            log.info("Камера %s не знает %s (ER1) — запоминаю", self.cfg.name, cmd)
 
     # --- питание и изображение ------------------------------------------
 

@@ -73,6 +73,7 @@ class FollowPanel(QWidget):
         erow.addWidget(self.effort_slider, 1)
         erow.addWidget(QLabel("Резко"))
 
+        self._calibrated, self._note = True, None
         self.calib_label = QLabel("")
         self.calib_label.setWordWrap(True)
         self.calib_label.setStyleSheet(f"color: {C.LOST}; font-size: {FS_CAPTION}px;")
@@ -112,7 +113,19 @@ class FollowPanel(QWidget):
         self.effort_slider.blockSignals(False)
 
     def set_calibrated(self, calibrated: bool) -> None:
-        self.calib_label.setText(
-            "" if calibrated else "Камера не откалибрована: меню ☰ → Калибровка (2 мин)"
-        )
-        self.calib_label.setVisible(not calibrated)
+        self._calibrated = calibrated
+        self._note = None  # подсказка «откалибруйте заново» относится к одной калибровке
+        self._show_calib_label()
+
+    def set_calibration_note(self, note: str | None) -> None:
+        """Мягкая подсказка при уже сделанной калибровке (например, «сделана на другой модели»); None — убрать."""
+        self._note = note
+        self._show_calib_label()
+
+    def _show_calib_label(self) -> None:
+        if not self._calibrated:
+            text = "Камера не откалибрована: меню ☰ → Калибровка (2 мин)"
+        else:
+            text = self._note or ""
+        self.calib_label.setText(text)
+        self.calib_label.setVisible(bool(text))

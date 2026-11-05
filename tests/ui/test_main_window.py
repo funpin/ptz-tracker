@@ -1,3 +1,5 @@
+import dataclasses
+
 from PySide6.QtCore import Qt
 
 from ptztracker.config import ConfigStore
@@ -403,4 +405,239 @@ def test_camera_switch_resets_speed_scale_timer(qtbot, tmp_path):
     w._speed_scale_saved_t = 123.0
     w._activate(w._current_cfg())
     assert w._speed_scale_saved_t == float("-inf")
+    w.close()
+
+
+# --- память камеры (Task 4) ---------------------------------------------------
+
+
+def _calib(model="AW-HE42", firmware=None, **kw):
+    from ptztracker.control.camera_model import default_calibration
+
+    c = default_calibration()
+    c.model, c.firmware = model, firmware
+    for k, v in kw.items():
+        setattr(c, k, v)
+    return c.to_json()
+
+
+def _detect(w, model=None, firmware=None, unsupported=()):
+    """Подставить то, что сессия узнала о камере (сети в тесте нет), и дать окну это сохранить."""
+    s = w.session
+    with s._info_lock:
+        s._model, s._firmware = model, firmware
+        s._unsupported = set(unsupported)
+    w._update_status()
+
+
+def test_detected_model_firmware_and_unsupported_saved(qtbot, tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    _detect(w, "AW-HE40", "1.54", ["gain", "power"])
+    cam = store.load().cameras[0]
+    assert (cam.model, cam.firmware, cam.unsupported) == ("AW-HE40", "1.54", ["gain", "power"])
+    w.close()
+
+
+def test_known_model_not_overwritten_by_empty_answer(qtbot, tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cfg.cameras[0].model, cfg.cameras[0].firmware = "AW-HE40", "1.54"
+    store.save(cfg)
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    _detect(w, None, None, [])  # камера пока не ответила
+    cam = store.load().cameras[0]
+    assert (cam.model, cam.firmware) == ("AW-HE40", "1.54")
+    _detect(w, "AW-HE42", None, [])  # а это уже другая камера по тому же адресу
+    cam = store.load().cameras[0]
+    assert (cam.model, cam.firmware) == ("AW-HE42", None)
+    w.close()
+
+
+def test_sim_camera_info_not_persisted(qtbot, tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    w = make(qtbot, tmp_path)
+    w.session._model = "AW-HE42"
+    w._update_status()
+    w.close()
+    assert all(c.model is None for c in ConfigStore(tmp_path / "c.json").load().cameras)
+    assert not store.path.exists() or all(c.kind != "sim" for c in store.load().cameras)
+
+
+def test_unsupported_features_hide_controls_and_disable_menu(qtbot, tmp_path):
+    w = MainWindow(ConfigStore(tmp_path / "c.json"))
+    qtbot.addWidget(w)
+    w.show()
+    _detect(w, "AW-HE42", None, ["gain", "color_temp"])
+    assert w.controls.gain_slider.isHidden() and w.controls.ctemp_slider.isHidden()
+    assert not w.controls.wb_combo.isHidden()
+    assert not w.camera_menu._enabled("gain")
+    _detect(w, "AW-HE42", None, [])
+    assert not w.controls.gain_slider.isHidden()
+    w.close()
+
+
+def test_unsupported_power_keeps_visible_but_disabled_button(qtbot, tmp_path, monkeypatch):
+    from ptztracker.camera.session import CameraSession
+
+    monkeypatch.setattr(CameraSession, "online", property(lambda self: True))
+    w = MainWindow(ConfigStore(tmp_path / "c.json"))
+    qtbot.addWidget(w)
+    w.show()
+    w.session._power = "standby"
+    _detect(w, "AW-HE42", None, ["power"])
+    assert w.power_overlay.isVisible()  # выход из ожидания не прячем
+    assert not w.power_overlay.power_btn.isEnabled() and w.power_overlay.power_btn.toolTip()
+    assert not w.power_action.isEnabled() and w.power_action.toolTip()
+    _detect(w, "AW-HE42", None, [])
+    assert w.power_overlay.power_btn.isEnabled() and w.power_action.isEnabled()
+    w.close()
+
+
+def _hint(w):
+    lbl = w.follow_panel.calib_label
+    return None if lbl.isHidden() else lbl.text()
+
+
+def test_recalibration_hint_for_other_model_and_old_calibration(qtbot, tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cfg.cameras[0].calibration = _calib("AW-HE42")
+    store.save(cfg)
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    w.show()
+    _detect(w, "AW-HE42", None, [])
+    assert _hint(w) is None
+    _detect(w, "AW-HE40", None, [])
+    assert "AW-HE42" in _hint(w) and "AW-HE40" in _hint(w) and "заново" in _hint(w)
+    w.close()
+    cfg = store.load()
+    cfg.cameras[0].calibration = _calib(None)  # калибровка до 1.0: модели в ней нет
+    store.save(cfg)
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    w.show()
+    w._update_status()
+    assert "прежней версии" in _hint(w)
+    w.close()
+
+
+def test_recalibration_hint_once_per_session_per_camera(qtbot, tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cfg.cameras[0].calibration = _calib(None)
+    cfg.cameras[0].id = "a"
+    from ptztracker.config import CameraConfig
+
+    cfg.cameras.append(CameraConfig(id="b", name="Б", ip="10.0.0.13"))
+    store.save(cfg)
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    w.show()
+    w._update_status()
+    assert _hint(w)
+    w._update_status()
+    assert _hint(w)  # пока камера подключена, подсказка на месте
+    w.camera_combo.setCurrentIndex(1)
+    w._update_status()
+    assert _hint(w) is None or "не откалибрована" in _hint(w)  # у другой камеры своё сообщение
+    w.camera_combo.setCurrentIndex(0)
+    w._update_status()
+    assert _hint(w) is None  # второй раз за запуск не напоминаем
+    w.close()
+
+
+def test_edit_camera_keeps_everything_and_newer_state(qtbot, tmp_path, monkeypatch):
+    """Правка камеры сохраняет всё остальное, а сведения, узнанные пока диалог был открыт, не затирает."""
+    from ptztracker.ui.camera_dialog import CameraDialog
+
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cam = cfg.cameras[0]
+    cam.calibration, cam.speed_scale = _calib("AW-HE42"), {"pan": 1.2, "tilt": 1.0, "zoom": 1.0}
+    cam.composition, cam.effort, cam.stream, cam.pad_number = "full", 0.8, "mjpeg_2", 2
+    cam.atem_input = 3
+    store.save(cfg)
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+
+    def fake_exec(self):
+        self.name_edit.setText("Новое имя")
+        _detect(w, "AW-HE40", "1.54", ["gain"])  # пока диалог открыт, окно узнало модель
+        return True
+
+    monkeypatch.setattr(CameraDialog, "exec", fake_exec)
+    w._edit_camera()
+    got = store.load().cameras[0]
+    assert got.name == "Новое имя"
+    assert (got.calibration, got.speed_scale) == (cam.calibration, {"pan": 1.2, "tilt": 1.0, "zoom": 1.0})
+    assert (got.composition, got.effort, got.stream, got.pad_number, got.atem_input) == ("full", 0.8, "mjpeg_2", 2, 3)
+    assert (got.model, got.firmware, got.unsupported) == ("AW-HE40", "1.54", ["gain"])
+    w.close()
+
+
+def test_edit_camera_reset_calibration_only_this_camera(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from ptztracker.config import CameraConfig
+    from ptztracker.ui.camera_dialog import CameraDialog
+
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cfg.cameras[0].calibration, cfg.cameras[0].speed_scale = _calib("AW-HE42"), {"pan": 1.2}
+    cfg.cameras.append(CameraConfig(id="b", name="Б", ip="10.0.0.13", calibration=_calib("AW-HE40"),
+                                    speed_scale={"pan": 1.5}))
+    store.save(cfg)
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+
+    def fake_exec(self):
+        self.reset_button.click()
+        return True
+
+    monkeypatch.setattr(CameraDialog, "exec", fake_exec)
+    w._edit_camera()
+    a, b = store.load().cameras
+    assert (a.calibration, a.speed_scale) == (None, None)
+    assert b.calibration is not None and b.speed_scale == {"pan": 1.5}
+    assert not w.follow_panel.calib_label.isHidden()  # окно перешло на таблицу по умолчанию
+    w.close()
+
+
+def test_each_camera_remembers_its_own_everything(qtbot, tmp_path):
+    from ptztracker.config import CameraConfig
+
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cfg.cameras[0] = CameraConfig(
+        id="a", name="А", ip="10.0.0.12", calibration=_calib("AW-HE42"), speed_scale={"pan": 1.3, "tilt": 1.0, "zoom": 1.0},
+        composition="full", effort=0.2, stream="mjpeg_1", pad_number=1, model="AW-HE42")
+    cfg.cameras.append(CameraConfig(
+        id="b", name="Б", ip="10.0.0.13", calibration=_calib("AW-HE40"), speed_scale={"pan": 0.8, "tilt": 1.1, "zoom": 1.0},
+        composition="wide", effort=0.9, stream="h264_1", pad_number=2, model="AW-HE40", unsupported=["gain"]))
+    store.save(cfg)
+    before = {c.id: dataclasses.asdict(c) for c in store.load().cameras}
+
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    assert w.session.follower.calib.pan_scale == 1.3
+    w.camera_combo.setCurrentIndex(1)  # переключили на «Б»
+    assert w.session.cfg.id == "b" and w.session.follower.calib.pan_scale == 0.8
+    assert w.follow_panel.comp_buttons["wide"].isChecked()
+    _detect(w, "AW-HE40", "1.54", ["gain"])
+    w.camera_combo.setCurrentIndex(0)  # и обратно
+    assert w.session.follower.calib.pan_scale == 1.3 and w.follow_panel.comp_buttons["full"].isChecked()
+    w.close()  # перезапуск: настройки читаются заново
+
+    after = {c.id: dataclasses.asdict(c) for c in store.load().cameras}
+    assert after["a"] == before["a"]  # «А» ничего не получила от «Б»
+    assert after["b"] == {**before["b"], "firmware": "1.54"}  # «Б» узнала только прошивку
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    w.camera_combo.setCurrentIndex(1)
+    assert w.session.follower.calib.pan_scale == 0.8 and w.session.cfg.model == "AW-HE40"
     w.close()

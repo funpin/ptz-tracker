@@ -46,12 +46,19 @@ def test_default_min_interval_matches_config_default():
         assert profile_for(name).min_interval == CameraConfig(id="a", name="a", ip="1.1.1.1").min_interval == 0.130
 
 
-@pytest.mark.parametrize("model", [None, "", "AW-UE150", "что-то"])
+@pytest.mark.parametrize("model", ["", "AW-UE150", "что-то"])
 def test_unknown_model_gets_he42_and_warns_once(model, caplog):
     with caplog.at_level(logging.WARNING, logger="ptztracker.camera.models"):
         assert profile_for(model).name == "AW-HE42"
         assert profile_for(model).name == "AW-HE42"
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+
+
+def test_not_asked_yet_is_not_unknown_no_warning(caplog):
+    """None — QID ещё не отправляли или ответа нет: профиль по умолчанию без предупреждения в журнале."""
+    with caplog.at_level(logging.WARNING, logger="ptztracker.camera.models"):
+        assert profile_for(None).name == "AW-HE42"
+    assert not caplog.records
 
 
 def test_known_model_does_not_warn(caplog):

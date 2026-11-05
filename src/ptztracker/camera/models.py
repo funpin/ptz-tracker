@@ -62,7 +62,7 @@ def profile_for(model: str | None) -> ModelProfile:
     for name, prof in PROFILES.items():
         if key.startswith(name):
             return prof
-    if model not in _warned:
+    if model is not None and model not in _warned:  # None — «ещё не спрашивали», не «неизвестна»
         _warned.add(model)
         log.warning("Модель камеры %r неизвестна — беру профиль %s", model, DEFAULT_PROFILE.name)
     return DEFAULT_PROFILE

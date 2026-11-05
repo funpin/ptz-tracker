@@ -90,3 +90,30 @@ def test_stop_button_shows_esc(qtbot):
     c, _ = make(qtbot)
     assert c.stop_btn.hotkey == "Esc"
     assert c.stop_btn.focusPolicy() == Qt.NoFocus
+
+
+def test_unsupported_features_hide_rows(qtbot):
+    c, _ = make(qtbot)
+    rows = {
+        "gain": (c.gain_auto, c.gain_slider, c.gain_value),
+        "wb": (c.wb_combo, c.ctemp_slider, c.ctemp_value),
+    }
+    assert all(not w.isHidden() for ws in rows.values() for w in ws)
+    c.set_unsupported(["gain"])
+    assert all(w.isHidden() for w in rows["gain"]) and not c.wb_combo.isHidden()
+    c.set_unsupported(["color_temp"])  # только температура: режим WB остаётся, ползунок температуры уходит
+    assert not c.gain_slider.isHidden() and not c.wb_combo.isHidden()
+    assert c.ctemp_slider.isHidden() and c.ctemp_value.isHidden()
+    c.set_unsupported(["wb"])  # без баланса белого нет и температуры
+    assert all(w.isHidden() for w in rows["wb"])
+    c.set_unsupported([])  # камеру сменили на ту, что умеет всё
+    assert all(not w.isHidden() for ws in rows.values() for w in ws)
+
+
+def test_unsupported_features_survive_sync_image(qtbot):
+    from ptztracker.camera.session import ImageState
+
+    c, _ = make(qtbot)
+    c.set_unsupported(["gain", "wb", "color_temp"])
+    c.sync_image(ImageState(gain=0x20, wb=0, color_temp=10))
+    assert c.gain_slider.isHidden() and c.wb_combo.isHidden() and c.ctemp_slider.isHidden()

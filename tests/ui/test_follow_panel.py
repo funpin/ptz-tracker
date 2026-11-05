@@ -103,3 +103,18 @@ def test_effort_applied_on_any_change(qtbot, tmp_path):
     w.follow_panel.effort_slider.setValue(100)  # колесо/клик по полосе — тоже применяется
     assert w.session.follower.controller.effort.gain == 2.0
     w.close()
+
+
+def test_recalibration_note_shown_only_for_calibrated_camera(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    fp = w.follow_panel
+    fp.set_calibrated(False)
+    fp.set_calibration_note("Калибровка сделана на другой модели")
+    assert "не откалибрована" in fp.calib_label.text()  # без калибровки — прежнее сообщение
+    fp.set_calibrated(True)
+    assert fp.calib_label.isHidden()  # новая калибровка — прежняя подсказка не нужна
+    fp.set_calibration_note("Калибровка сделана на другой модели")
+    assert fp.calib_label.text() == "Калибровка сделана на другой модели" and not fp.calib_label.isHidden()
+    fp.set_calibration_note(None)
+    assert fp.calib_label.isHidden()
+    w.close()

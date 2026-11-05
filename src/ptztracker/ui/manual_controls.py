@@ -163,6 +163,7 @@ class ManualControls(QWidget):
         self.gain_auto.toggled.connect(self._on_gain_auto)
         self.gain_slider.valueChanged.connect(self._on_gain)
         gl = self._row("Gain", self.gain_auto, self.gain_slider, self.gain_value)
+        self._gain_row = gl
 
         # баланс белого: режим; температура — только в режиме VAR
         self.wb_combo = QComboBox()
@@ -178,6 +179,7 @@ class ManualControls(QWidget):
         self.wb_combo.currentIndexChanged.connect(self._on_wb)
         self.ctemp_slider.valueChanged.connect(self._on_ctemp)
         wl = self._row("WB", self.wb_combo, self.ctemp_slider, self.ctemp_value)
+        self._wb_row = wl
 
         pl = QHBoxLayout()
         pl.setSpacing(SP[0])
@@ -308,6 +310,23 @@ class ManualControls(QWidget):
         self._show_values()
         if self._s and self.wb_combo.currentData() == P.WB_VAR:
             self._s.set_color_temp(v)
+
+    def set_unsupported(self, features) -> None:
+        """Спрятать то, что камера не умеет (ответила ER1): gain, баланс белого, цветовая температура.
+        Пустой список показывает всё (сменили камеру)."""
+        feats = set(features)
+        self._set_row_visible(self._gain_row, "gain" not in feats)
+        no_wb = "wb" in feats
+        self._set_row_visible(self._wb_row, not no_wb)
+        if not no_wb:  # без режима WB прячется вся строка; иначе — только ползунок температуры
+            self.ctemp_slider.setVisible("color_temp" not in feats)
+            self.ctemp_value.setVisible("color_temp" not in feats)
+
+    @staticmethod
+    def _set_row_visible(row: QHBoxLayout, visible: bool) -> None:
+        for i in range(row.count()):
+            if w := row.itemAt(i).widget():
+                w.setVisible(visible)
 
     def sync_image(self, img: ImageState) -> None:
         """Показать значения камеры, не отправляя команд; не перебивать то, что оператор трогал в последние 1,5 с."""

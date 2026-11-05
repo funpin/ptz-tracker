@@ -106,6 +106,11 @@ class CameraMenu(QFrame):
         s = self._s()
         return s is not None and all(callable(getattr(s, n, None)) for n in names)
 
+    def _supports(self, feature: str) -> bool:
+        """Камера не отвечала ER1 на эту возможность (у сессий без supports — считаем, что умеет)."""
+        sup = getattr(self._s(), "supports", None)
+        return sup(feature) if callable(sup) else True
+
     def _cur(self, key: str, value: int | None) -> int | None:
         loc = self._local.get(key)
         if loc is not None and time.monotonic() - loc[1] < LOCAL_HOLD_S:
@@ -136,11 +141,12 @@ class CameraMenu(QFrame):
         if key == "iris":
             return self._s() is not None
         if key == "gain":
-            return self._has("set_gain")
+            return self._has("set_gain") and self._supports("gain")
         if key == "wb":
-            return self._has("set_wb")
+            return self._has("set_wb") and self._supports("wb")
         if key == "ctemp":
-            return self._has("set_color_temp") and self._wb() == P.WB_VAR
+            return (self._has("set_color_temp") and self._supports("wb") and self._supports("color_temp")
+                    and self._wb() == P.WB_VAR)
         return False
 
     def visible_keys(self) -> list[str]:

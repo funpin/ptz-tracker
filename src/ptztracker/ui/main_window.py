@@ -60,14 +60,22 @@ from ptztracker.tally import atem_input_of
 from ptztracker.tally.atem import AtemTally
 from ptztracker.ui.agent_panel import AgentPanel
 from ptztracker.ui.atem_dialog import AtemDialog
-from ptztracker.ui.camera_dialog import CameraDialog
+from ptztracker.ui.camera_dialog import CameraDialog, merge_edit
 from ptztracker.ui.camera_menu import CameraMenu
 from ptztracker.ui.follow_panel import FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge, pad_number_for
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.manual_controls import ManualControls
 from ptztracker.ui.preview import PreviewWidget
-from ptztracker.ui.state import TrackingView, analysis_pill, atem_pill, power_view, tracking_view, video_pill
+from ptztracker.ui.state import (
+    TrackingView,
+    analysis_pill,
+    atem_pill,
+    power_view,
+    recalibration_hint,
+    tracking_view,
+    video_pill,
+)
 from ptztracker.ui.theme import FS_CAPTION, SP, C
 from ptztracker.ui.widgets import PowerOverlay, StatusPill, VideoFrame, keycap_width, paint_keycap
 from ptztracker.updates import CHECK_INTERVAL_S, RELEASE_PAGE, UpdateChecker, UpdateInfo, is_newer
@@ -366,6 +374,9 @@ class MainWindow(QMainWindow):
         self.on_operator_follow: Callable[[bool], None] | None = None
 
         self._speed_scale_saved_t = float("-inf")
+        self._recalib_hinted: set[str] = set()  # камеры, которым подсказка «откалибруйте заново» уже показана в этот запуск
+        self._recalib_hint_for: str | None = None  # камера, у которой подсказка видна в нынешнем подключении
+        self._unsupported_shown: tuple = ()
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._update_status)
         self._status_timer.start(500)
@@ -426,6 +437,9 @@ class MainWindow(QMainWindow):
         self.pad.cancel_holds()
         self.release_all_held()
         self._speed_scale_saved_t = float("-inf")  # «раз в минуту» — для каждой камеры заново
+        self._recalib_hint_for = None  # подсказка не возвращается после переключения туда-обратно
+        self._unsupported_shown = ()
+        self.controls.set_unsupported(())
         if self.session:
             self.session.stop()
             self.session = None
@@ -704,9 +718,13 @@ class MainWindow(QMainWindow):
             return
         d = CameraDialog(cur, get_password(cur.id) if cur.username else None, parent=self)
         if d.exec():
-            cam = d.result_config()
-            if cam.kind != "sim":
-                set_password(cam.id, d.password())
+            result = d.result_config()
+            if result.kind != "sim":
+                set_password(result.id, d.password())
+            # пока диалог был открыт, окно могло узнать модель или сохранить поправку скорости: берём свежую запись
+            # и меняем в ней только то, что оператор тронул
+            latest = next((c for c in self.cfg.cameras if c.id == result.id), None)
+            cam = merge_edit(latest, d.snapshot, result) if latest is not None else result
             self.cfg.cameras = [cam if c.id == cam.id else c for c in self.cfg.cameras]
             self._save()
             self._fill_combo(cam.id)
@@ -834,10 +852,12 @@ class MainWindow(QMainWindow):
         self._poll_update_check()
         s = self.session
         cam = self._current_cfg()
-        self.power_overlay.set_view(power_view(s.power, s.online) if s else "on", s.cfg.name if s else "")
+        can_power = s is not None and s.supports("power")  # ER1 на питание: кнопка остаётся, но серая
+        self.power_overlay.set_view(power_view(s.power, s.online) if s else "on", s.cfg.name if s else "", can_power)
         self.power_action.setText("Включить камеру" if s and s.power == "standby"
                                   else "Перевести камеру в режим ожидания…")
-        self.power_action.setEnabled(s is not None)
+        self.power_action.setEnabled(can_power)
+        self.power_action.setToolTip("" if can_power or s is None else "Камера не принимает команду питания от программы")
         if not s:
             self.video_pill.set(*video_pill(None, ""))
             self.analysis_pill.set("", "off", "Анализ: камера не выбрана")
@@ -846,6 +866,8 @@ class MainWindow(QMainWindow):
             return
         self._remember_rtsp_url(s)
         self._remember_speed_scale(s)
+        self._remember_camera_info(s)
+        self._update_recalibration_hint(s, cam)
         stream = STREAM_CHOICES.get(cam.stream if cam else "auto", "Авто")
         st = s.frames.stats()
         text, kind, tip = video_pill(st, stream)
@@ -860,6 +882,10 @@ class MainWindow(QMainWindow):
         )
         self._update_analysis_status(s)
         self.controls.sync_image(s.image)
+        unsupported = s.camera_info().unsupported
+        if unsupported != self._unsupported_shown:
+            self._unsupported_shown = unsupported
+            self.controls.set_unsupported(unsupported)
         self._fit_top_bar()
 
     def _update_analysis_status(self, s: CameraSession) -> None:
@@ -943,6 +969,37 @@ class MainWindow(QMainWindow):
             cam.rtsp_url = url
             self._save()
             self.statusBar().showMessage(f"Найден адрес видео: {url}", 8000)
+
+    def _remember_camera_info(self, s: CameraSession) -> None:
+        """Модель, прошивку и найденные «не умею» — в настройки камеры (сессия настройки не пишет).
+        Известную модель не затираем пустым ответом; симулятору сведения не нужны."""
+        cam = next((c for c in self.cfg.cameras if c.id == s.cfg.id), None)
+        if cam is None or cam.kind == "sim":
+            return
+        info = s.camera_info()
+        model = info.model or cam.model
+        # прошивка: новая модель — прошивка из ответа (она могла быть None), та же — известную не теряем
+        firmware = info.firmware or (cam.firmware if model == cam.model else None)
+        unsupported = list(info.unsupported)
+        if (model, firmware, set(unsupported)) == (cam.model, cam.firmware, set(cam.unsupported)):
+            return
+        cam.model, cam.firmware, cam.unsupported = model, firmware, unsupported
+        self._save()
+        log.info("Сведения о камере %s сохранены: %s %s, не умеет: %s", cam.name, model, firmware, unsupported)
+
+    def _update_recalibration_hint(self, s: CameraSession, cam: CameraConfig | None) -> None:
+        """Мягкая подсказка под кнопками кадра, если калибровка сделана на другой камере или в прежней версии.
+        Не блокирует ничего; для каждой камеры показывается один раз за запуск (до смены камеры)."""
+        hint = None
+        if cam is not None and cam.kind != "sim":
+            info = s.camera_info()
+            hint = recalibration_hint(cam.calibration, info.model, info.firmware)
+        if hint and (cam.id == self._recalib_hint_for or cam.id not in self._recalib_hinted):
+            self._recalib_hinted.add(cam.id)
+            self._recalib_hint_for = cam.id
+        else:
+            hint = None
+        self.follow_panel.set_calibration_note(hint)
 
     def _remember_speed_scale(self, s: CameraSession) -> None:
         """Поправку скорости, найденную слежением, — в настройки камеры (не чаще раза в SPEED_SCALE_SAVE_S).
