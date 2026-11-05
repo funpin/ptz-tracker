@@ -117,8 +117,12 @@ QMenu::item {{ padding: 6px 20px; border-radius: 4px; }}
 QMenu::item:selected {{ background: {C.RAISED_HI}; }}
 QMenu::item:disabled {{ color: {C.TEXT_FAINT}; }}
 QMenu::separator {{ height: 1px; background: {C.LINE}; margin: 4px 8px; }}
-QStatusBar {{ background: {C.SURFACE}; color: {C.TEXT_DIM}; }}
-QStatusBar::item {{ border: none; }}
+QStatusBar {{ background: {C.SURFACE}; color: {C.TEXT_DIM}; border-top: 1px solid {C.LINE};
+    padding: 2px {SP[1]}px; }}
+QStatusBar::item {{ border: none; margin: 0 {SP[0]}px; }}
+QStatusBar QWidget {{ background: transparent; }}
+QStatusBar QToolButton:hover {{ background: {C.RAISED_HI}; border-radius: 4px; }}
+QToolButton[pill="true"]::menu-indicator {{ image: none; width: 0; }}
 
 QGroupBox {{ border: none; margin-top: {SP[3]}px; padding-top: {SP[1]}px; }}
 QGroupBox::title {{ subcontrol-origin: margin; left: 0; color: {C.TEXT_DIM};

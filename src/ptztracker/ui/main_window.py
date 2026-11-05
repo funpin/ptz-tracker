@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -93,7 +94,9 @@ SIDE_WIDTH = 372
 _HOTKEYS = [
     ("Пробел", "слежение"), ("1–5", "кадр"), ("← → ↑ ↓", "поворот"), ("+ −", "зум"), ("Esc", "стоп"),
     ("F9", "сохранить момент"), ("M", "меню камеры"),
-]  # F1 («справка») в строку состояния не добавляем: окно F1 показывает её сам
+]  # F1 («справка») сюда не добавляем: окно F1 показывает её само
+# в строке состояния — только главное; остальное в окне F1
+_FOOTER_KEYS = [("Пробел", "слежение"), ("Esc", "стоп"), ("F9", "сохранить момент"), ("F1", "все клавиши")]
 _PAN_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
 _MENU_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter}
 _ZOOM_IN_KEYS = {Qt.Key_Plus, Qt.Key_Equal}
@@ -129,6 +132,14 @@ class _Cap(QWidget):
 
 def _keycap_label(text: str) -> QWidget:
     return _Cap(text)
+
+
+def _vline() -> QFrame:
+    """Тонкий разделитель групп в панелях."""
+    f = QFrame()
+    f.setFixedSize(1, 18)
+    f.setStyleSheet(f"background: {C.LINE};")
+    return f
 
 
 class MainWindow(QMainWindow):
@@ -168,8 +179,9 @@ class MainWindow(QMainWindow):
         self.controls = ManualControls()
         self.follow_panel = FollowPanel()
 
-        # верхняя строка: камера слева; значки состояния (подробности — в подсказках); меню ☰; TRACK справа
-        self.cameras_btn = self._menu_button("adjustments", "Камеры: добавить, изменить, удалить")
+        # верхняя строка: камера слева; то, что важно в эфире (ATEM, чёрный ящик, геймпад, агент); меню ☰; TRACK.
+        # Видео и анализ — внизу, в строке состояния
+        self.cameras_btn = self._menu_button("camera", "Камеры: добавить, изменить, удалить")
         cam_menu = self.cameras_btn.menu()
         self.add_action = cam_menu.addAction("Добавить камеру…", self._add_camera)
         self.edit_action = cam_menu.addAction("Изменить камеру…", self._edit_camera)
@@ -209,13 +221,14 @@ class MainWindow(QMainWindow):
         self._top.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # ширину держит _fit_top_bar
         tl = QHBoxLayout(self._top)
         tl.setContentsMargins(SP[1], SP[0], SP[1], SP[0])
-        tl.setSpacing(SP[0])
+        tl.setSpacing(SP[1])
         tl.addWidget(self.camera_combo)
         tl.addWidget(self.cameras_btn)
         tl.addStretch(1)
-        for w in (self.video_pill, self.analysis_pill, self.atem_pill, self.blackbox_btn, self.pad_chip,
-                  self.agent_badge, self.main_menu_btn):
+        for w in (self.atem_pill, self.blackbox_btn, self.pad_chip, self.agent_badge):
             tl.addWidget(w)
+        tl.addWidget(_vline())
+        tl.addWidget(self.main_menu_btn)
         tl.addSpacing(SP[1])
         tl.addWidget(self.track_btn.action_btn)
         tl.addWidget(self.track_btn)
@@ -297,26 +310,27 @@ class MainWindow(QMainWindow):
         hl.addWidget(side_col)
         self.setCentralWidget(central)
 
-        # строка состояния: справа клавиши и подпись
+        # строка состояния: слева сообщения; справа видео и анализ | главные клавиши | версия и подпись
         sb = self.statusBar()
         sb.setSizeGripEnabled(False)
         keys = QWidget()
         kl = QHBoxLayout(keys)
         kl.setContentsMargins(0, 0, 0, 0)
-        kl.setSpacing(SP[1])
-        for key, what in _HOTKEYS:
+        kl.setSpacing(SP[0])
+        for i, (key, what) in enumerate(_FOOTER_KEYS):
+            if i:
+                kl.addSpacing(SP[2])
             kl.addWidget(_keycap_label(key))
             kl.addWidget(self._caption(what))
-            kl.addSpacing(SP[1])
         self.version_label = QLabel(f"v{__version__}")
-        self.version_label.setStyleSheet(f"color: {C.TEXT_FAINT};")
+        self.version_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
         self.credit_label = QLabel("by funpin.ru & Claude")
+        self.credit_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
         # отступ справа: в окне со скруглёнными углами подпись не упирается в край
-        self.credit_label.setStyleSheet(f"color: {C.TEXT_FAINT};")
-        self.credit_label.setContentsMargins(0, 0, SP[3], 0)
-        sb.addPermanentWidget(keys)
-        sb.addPermanentWidget(self.version_label)
-        sb.addPermanentWidget(self.credit_label)
+        self.credit_label.setContentsMargins(0, 0, SP[2], 0)
+        for wd in (self.video_pill, self.analysis_pill, _vline(), keys, _vline(), self.version_label,
+                   self.credit_label):
+            sb.addPermanentWidget(wd)
         # чёрный ящик: «Показать в папке» после F9 — слева в строке состояния
         self.show_folder_btn = QPushButton("Показать в папке")
         self.show_folder_btn.setProperty("variant", "ghost")
@@ -914,10 +928,10 @@ class MainWindow(QMainWindow):
             self.target_label.setStyleSheet(f"color: {C.LOST}; font-weight: bold;")
 
     def _fit_top_bar(self) -> None:
-        """Узкое окно: сначала теряют текст «Видео», затем «Анализ», затем ATEM; камера и TRACK — никогда."""
+        """Узкое окно: ATEM теряет текст; камера и TRACK — никогда."""
         if not hasattr(self, "_top"):
             return  # ещё строится окно
-        pills = (self.video_pill, self.analysis_pill, self.atem_pill)
+        pills = (self.atem_pill,)
         for p in pills:
             p.set_compact(False)
         avail = self.width() - 2 * SP[1]
