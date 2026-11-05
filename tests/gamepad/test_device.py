@@ -237,36 +237,17 @@ def test_backend_without_battery_method_ok():
     assert conn
 
 
-class FakeHidLib:
-    def __init__(self, reports, fail_open=False):
-        self.reports = list(reports)
-        self.opened, self.closed = [], 0
-        self.fail_open = fail_open
+class PowerJoy:
+    def __init__(self, level):
+        self.level = level
 
-    def SDL_hid_open(self, vid, pid, serial):
-        self.opened.append((vid, pid, serial))
-        return None if self.fail_open else 1234
-
-    def SDL_hid_read_timeout(self, h, buf, n, ms):
-        assert ms == 0
-        if not self.reports:
-            return 0
-        r = self.reports.pop(0)
-        for i, x in enumerate(r):
-            buf[i] = x
-        return len(r)
-
-    def SDL_hid_close(self, h):
-        self.closed += 1
+    def get_power_level(self):
+        if isinstance(self.level, Exception):
+            raise self.level
+        return self.level
 
 
-def _rep(b, rid=0x31, idx=54):
-    r = bytearray(78)
-    r[0], r[idx] = rid, b
-    return bytes(r)
-
-
-def _backend(lib, name="DualSense Wireless Controller"):
+def _backend(level, name="DualSense Wireless Controller"):
     from ptztracker.gamepad.device import SdlBackend
 
     class Ctl:
@@ -274,30 +255,28 @@ def _backend(lib, name="DualSense Wireless Controller"):
     sb = SdlBackend()
     sb._ctl = Ctl()
     sb._ctl.name = name
-    sb._sdl = lib
-    sb._hid_lib = lambda: lib
+    sb._ctl.as_joystick = lambda: PowerJoy(level)
     return sb
 
 
-def test_sdl_battery_reads_latest_report():
-    lib = FakeHidLib([_rep(0x05), _rep(0x07)])
-    sb = _backend(lib)
-    assert sb.battery() == (70, False)
-    assert lib.opened == [(0x054C, 0x0CE6, None)]
-    lib.reports = []
-    assert sb.battery() == (70, False)  # нового отчёта нет: прежнее значение
-    assert len(lib.opened) == 1
-    sb._close_hid()
-    assert lib.closed == 1
+def test_battery_from_sdl_power_level():
+    """Заряд — уровень SDL (грубо, верхняя граница), без своего HID-подключения к геймпаду."""
+    assert _backend("full").battery() == (100, False)
+    assert _backend("medium").battery() == (70, False)
+    assert _backend("low").battery() == (20, False)
+    assert _backend("empty").battery() == (5, False)
+    assert _backend("wired").battery() == (None, True)
+    assert _backend("unknown").battery() == (None, None)
+    assert _backend("medium", name="Xbox Wireless Controller").battery() == (70, False)
+    assert _backend(RuntimeError("sdl")).battery() == (None, None)
 
 
-def test_sdl_battery_non_dualsense_and_failures():
-    assert _backend(FakeHidLib([]), name="Xbox").battery() == (None, None)
-    assert _backend(FakeHidLib([], fail_open=True)).battery() == (None, None)
-    assert _backend(FakeHidLib([])).battery() == (None, None)  # отчётов ещё не было
-    sb = _backend(None)
-    sb._hid_lib = lambda: (_ for _ in ()).throw(OSError("нет SDL"))
-    assert sb.battery() == (None, None)
+def test_backend_never_opens_hid_itself():
+    """Своё HID-подключение поверх SDL на Mac гонялось с потоком чтения SDL и роняло программу."""
+    import inspect
+
+    import ptztracker.gamepad.device as dev
+    assert "SDL_hid_" not in inspect.getsource(dev)
 
 
 class FakeSerialLib:

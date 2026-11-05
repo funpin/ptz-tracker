@@ -124,6 +124,9 @@ class H:
     def __init__(self, log):
         self.log = log
 
+    def open(self):
+        return True
+
     def pump(self):
         self.log.append("pump")
 
@@ -176,3 +179,76 @@ def test_hub_backend_view_polls_real_controller():
     hub._slots[1] = AxisCtl(42)
     pad = view.poll()
     assert pad is not None and pad.axes["leftx"] == 1.0
+
+
+class OpenHub(H):
+    """Хаб, который помнит, из какого потока его открыли."""
+
+    def __init__(self, log, ok=True):
+        super().__init__(log)
+        self.ok, self.open_thread = ok, None
+
+    def open(self):
+        import threading
+        self.open_thread = threading.current_thread().name
+        self.log.append("open")
+        return self.ok
+
+
+def test_multipad_thread_opens_sdl_on_its_own_thread():
+    """На Mac SDL доставляет события HID в поток, где его запустили: запуск в потоке Qt ронял программу."""
+    log = []
+    hub = OpenHub(log)
+    m = MultiPadThread(hub, [T("a", log)], hz=1000.0)
+    assert hub.open_thread is None  # конструктор SDL не трогает
+    m.start()
+    import time
+    time.sleep(0.05)
+    m.stop(1.0)
+    assert hub.open_thread == "gamepads"
+    assert log[:3] == ["open", "pump", "a"]
+
+
+def test_multipad_thread_ends_quietly_when_sdl_fails():
+    log = []
+    m = MultiPadThread(OpenHub(log, ok=False), [T("a", log)], hz=1000.0)
+    m.start()
+    m._thread.join(1.0)
+    assert not m._thread.is_alive()
+    assert "pump" not in log and log[-2:] == ["a.shutdown", "close"]
+
+
+def test_hub_backend_view_does_not_start_sdl():
+    """Вид создаётся в потоке Qt: SDL ему трогать нельзя, pygame он берёт у хаба при первом опросе."""
+    hub = SdlHub()
+    hub.open = lambda: (_ for _ in ()).throw(AssertionError("SDL запущен из конструктора вида"))
+    view = hub.backend(0)
+    assert view.poll() is None  # хаб ещё не открыт: геймпадов нет
+
+
+class CachingController(FakeController):
+    """Как настоящий pygame-ce: Controller(i) для уже открытого устройства возвращает тот же объект."""
+
+    def __init__(self):
+        super().__init__()
+        self.cache = {}
+
+    def Controller(self, i):  # noqa: N802
+        iid = self.devices[i]
+        if iid not in self.cache or self.cache[iid].quit_called:
+            self.cache[iid] = Ctl(iid)
+        return self.cache[iid]
+
+
+def test_hub_rescan_does_not_close_the_pad_it_already_holds():
+    """Повторный поиск находил тот же объект и закрывал его как «дубль»: геймпад пропадал каждые 0,5 с."""
+    hub, _, clock = mk_hub()
+    hub._controller = ctrl = CachingController()
+    ctrl.devices = [7]
+    hub.pump()
+    first = hub.controller(0)
+    for k in range(1, 6):
+        clock.t = k * 0.6
+        hub.pump()
+    assert hub.controller(0) is first and not first.quit_called
+    assert hub.controller(1) is None

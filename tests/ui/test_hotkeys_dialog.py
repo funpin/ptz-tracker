@@ -60,6 +60,8 @@ def test_gamepad_chip_shows_number_and_battery(qtbot, tmp_path):
     assert w.pad_chip.full_text == "1 · 60% · ≈3 ч 10 мин"
     w.pad._on_batt(60, True)
     assert w.pad_chip.full_text == "1 · 60% · заряжается"
+    w.pad._on_batt(None, True)  # SDL при зарядке уровня не даёт
+    assert w.pad_chip.full_text == "1 · заряжается"
     w.pad._on_batt(None, None)
     assert w.pad_chip.full_text == "1"
     w.close()
