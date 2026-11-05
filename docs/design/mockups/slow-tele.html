@@ -1,0 +1,43 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Медленнее на крупном плане</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A}
+*{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:16px 18px;font-size:13px}
+h1{font-size:18px;margin:0 0 4px}.sub{color:var(--dim);font-size:12.5px;margin:0 0 16px;line-height:1.45;max-width:1100px}
+.row{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}.cap{color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin:0 0 6px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px}
+.pr{display:flex;align-items:center;gap:10px;padding:9px 12px}.pr.z{background:rgba(245,245,242,.035)}
+.cb{width:16px;height:16px;border-radius:4px;background:var(--lime);color:var(--bg);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+.track{width:150px;height:3px;background:var(--raised-hi);border-radius:2px;position:relative}.track i{position:absolute;left:0;top:0;bottom:0;background:var(--lime);border-radius:2px}.track b{position:absolute;top:-7px;width:18px;height:16px;border-radius:6px;background:var(--faint)}
+.meta{font-size:12px;color:var(--dim)}.f{color:var(--faint);font-size:12px}
+.ncall{display:inline-flex;width:20px;height:20px;border-radius:50%;background:#FFD43B;color:#111;font:700 11px Inter;align-items:center;justify-content:center;flex:none}
+.notes{font-size:12.5px;color:var(--dim);line-height:1.45;max-width:360px}.notes ol{padding:0;margin:0;list-style:none}.notes li{margin-bottom:9px;display:flex;gap:8px}
+table{border-collapse:collapse;font-size:12.5px;margin-top:6px}td,th{padding:4px 10px;text-align:right}th{color:var(--faint);font-weight:600}td:first-child,th:first-child{text-align:left;color:var(--dim)}
+.choice{display:inline-flex;margin:14px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+</style></head><body>
+<h1>«Медленнее на крупном плане» — с регулировкой силы</h1>
+<p class="sub">Сейчас это только «вкл/выкл»: на крупном плане ручной поворот замедляется так, чтобы картинка ехала с той же скоростью, что на общем; от ×8 — всего 15 % скорости. Предлагаю добавить «насколько».</p>
+<div class="row">
+<div><div class="cap">Окно «Геймпады» → «Для всех»</div>
+<div class="panel" style="width:640px;padding:2px 0">
+ <div class="pr"><span class="ncall">1</span><span class="cb">✓</span><div><div>Медленнее на крупном плане</div><div class="meta">чем сильнее зум, тем медленнее ручной поворот — легче держать кадр</div></div></div>
+ <div class="pr z"><span class="ncall">2</span><span style="width:110px">Насколько</span><span class="f">Чуть</span><span class="track"><i style="width:50%"></i><b style="left:calc(50% - 9px)"></b></span><span class="f">Сильно</span><span class="sp" style="flex:1"></span><span class="meta">на ×8 — <b style="color:var(--white)">39 %</b> скорости</span></div>
+ <div class="pr"><span class="ncall">3</span>
+  <svg width="300" height="130" viewBox="0 0 300 130"><rect x="0.5" y="0.5" width="299" height="129" rx="8" fill="none" stroke="#33373E"/>
+   <text x="12" y="124" fill="#858A91" font-size="10" font-family="Inter">×1</text><text x="140" y="124" fill="#858A91" font-size="10" font-family="Inter">×4</text><text x="272" y="124" fill="#858A91" font-size="10" font-family="Inter">×20</text>
+   <text x="292" y="16" text-anchor="end" fill="#858A91" font-size="10" font-family="Inter">скорость 100 %</text>
+   <polyline points="10.0,12.0 17.0,13.7 24.0,15.5 31.0,17.1 38.0,18.8 45.0,20.4 52.0,22.0 59.0,23.6 66.0,25.1 73.0,26.6 80.0,28.1 87.0,29.5 94.0,31.0 101.0,32.4 108.0,33.7 115.0,35.1 122.0,36.4 129.0,37.7 136.0,39.0 143.0,40.2 150.0,41.5 157.0,42.7 164.0,43.9 171.0,45.0 178.0,46.2 185.0,47.3 192.0,48.3 199.0,48.3 206.0,48.3 213.0,48.3 220.0,48.3 227.0,48.3 234.0,48.3 241.0,48.3 248.0,48.3 255.0,48.3 262.0,48.3 269.0,48.3 276.0,48.3 283.0,48.3 290.0,48.3" fill="none" stroke="#777C83" stroke-width="1.2" stroke-dasharray="3 3"/><polyline points="10.0,12.0 17.0,18.8 24.0,25.1 31.0,31.0 38.0,36.4 45.0,41.5 52.0,46.2 59.0,50.6 66.0,54.6 73.0,58.4 80.0,61.9 87.0,65.2 94.0,68.2 101.0,71.0 108.0,73.6 115.0,76.1 122.0,78.3 129.0,80.4 136.0,82.4 143.0,84.2 150.0,85.9 157.0,87.4 164.0,88.9 171.0,90.2 178.0,91.5 185.0,92.7 192.0,93.6 199.0,93.6 206.0,93.6 213.0,93.6 220.0,93.6 227.0,93.6 234.0,93.6 241.0,93.6 248.0,93.6 255.0,93.6 262.0,93.6 269.0,93.6 276.0,93.6 283.0,93.6 290.0,93.6" fill="none" stroke="#777C83" stroke-width="1.2" stroke-dasharray="3 3"/><polyline points="10.0,12.0 17.0,15.5 24.0,18.8 31.0,22.0 38.0,25.1 45.0,28.1 52.0,31.0 59.0,33.7 66.0,36.4 73.0,39.0 80.0,41.5 87.0,43.9 94.0,46.2 101.0,48.4 108.0,50.6 115.0,52.6 122.0,54.6 129.0,56.5 136.0,58.4 143.0,60.2 150.0,61.9 157.0,63.6 164.0,65.2 171.0,66.7 178.0,68.2 185.0,69.6 192.0,70.8 199.0,70.8 206.0,70.8 213.0,70.8 220.0,70.8 227.0,70.8 234.0,70.8 241.0,70.8 248.0,70.8 255.0,70.8 262.0,70.8 269.0,70.8 276.0,70.8 283.0,70.8 290.0,70.8" fill="none" stroke="#B7F34A" stroke-width="2" />
+  </svg>
+  <div class="meta" style="line-height:1.5">Лайм — выбранная сила.<br>Пунктир — «Чуть» и «Сильно».<br>Сейчас программа работает<br>как «Сильно».</div></div>
+</div>
+<table><tr><th>Зум</th><th>Чуть</th><th>Средне</th><th>Сильно (как сейчас)</th></tr>
+<tr><td>×2</td><td>84 %</td><td>71 %</td><td>51 %</td></tr><tr><td>×4</td><td>71 %</td><td>51 %</td><td>26 %</td></tr><tr><td>×8 и больше</td><td>62 %</td><td>39 %</td><td>15 %</td></tr></table>
+</div>
+<div class="notes"><ol>
+<li><span class="ncall">1</span>Включатель остаётся, и в правой панели тоже — быстро выключить на эфире.</li>
+<li><span class="ncall">2</span>Новый ползунок «Чуть ↔ Сильно» и сразу цифра: сколько скорости остаётся на крупном плане (×8). Действует на мышь, стрелки и все геймпады.</li>
+<li><span class="ncall">3</span>Маленький график: скорость поворота в зависимости от зума — видно, что меняется, до того как взяли геймпад.</li>
+<li><span class="ncall">?</span>По умолчанию — «Сильно», то есть как сейчас: у вас ничего не поменяется, пока не сдвинете.</li>
+</ol></div></div>
+<div style="margin-top:10px"><span class="choice">Так нравится</span><span class="choice">Поменять (напишу)</span></div>
+</body></html>
