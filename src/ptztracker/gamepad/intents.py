@@ -58,6 +58,11 @@ class Composition:
 
 
 @dataclass(frozen=True)
+class SpeedStep:
+    d: int  # +1 — быстрее (R1), −1 — медленнее (L1)
+
+
+@dataclass(frozen=True)
 class MenuOpen:
     pass
 

@@ -315,3 +315,15 @@ def test_window_starts_sdl_off_the_qt_thread(qtbot, tmp_path):
     w, hub, _ = make_hub(qtbot, tmp_path)
     qtbot.waitUntil(lambda: bool(hub.open_threads), timeout=2000)
     assert hub.open_threads == ["gamepads"]
+
+
+def test_speed_gear_shared_by_pads_with_same_id(qtbot, tmp_path):
+    """Одинаковые геймпады без серийного номера делят настройку: ступень меняется у обоих сразу."""
+    w, hub, _ = make_hub(qtbot, tmp_path)
+    for fb in hub.backends[:2]:
+        fb.info = lambda: {"name": "DualSense", "type": "ps5", "id": "GUID:DualSense"}
+        fb.pad = RawPad()
+    qtbot.waitUntil(lambda: len(w.pads) == 2, timeout=3000)
+    w._pad_speed_step(w.pads[1], -1)
+    assert w.pads[1].speed_limit == w.pads[2].speed_limit == 0.75
+    w.close()

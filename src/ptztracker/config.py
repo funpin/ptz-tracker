@@ -85,7 +85,13 @@ class AppConfig:
     slow_on_tele: bool = True  # на теле тот же наклон поворачивает медленнее
     pad_sensitivity: dict = field(default_factory=dict)
     pad_names: dict = field(default_factory=dict)
+    # L1/R1 у каждого геймпада: "limit" — ступени предела скорости (по умолчанию), "sens" — чувствительность ±10
+    pad_l1r1_mode: dict = field(default_factory=dict)
+    pad_speed_gear: dict = field(default_factory=dict)  # ступень 1…4 = 25/50/75/100 %; нет записи — 4
 
+
+PAD_L1R1_MODES = ("limit", "sens")
+SPEED_GEARS = 4  # ступени предела скорости геймпада: 25, 50, 75, 100 %
 
 RECORD_DIR_NAME = "Записи PTZ Tracker"
 RECORD_BUFFER_MIN_S, RECORD_BUFFER_MAX_S = 60, 900  # в окне настроек — от 1 до 15 минут
@@ -248,6 +254,11 @@ def _fix_control_settings(cfg: AppConfig) -> None:
     cfg.pad_sensitivity = {k: sens(v) for k, v in ps.items() if isinstance(k, str) and k and sens(v) is not None}
     names = cfg.pad_names if isinstance(cfg.pad_names, dict) else {}
     cfg.pad_names = {k: v for k, v in names.items() if isinstance(k, str) and k and isinstance(v, str)}
+    modes = cfg.pad_l1r1_mode if isinstance(cfg.pad_l1r1_mode, dict) else {}
+    cfg.pad_l1r1_mode = {k: v for k, v in modes.items() if isinstance(k, str) and k and v in PAD_L1R1_MODES}
+    gears = cfg.pad_speed_gear if isinstance(cfg.pad_speed_gear, dict) else {}
+    cfg.pad_speed_gear = {k: max(1, min(SPEED_GEARS, v)) for k, v in gears.items()
+                          if isinstance(k, str) and k and isinstance(v, int) and not isinstance(v, bool)}
 
 
 def ensure_api_token(cfg: AppConfig) -> bool:

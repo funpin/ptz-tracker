@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -23,11 +24,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ptztracker.config import SPEED_GEARS
 from ptztracker.control.manual_curve import SENS_MAX, SENS_MIN, clamp_sens, shape
 from ptztracker.ui.icons import icon
 from ptztracker.ui.theme import FS_CAPTION, R_PANEL, SP, C, qcolor
 from ptztracker.ui.widgets import battery_level
 
+L1R1_MODES = (("limit", "L1/R1 — предел скорости"), ("sens", "L1/R1 — чувствительность"))
 SHARED_NOTE = "одинаковые геймпады без серийного номера делят эту настройку"
 _GUID_ID = re.compile(r"^(?:[0-9A-Fa-f]{32}|\?):")  # gamepad.device: без серийного номера — «GUID:имя»
 
@@ -48,6 +51,8 @@ class PadRow:
     charging: bool = False
     battery_time: str | None = None  # «~5 ч» — сколько ещё проработает
     tally: str | None = None  # эфир камеры, которой управляет: pgm | pvw | None — цвет плитки номера
+    mode: str = "limit"  # что меняют L1/R1: limit — предел скорости, sens — чувствительность
+    gear: int = SPEED_GEARS  # ступень предела скорости
 
 
 def time_left_text(seconds: float | None) -> str | None:
@@ -75,6 +80,8 @@ def status_text(r: PadRow) -> str:
         text += f" · заряд {lvl[0]}"  # без процентов: SDL даёт заряд грубо (5/20/70/100 %)
         if r.battery_time:
             text += f" · {r.battery_time}"
+    if r.mode == "limit":  # ступень видна только в режиме предела скорости
+        text += f" · скорость {r.gear} из {SPEED_GEARS}"
     return text + ("" if has_serial(r.pad_id) else f" · {SHARED_NOTE}")
 
 
@@ -147,10 +154,14 @@ class GamepadsDialog(QDialog):
     управляет, заряд, «Плавно ↔ Резко» и график отклика), общая настройка отдельной группой."""
 
     def __init__(self, rows: list[PadRow], slow_on_tele: bool,
-                 on_sensitivity: Callable[[str, int], None], on_slow_tele: Callable[[bool], None], parent=None):
+                 on_sensitivity: Callable[[str, int], None], on_slow_tele: Callable[[bool], None], parent=None,
+                 on_mode: Callable[[str, str], None] | None = None):
         super().__init__(parent)
         self.setWindowTitle("Геймпады")
         self._on_sens = on_sensitivity
+        self._on_mode = on_mode
+        self.mode_combos: dict[str, QComboBox] = {}
+        self._rows: dict[str, PadRow] = {}
         self.sliders: dict[str, QSlider] = {}
         self.status_labels: dict[str, QLabel] = {}
         self.name_labels: dict[str, QLabel] = {}
@@ -237,6 +248,17 @@ class GamepadsDialog(QDialog):
         extra = QHBoxLayout()
         extra.setSpacing(SP[1])
         text.addLayout(extra)
+        # что меняют L1/R1 у этого геймпада: предел скорости (ступени 1–4) или чувствительность
+        mode = QComboBox()
+        for key, label in L1R1_MODES:
+            mode.addItem(label, key)
+        mode.setCurrentIndex(max(0, mode.findData(r.mode)))
+        mode.setToolTip("R1 — быстрее, L1 — медленнее. «Предел скорости» — полный наклон даёт 25 / 50 / 75 / 100 %;"
+                        " «Чувствительность» — ползунок справа шагами по 10. Крупность — свайп по тачпаду.")
+        mode.currentIndexChanged.connect(lambda _i, pid=r.pad_id, c=mode: self._mode_changed(pid, c.currentData()))
+        extra.addWidget(mode)
+        extra.addStretch(1)
+        self.mode_combos[r.pad_id] = mode
         host = QWidget()
         host.setLayout(text)
         host.setFixedWidth(300)
@@ -270,12 +292,22 @@ class GamepadsDialog(QDialog):
             w = self._list_lay.takeAt(0).widget()
             if w is not None:
                 w.deleteLater()
-        for d in (self.sliders, self.status_labels, self.name_labels, self.tiles, self.curves, self.row_extras):
+        for d in (self.sliders, self.status_labels, self.name_labels, self.tiles, self.curves, self.row_extras,
+                  self.mode_combos):
             d.clear()
+        self._rows = {r.pad_id: r for r in rows}
         for i, r in enumerate(rows):
             self._list_lay.addWidget(self._row(i, r))
         self.empty_label.setVisible(not rows)
         self._list.setVisible(bool(rows))
+    def _mode_changed(self, pad_id: str, mode: str) -> None:
+        if self._on_mode is not None:
+            self._on_mode(pad_id, mode)
+        r = self._rows.get(pad_id)
+        if r is not None:  # «скорость N из 4» видна только в режиме предела
+            self._rows[pad_id] = r = replace(r, mode=mode)
+            self.status_labels[pad_id].setText(status_text(r))
+
     def set_slow_on_tele(self, on: bool) -> None:
         self.slow_tele_check.blockSignals(True)
         self.slow_tele_check.setChecked(bool(on))

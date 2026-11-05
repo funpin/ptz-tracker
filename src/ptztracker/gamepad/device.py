@@ -38,6 +38,7 @@ TRIGGER_AXES = ("l2", "r2")  # 0…1
 class RawPad:
     axes: dict[str, float] = field(default_factory=dict)
     buttons: frozenset[str] = frozenset()
+    touch: tuple[float, float] | None = None  # первый палец на тачпаде, x и y 0…1 (x — вправо); нет касания — None
 
 
 log = logging.getLogger(__name__)
@@ -225,7 +226,28 @@ class SdlBackend:
             axes[k] = max(0.0, axes[k])
         for k in STICK_AXES:
             axes[k] = max(-1.0, min(1.0, axes[k]))
-        return RawPad(axes, frozenset(k for k, v in self._mapping.items() if ctl.get_button(v)))
+        return RawPad(axes, frozenset(k for k, v in self._mapping.items() if ctl.get_button(v)), self._touch())
+
+    def _touch(self) -> tuple[float, float] | None:
+        """Первый палец на тачпаде (x, y 0…1) или None. Сбой SDL — None, одна строка в журнал."""
+        try:
+            lib = self._sdl_lib()
+            fn = lib.SDL_GameControllerGetTouchpadFinger
+            if isinstance(lib, ctypes.CDLL) and fn.argtypes is None:
+                f = ctypes.POINTER(ctypes.c_float)
+                fn.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_uint8), f, f, f]
+            ptr = lib.SDL_GameControllerFromInstanceID(self._ctl.as_joystick().get_instance_id())
+            if not ptr:
+                return None
+            st, x, y, p = ctypes.c_uint8(), ctypes.c_float(), ctypes.c_float(), ctypes.c_float()
+            if fn(ptr, 0, 0, ctypes.byref(st), ctypes.byref(x), ctypes.byref(y), ctypes.byref(p)) != 0:
+                return None  # тачпада нет (не DualSense/DualShock)
+            return (float(x.value), float(y.value)) if st.value else None
+        except Exception as e:
+            if "touch" not in self._warned:
+                self._warned.add("touch")
+                log.debug("Геймпад: тачпад не прочитан: %s: %s", type(e).__name__, e)
+            return None
 
     def info(self) -> dict:
         if self._ctl is None:
