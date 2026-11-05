@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import platform
+import re
 import threading
 import time
 from concurrent.futures import Future
@@ -19,6 +20,7 @@ from ptztracker import __version__
 from ptztracker.camera import protocol as P
 from ptztracker.camera.client import CameraClient
 from ptztracker.camera.limit_watch import LimitWatch
+from ptztracker.camera.models import IMAGE_FEATURES, ModelProfile, profile_for
 from ptztracker.camera.scheduler import CommandScheduler, Priority
 from ptztracker.camera.speed import velocity_to_code
 from ptztracker.config import AppConfig, CameraConfig, get_password, record_dir
@@ -51,6 +53,32 @@ class ImageState:
     color_temp: int | None = None
     iris: int | None = None
     iris_auto: bool | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class CameraInfo:
+    """Что выяснилось о камере при работе: окно сверяет это с настройками камеры и сохраняет."""
+
+    model: str | None = None
+    firmware: str | None = None
+    unsupported: tuple[str, ...] = ()  # возможности, на которые камера ответила ER1 (camera.models.IMAGE_FEATURES)
+
+
+_ER1 = re.compile(r"\ber1\b", re.IGNORECASE)
+_ER_NO_RETRY = re.compile(r"\ber[13]\b", re.IGNORECASE)  # камера ответила, что QID не знает: больше не спрашиваем
+
+
+def _feature_of(cmd: str) -> str | None:
+    """Возможность, к которой относится команда или запрос (gain/WB/цветовая температура/питание)."""
+    if cmd == P.Q_GAIN or cmd.startswith("OGU:"):
+        return "gain"
+    if cmd == P.Q_WB or cmd.startswith("OAW:"):
+        return "wb"
+    if cmd == P.Q_COLOR_TEMP or cmd.startswith("OSD:B1:"):
+        return "color_temp"
+    if cmd in (P.Q_POWER, P.POWER_ON, P.POWER_STANDBY):
+        return "power"
+    return None
 
 
 class CameraSession:
@@ -95,6 +123,13 @@ class CameraSession:
         self._step_lock = threading.RLock()
         self._img_t: dict[str, float] = {}
         self._gain_auto_logged = False
+        # сведения о камере: стартуют с настроек, уточняются ответами камеры; настройки сессия не меняет —
+        # окно читает camera_info() из потока Qt и сохраняет само
+        self._info_lock = threading.Lock()
+        self._model = cfg.model
+        self._firmware = cfg.firmware
+        self._unsupported = {f for f in cfg.unsupported if isinstance(f, str)}
+        self._model_answered = False  # камера ответила на QID (или QID ей незнаком): больше не спрашиваем
 
     # --- жизненный цикл ------------------------------------------------
 
@@ -140,6 +175,7 @@ class CameraSession:
         self._hb_thread = threading.Thread(target=self._heartbeat, name="cam-heartbeat", daemon=True)
         self._hb_thread.start()
         self.refresh_image()
+        self._ask_model()
 
     def _lw_query_pan_tilt(self):
         if self._quiet or not self.scheduler:
@@ -231,6 +267,9 @@ class CameraSession:
         r = self.analyzer.latest() if self.analyzer else None
         return {
             "stream_kind": self.stream_kind(),
+            "camera_model": self.model,
+            "camera_firmware": self.firmware,
+            "camera_unsupported": list(self.camera_info().unsupported),
             "analysis_detector": r.detector if r else None,
             "analysis_device": r.device if r else None,
         }
@@ -342,12 +381,72 @@ class CameraSession:
                 n += 1
                 if n % IMAGE_REFRESH_EVERY == 0:
                     self.refresh_image()
+                    if not self._model_answered and self.online and self._power not in ("standby", "switching"):
+                        self._ask_model()  # при старте камера могла не ответить
             if self._hb_stop.wait(HEARTBEAT_S):
                 return
 
     @property
     def online(self) -> bool:
         return bool(self.scheduler and self.scheduler.online)
+
+    # --- модель и возможности камеры -------------------------------------
+
+    @property
+    def model(self) -> str | None:
+        """Ответ камеры на QID («AW-HE40»); до ответа — из настроек, иначе None."""
+        return self._model
+
+    @property
+    def firmware(self) -> str | None:
+        """Версия прошивки. Запроса прошивки в протоколе Panasonic, который мы знаем, нет — берётся из настроек."""
+        return self._firmware
+
+    @property
+    def profile(self) -> ModelProfile:
+        return profile_for(self._model)
+
+    def camera_info(self) -> CameraInfo:
+        with self._info_lock:
+            return CameraInfo(self._model, self._firmware, tuple(sorted(self._unsupported)))
+
+    def supports(self, feature: str) -> bool:
+        """False — камера отвечала ER1 на gain/WB/цветовую температуру/питание: кнопки скрыть или погасить."""
+        return feature not in self._unsupported
+
+    def _ask_model(self) -> None:
+        """Спросить QID (очередь запросов, не ждём ответа: он разберётся в _on_reply)."""
+        if self.scheduler:
+            self.scheduler.submit("model", P.Q_MODEL, Priority.QUERY, only_if_changed=False)
+
+    def _on_model_reply(self, ok: bool, reply: str) -> None:
+        if ok:
+            self._model_answered = True
+            try:
+                model = P.parse_model(reply)
+            except ValueError:
+                log.debug("Непонятный ответ на QID: %r", reply)
+                return
+            with self._info_lock:
+                if self._model is not None and self._model != model:
+                    log.info("Камера %s теперь %s (была %s) — забываю найденные возможности",
+                             self.cfg.name, model, self._model)
+                    self._unsupported.clear()
+                self._model = model
+        elif _ER_NO_RETRY.search(reply):
+            self._model_answered = True
+
+    def _note_feature(self, cmd: str, ok: bool, reply: str) -> None:
+        """ER1 на gain/WB/цветовую температуру/питание — камера этого не умеет. Успешный ответ снимает пометку."""
+        feature = _feature_of(cmd)
+        if feature is None or feature not in IMAGE_FEATURES:
+            return
+        with self._info_lock:
+            if ok:
+                self._unsupported.discard(feature)
+            elif _ER1.search(reply) and feature not in self._unsupported:
+                self._unsupported.add(feature)
+                log.info("Камера %s не знает %s (ER1) — запоминаю", self.cfg.name, cmd)
 
     # --- питание и изображение ------------------------------------------
 
@@ -372,6 +471,10 @@ class CameraSession:
         """Слушатель планировщика (его поток): разбор питания и изображения. Не бросает исключений."""
         cmd, reply, ok = info.get("cmd"), str(info.get("reply") or ""), info.get("ok")
         try:
+            if cmd == P.Q_MODEL:
+                self._on_model_reply(bool(ok), reply)
+                return
+            self._note_feature(str(cmd), bool(ok), reply)
             if not ok and cmd in (P.Q_IRIS, P.Q_GAIN):
                 with self._step_lock:
                     self._pending_steps.pop("iris" if cmd == P.Q_IRIS else "gain", None)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import uuid
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -23,6 +23,13 @@ from ptztracker.config import CameraConfig, is_valid_ip
 from ptztracker.tally import MAX_ATEM_INPUT, atem_input_of
 
 _SIM_NAME = "Тренировка"  # имя, которое диалог подставляет симулятору
+
+
+def model_text(cfg: CameraConfig) -> str:
+    """«AW-HE40 · прошивка 1.54»; пока модель не определена — подсказка, когда это случится."""
+    if not cfg.model:
+        return "ещё не определена (появится после подключения)"
+    return f"{cfg.model} · прошивка {cfg.firmware}" if cfg.firmware else cfg.model
 
 
 class _Signals(QObject):
@@ -87,8 +94,13 @@ class CameraDialog(QDialog):
                                  "иначе место в списке")
         self.pad_spin.setValue((cfg.pad_number or 0) if cfg else 0)
 
+        # модель и прошивка — только показ: их находит сама программа при подключении; результат правки их не трогает
+        self.model_label = QLabel(model_text(cfg) if cfg else "")
+        self.model_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
         form = self._form = QFormLayout()
         form.addRow("Тип камеры", self.kind_combo)
+        form.addRow("Модель", self.model_label)
         form.addRow("Название", self.name_edit)
         form.addRow("IP-адрес", self.ip_edit)
         form.addRow("Логин", self.user_edit)
@@ -130,6 +142,7 @@ class CameraDialog(QDialog):
         sim = self._is_sim()
         for w in (self.ip_edit, self.user_edit, self.pass_edit, self.rtsp_edit, self.interval_spin, self.atem_spin):
             self._form.setRowVisible(w, not sim)
+        self._form.setRowVisible(self.model_label, not sim and self._cfg is not None)
         self.test_button.setVisible(not sim)
         self.test_result.setVisible(not sim)
         if sim and not self.name_edit.text().strip():

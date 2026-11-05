@@ -262,3 +262,36 @@ def test_pad_number_roundtrip_and_old_config(tmp_path):
     cfg.cameras[0].pad_number = 3
     store.save(cfg)
     assert store.load().cameras[0].pad_number == 3
+
+
+def test_old_config_without_model_fields_loads(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"cameras": [{"id": "a", "name": "А", "ip": "10.0.0.5"}]}), encoding="utf-8")
+    c = ConfigStore(p).load().cameras[0]
+    assert (c.model, c.firmware, c.unsupported) == (None, None, [])
+
+
+def test_model_firmware_unsupported_roundtrip(tmp_path):
+    store = ConfigStore(tmp_path / "config.json")
+    cfg = default_config()
+    cfg.cameras[0].model, cfg.cameras[0].firmware = "AW-HE40", "1.54"
+    cfg.cameras[0].unsupported = ["gain", "power"]
+    store.save(cfg)
+    c = store.load().cameras[0]
+    assert (c.model, c.firmware, c.unsupported) == ("AW-HE40", "1.54", ["gain", "power"])
+
+
+def test_bad_model_fields_are_reset(tmp_path):
+    p = tmp_path / "config.json"
+    bad = {"id": "a", "name": "А", "ip": "10.0.0.5", "model": 5, "firmware": ["x"], "unsupported": "gain"}
+    bad2 = {"id": "b", "name": "Б", "ip": "10.0.0.6", "unsupported": ["wb", 3, None, "wb"]}
+    p.write_text(json.dumps({"cameras": [bad, bad2]}), encoding="utf-8")
+    a, b = ConfigStore(p).load().cameras
+    assert (a.model, a.firmware, a.unsupported) == (None, None, [])
+    assert b.unsupported == ["wb"]  # только строки, без повторов
+
+
+def test_unsupported_list_is_not_shared_between_cameras():
+    a, b = CameraConfig(id="a", name="a", ip="1.1.1.1"), CameraConfig(id="b", name="b", ip="1.1.1.2")
+    a.unsupported.append("gain")
+    assert b.unsupported == []

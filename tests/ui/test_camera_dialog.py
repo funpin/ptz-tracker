@@ -65,3 +65,54 @@ def test_edit_preserves_other_fields(qtbot):
     assert r.name == "Б" and r.id == "c"
     assert (r.calibration, r.speed_scale, r.composition, r.effort, r.stream) == (
         {"k": 1}, {"pan": 1.2}, "full", 0.9, "mjpeg_2")
+
+
+def _model_text(d):
+    return d.model_label.text() if not d.model_label.isHidden() else None
+
+
+def test_dialog_shows_model_and_firmware_read_only(qtbot):
+    d = CameraDialog(CameraConfig(id="c", name="А", ip="10.0.0.7", model="AW-HE40", firmware="1.54"))
+    qtbot.addWidget(d)
+    assert _model_text(d) == "AW-HE40 · прошивка 1.54"
+
+
+def test_dialog_model_without_firmware_and_unknown(qtbot):
+    d = CameraDialog(CameraConfig(id="c", name="А", ip="10.0.0.7", model="AW-HE42"))
+    qtbot.addWidget(d)
+    assert _model_text(d) == "AW-HE42"
+    d2 = CameraDialog(CameraConfig(id="c", name="А", ip="10.0.0.7"))
+    qtbot.addWidget(d2)
+    assert "не определена" in _model_text(d2)
+
+
+def test_dialog_new_camera_and_sim_have_no_model_row(qtbot):
+    d = CameraDialog()
+    qtbot.addWidget(d)
+    assert _model_text(d) is None
+    d.kind_combo.setCurrentIndex(d.kind_combo.findData("sim"))
+    assert _model_text(d) is None
+    s = CameraDialog(CameraConfig(id="s", name="Сим", ip="sim", kind="sim"))
+    qtbot.addWidget(s)
+    assert _model_text(s) is None
+
+
+def test_edit_keeps_model_firmware_and_unsupported(qtbot):
+    cfg = CameraConfig(id="c", name="А", ip="10.0.0.7", model="AW-HE40", firmware="1.54",
+                       unsupported=["gain", "wb"])
+    d = CameraDialog(cfg)
+    qtbot.addWidget(d)
+    d.name_edit.setText("Б")
+    d.interval_spin.setValue(200)
+    r = d.result_config()
+    assert (r.model, r.firmware, r.unsupported) == ("AW-HE40", "1.54", ["gain", "wb"])
+    d.ip_edit.setText("10.0.0.9")  # тот же объект камеры по новому адресу: сведения не теряем (сессия уточнит сама)
+    assert d.result_config().model == "AW-HE40"
+
+
+def test_edit_sim_keeps_model_fields(qtbot):
+    cfg = CameraConfig(id="s", name="Сим", ip="sim", kind="sim", model="AW-HE42", unsupported=["power"])
+    d = CameraDialog(cfg)
+    qtbot.addWidget(d)
+    r = d.result_config()
+    assert (r.model, r.unsupported) == ("AW-HE42", ["power"])
