@@ -100,3 +100,21 @@ def test_menu_stays_above_standby_cover_and_powers_on(qtbot, tmp_path):
     w.camera_menu.accept()
     assert calls == [True]
     w.close()
+
+
+def test_menu_opens_already_centered(qtbot, tmp_path):
+    """Меню поверх видео встаёт на место сразу, а не через тик статуса (пользователь 2026-11-06: «перескакивает»)."""
+    w = make(qtbot, tmp_path)
+    w.show()
+    qtbot.waitUntil(lambda: w.session is not None, timeout=3000)
+    frame = w.cells[w.grid.selected].video_frame
+    w._menu_to(frame)
+    m = w.camera_menu
+    m.open()  # без _update_status
+    w.session._power = "standby"  # меню стало другим по размеру (один пункт) — и всё равно по центру
+    m._render()
+    qtbot.wait(10)
+    cx = m.x() + m.width() / 2
+    cy = m.y() + m.height() / 2
+    assert abs(cx - frame.width() / 2) <= 2 and abs(cy - frame.height() / 2) <= 2
+    w.close()

@@ -74,8 +74,8 @@ OSD_AUTOCLOSE_S = 60.0
 TITLE_QUICK = "Быстрые настройки"
 TITLE_OSD = "Меню Panasonic на камере"
 KEYS_QUICK = "↑↓ пункт · ←→ значение · ○ закрыть"
-KEYS_OSD = "↑↓ пункт · → выбрать\n← назад · ○ закрыть"
-OSD_WIDTH = 230  # в меню Panasonic — узкая плашка слева: середину кадра занимает меню самой камеры
+KEYS_OSD = "↑↓  пункт\n→  выбрать\n←  назад\n○  закрыть"
+OSD_WIDTH = 150  # в меню Panasonic — узкая плашка слева: середину кадра занимает меню самой камеры
 ORDER = ("power", "focus", "wb", "ctemp", "iris", "gain", "shutter", "synchro", "pedestal", "detail", "osd")
 REFUSED_HINT = ("Камера не принимает эту настройку: она в режиме Full Auto. Выключите Full Auto "
                 "(«Меню Panasonic на камере» → Scene) — тогда настройки заработают.")
@@ -284,6 +284,10 @@ class CameraMenu(QFrame):
         self._head.setDirection(QBoxLayout.TopToBottom if self.osd_mode else QBoxLayout.LeftToRight)
         self.keys_label.setAlignment(Qt.AlignLeft if self.osd_mode else Qt.AlignRight | Qt.AlignVCenter)
         self.hint.setVisible(not self.osd_mode)
+        self.title_label.setWordWrap(self.osd_mode)  # узкая плашка: «Меню Panasonic на камере» в две строки
+        self.keys_label.setStyleSheet(
+            f"color: {C.TEXT_DIM if self.osd_mode else C.TEXT_FAINT}; font-size: {FS_CAPTION - 1}px;"
+            + (" line-height: 150%; padding-top: 4px;" if self.osd_mode else ""))
         placement = "left" if self.osd_mode else "center"
         if placement != self._placement:
             self._placement = placement

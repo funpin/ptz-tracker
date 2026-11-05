@@ -1,6 +1,6 @@
 """Общие компоненты интерфейса: клавиша-подсказка, плитка состояния, чип, рамка видео."""
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -437,8 +437,8 @@ class PadBadge(QWidget):
     """Геймпад: значок, номер (как огоньки на геймпаде) и батарейка с уровнем заряда (без цифр: SDL даёт
     заряд грубо). Один виджет и для верхней строки, и для шапки клетки, и для «Сводки»."""
 
-    W, H = 86, 24
-    BAT_W, BAT_H = 34, 17
+    W, H = 72, 24
+    BAT_W, BAT_H = 22, 11  # батарейка — как значки рядом, а не крупнее них (пользователь 2026-11-06)
 
     def __init__(self, framed: bool = True, parent: QWidget | None = None):
         super().__init__(parent)
@@ -493,9 +493,9 @@ class PadBadge(QWidget):
         p.setFont(f)
         p.setPen(qcolor(C.TEXT))
         p.drawText(QRectF(x, 0, 12, self.H), Qt.AlignCenter, str(self._n))
-        bat = QRectF(self.W - SP[1] + 2 - 3 - self.BAT_W, (self.H - self.BAT_H) / 2, self.BAT_W, self.BAT_H)
+        bat = QRectF(x + 12 + SP[0] + 1, (self.H - self.BAT_H) / 2, self.BAT_W, self.BAT_H)  # сразу за номером
         body = QPainterPath()
-        body.addRoundedRect(bat, 5, 5)
+        body.addRoundedRect(bat, 3, 3)
         p.setPen(Qt.NoPen)
         p.setBrush(qcolor(C.TEXT, 46))
         p.drawPath(body)
@@ -507,17 +507,18 @@ class PadBadge(QWidget):
             p.setClipPath(body)
             p.fillRect(fill, qcolor(self.fill_color(self._pct, self._charging)))
             p.restore()
-        p.setPen(QPen(qcolor(C.TEXT, 140), 1.2))
+        p.setPen(QPen(qcolor(C.TEXT, 140), 1.0))
         p.setBrush(Qt.NoBrush)
-        p.drawRoundedRect(bat.adjusted(0.6, 0.6, -0.6, -0.6), 5, 5)
+        p.drawRoundedRect(bat.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
         p.setPen(Qt.NoPen)
         p.setBrush(qcolor(C.TEXT, 140))
-        p.drawRoundedRect(QRectF(bat.right() + 1, bat.center().y() - 2.5, 2, 5), 1, 1)
+        p.drawRoundedRect(QRectF(bat.right() + 1, bat.center().y() - 2, 1.5, 4), 0.75, 0.75)
         if self._charging:  # молния рисуется, а не символом: эмодзи на Windows цветное
             bx, cy = bat.center().x(), bat.center().y()
-            bolt = QPainterPath(QPointF(bx + 1.5, cy - 6))
+            k = self.BAT_H / 17  # молния — под высоту батарейки
+            bolt = QPainterPath(QPointF(bx + 1.5 * k, cy - 6 * k))
             for dx, dy in ((-3.5, 1), (-0.5, 1), (-1.5, 6), (3.5, -1), (0.5, -1), (1.5, -6)):
-                bolt.lineTo(bx + dx, cy + dy)
+                bolt.lineTo(bx + dx * k, cy + dy * k)
             bolt.closeSubpath()
             p.setPen(Qt.NoPen)
             p.setBrush(qcolor(C.BG))
@@ -639,10 +640,13 @@ class VideoFrame(QFrame):
         self.onair_tag.hide()
         self.tags_enabled = True  # клетка сетки показывает эфир и слежение в своей шапке — ярлыки не нужны
         self._overlays: list[tuple[QWidget, str]] = []
+        self._placing = False
 
     def add_overlay(self, w: QWidget, corner: str) -> None:
         """Виджет поверх видео: «top-left» — под ярлыком слежения, «top-center» — сверху по центру, «bottom-left» — внизу слева."""
         w.setParent(self)
+        w.ensurePolished()  # стиль (шрифты, отступы) — до первого расчёта размера, иначе после показа размер меняется
+        w.installEventFilter(self)  # поменялся размер или показали — сразу на место, а не на следующем тике окна
         self._overlays.append((w, corner))
         self._place_tags()
 
@@ -654,6 +658,13 @@ class VideoFrame(QFrame):
     def remove_overlay(self, w: QWidget) -> None:
         """Снять виджет с этой рамки (чтобы перенести его на другую)."""
         self._overlays = [(x, c) for x, c in self._overlays if x is not w]
+        w.removeEventFilter(self)
+
+    def eventFilter(self, obj, e):  # noqa: N802
+        if e.type() in (QEvent.Resize, QEvent.Show) and not self._placing and any(
+                x is obj for x, _c in self._overlays):
+            self._place_tags()
+        return False
 
     def _make_tag(self) -> QLabel:
         t = QLabel(self)
@@ -693,6 +704,13 @@ class VideoFrame(QFrame):
         self._place_tags()
 
     def _place_tags(self) -> None:
+        self._placing = True  # adjustSize ниже шлёт Resize — без повторного входа
+        try:
+            self._place_tags_now()
+        finally:
+            self._placing = False
+
+    def _place_tags_now(self) -> None:
         off = self.BORDER
         for t in (self.tracking_tag, self.onair_tag):
             t.adjustSize()
