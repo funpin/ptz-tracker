@@ -735,9 +735,13 @@ class MainWindow(QMainWindow):
             s.follower.disable("калибровка")
         kind = s.stream_kind()
 
-        def factory(progress):
+        def factory(progress, cancel=None, on_sample=None):
             s.quiet_for_calibration()  # опросы положения и пульс сбивают команды мастера (eR2)
-            return CalibrationRunner(s.client.send, s.frames, progress, stream_kind=kind)
+            return CalibrationRunner(
+                s.client.send, s.frames, progress, stream_kind=kind,
+                model=getattr(s, "model", None), firmware=getattr(s, "firmware", None),  # поля сессии — с задачи 2
+                cancel=cancel, on_sample=on_sample,
+            )
 
         def saved(calib: dict) -> None:
             if cam.kind == "sim":  # симулятору калибровка не нужна: в настройки не пишем
