@@ -43,6 +43,8 @@ def test_dialog_lists_seen_pads_and_applies_at_once(qtbot, tmp_path):
     assert "подключён · камера 1" in live and SHARED_NOTE not in live
     old = d.status_labels[GUID_ID].text()
     assert "не подключён" in old and SHARED_NOTE in old
+    names = [w_.text() for i in range(d._grid.count()) if hasattr(w_ := d._grid.itemAt(i).widget(), "text")]
+    assert "DualSense · …e4:f5" in names
     assert d.sliders[GUID_ID].value() == 20 and d.sliders["a0:b1:c2:d3:e4:f5"].value() == 50
     d.sliders["a0:b1:c2:d3:e4:f5"].setValue(90)
     assert w.pad.sensitivity == 90  # сразу, без «ОК»

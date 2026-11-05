@@ -99,7 +99,8 @@ class GamepadsDialog(QDialog):
         self.sliders.clear()
         self.status_labels.clear()
         for i, r in enumerate(rows):
-            name = QLabel(r.name)
+            # два одинаковых геймпада различаются по хвосту серийного номера
+            name = QLabel(f"{r.name} · …{r.pad_id[-5:]}" if has_serial(r.pad_id) else r.name)
             name.setToolTip(r.pad_id)
             status = self._caption(self._status(r))
             sl = QSlider(Qt.Horizontal)
@@ -107,6 +108,7 @@ class GamepadsDialog(QDialog):
             sl.setPageStep(10)
             sl.setValue(clamp_sens(r.sensitivity))
             sl.setMinimumWidth(160)
+            sl.setTracking(False)  # значение — по отпусканию: config.json не пишется на каждый шаг
             sl.valueChanged.connect(lambda v, pid=r.pad_id: self._on_sens(pid, v))
             row = 2 * i
             self._grid.addWidget(name, row, 0)

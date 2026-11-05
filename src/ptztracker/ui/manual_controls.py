@@ -107,6 +107,7 @@ class ManualControls(QWidget):
         self.sens_slider.setValue(DEFAULT_SENS)
         self.sens_slider.setPageStep(10)
         self.sens_slider.setFocusPolicy(Qt.NoFocus)  # стрелки — камере, не ползунку
+        self.sens_slider.setTracking(False)  # значение — по отпусканию: config.json не пишется на каждый шаг
         self.sens_slider.setToolTip(
             "Чувствительность мыши и стрелок. «Плавно» — мягче у центра, легче сделать маленький поворот;"
             " «Резко» — как раньше. Полный наклон всегда даёт полную скорость.\n"
