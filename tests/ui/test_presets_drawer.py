@@ -22,7 +22,9 @@ def test_rows_and_cards(qtbot):
     assert len(d.row_widgets) == 2 and len(d.row_widgets[0].cards) == SLOTS
     assert d.rows_shown == 1 and d.row_widgets[1].isHidden()
     card = d.row_widgets[0].cards[1]
-    assert card.name == "Общий" and card.last
+    assert card.last
+    head = d.row_widgets[0].number
+    assert head.text() == "2" and "Зал" in head.toolTip()  # номер клетки, имя — в подсказке
     assert not d.row_widgets[0].cards[0].last
     d.set_rows_shown(5)
     assert d.rows_shown == 2 and not d.row_widgets[1].isHidden()
@@ -123,8 +125,46 @@ def test_no_scrollbar_wheel_scrolls(qtbot):
     assert row.scroll.horizontalScrollBar().isHidden() or \
         row.scroll.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
     bar = row.scroll.horizontalScrollBar()
-    assert bar.maximum() > 0 and row.more_right.isVisible()
+    assert bar.maximum() > 0 and row.more_right.isEnabled()
     ev = QWheelEvent(QPointF(50, 30), QPointF(50, 30), QPoint(0, 0), QPoint(0, -240), Qt.NoButton,
                      Qt.NoModifier, Qt.NoScrollPhase, False)
     QApplication.sendEvent(row.scroll.viewport(), ev)
     assert bar.value() > 0
+
+
+def test_no_rename_in_menu(qtbot):
+    d = PresetsDrawer()
+    qtbot.addWidget(d)
+    assert not hasattr(d, "renameRequested")
+
+
+def test_opening_presets_grows_window_not_cameras(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w.resize(1640, 850)
+    qtbot.wait(100)
+    h0, cell0 = w.height(), w.grid_host.height()
+    w.presets_btn.click()
+    qtbot.waitUntil(lambda: w.height() > h0 + 50, timeout=2000)
+    qtbot.wait(100)
+    assert abs(w.grid_host.height() - cell0) <= 4
+    w.presets_drawer.set_rows_shown(2)
+    qtbot.wait(100)
+    assert abs(w.grid_host.height() - cell0) <= 4
+    w.presets_btn.click()
+    qtbot.waitUntil(lambda: abs(w.height() - h0) <= 2, timeout=2000)
+    w.close()
+
+
+def test_whole_cards_only(qtbot):
+    d = PresetsDrawer()
+    qtbot.addWidget(d)
+    d.set_rows(rows())
+    for width in (700, 913, 1280):
+        d.resize(width, 200)
+        d.show()
+        qtbot.wait(20)
+        row = d.row_widgets[0]
+        vw = row.scroll.width()
+        from ptztracker.ui.presets_drawer import CARD_W
+
+        assert (vw + row.CARD_GAP) % (CARD_W + row.CARD_GAP) == 0, (width, vw)

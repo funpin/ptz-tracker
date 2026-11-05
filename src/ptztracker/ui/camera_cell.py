@@ -42,7 +42,7 @@ class CameraCell(QFrame):
         self.video_frame.tags_enabled = False  # эфир и слежение — в шапке клетки
 
         # цель — поверх видео сверху слева
-        self.target_label = QLabel("Цель: не выбрана — кликните по человеку на видео")
+        self.target_label = QLabel("Цель не выбрана")
         self.reset_target_btn = StatusPill("user-x", "", "neutral")
         self.reset_target_btn.set("", "neutral", "Сбросить цель")
         self.skeleton_check = StatusPill("skeleton", "", "neutral")

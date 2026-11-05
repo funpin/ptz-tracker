@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -385,9 +384,10 @@ class MainWindow(QMainWindow):
         self.presets_drawer.hide()
         self.presets_drawer.recallRequested.connect(self.recall_preset)
         self.presets_drawer.storeRequested.connect(self.store_preset)
-        self.presets_drawer.renameRequested.connect(self._rename_preset)
         self.presets_drawer.eraseRequested.connect(self._erase_preset)
+        self.presets_drawer.rowsShownChanged.connect(lambda _n: self._fit_drawer_height())
         left = QWidget()
+        left.setObjectName("leftCol")
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(SP[1])
@@ -1098,9 +1098,27 @@ class MainWindow(QMainWindow):
     # --- пресеты: выдвижная панель и снимки ---------------------------
 
     def _show_presets(self, on: bool) -> None:
+        """Панель пресетов не отнимает место у камер: окно растёт вниз на её высоту (и обратно)."""
         self.presets_drawer.setVisible(on)
         if on:
             self._refresh_drawer()
+        self._fit_drawer_height()
+
+    def _drawer_extra(self) -> int:
+        d = self.presets_drawer
+        return d.sizeHint().height() + self.centralWidget().findChild(QWidget, "leftCol").layout().spacing() \
+            if d.isVisibleTo(self) else 0
+
+    def _fit_drawer_height(self) -> None:
+        if self.isMaximized() or self.isFullScreen():
+            self._drawer_shown_h = self._drawer_extra()
+            return  # во весь экран расти некуда — панель делит место с камерами
+        self.presets_drawer.adjustSize()
+        extra = self._drawer_extra()
+        delta = extra - getattr(self, "_drawer_shown_h", 0)
+        self._drawer_shown_h = extra
+        if delta:
+            self.resize(self.width(), self.height() + delta)
 
     def _thumbs_of(self, cam_id: str) -> dict:
         if cam_id not in self._thumb_cache:
@@ -1180,17 +1198,6 @@ class MainWindow(QMainWindow):
                 self._capture_thumb(slot, n)
             else:
                 self._thumb_watch[slot] = (n, ticks + 1, pos)
-
-    def _rename_preset(self, slot: int, n: int) -> None:
-        c = self.grid.cells[slot]
-        if c is None:
-            return
-        old = self._thumbs_of(c.cfg.id).get(n)
-        name, ok = QInputDialog.getText(self, "Пресет", f"Имя пресета {n}:", text=old.name if old else "")
-        if ok:
-            self.thumbs.rename(c.cfg.id, n, name)
-            self._thumb_cache.pop(c.cfg.id, None)
-            self._refresh_drawer()
 
     def _erase_preset(self, slot: int, n: int) -> None:
         c = self.grid.cells[slot]
@@ -1611,6 +1618,13 @@ class MainWindow(QMainWindow):
                 tally=self._tally_per[i][1], track=track, battery={n: (p, ch) for n, p, ch in pads},
                 calibrated=c.cfg.calibration is not None, video_fps=st.fps if st.connected else None,
                 preset_pans=[t.pan for t in self._thumbs_of(c.cfg.id).values() if t.pan is not None]))
+        snap = self.atem.snapshot() if self.atem else None
+        atem = "ATEM не настроен" if self.atem is None else ("ATEM на связи" if snap and snap.online
+                                                              else "ATEM: нет связи")
+        mins = self.cfg.record_buffer_s // 60
+        allowed = [i + 1 for i, c in enumerate(self.grid.cells) if c is not None and c.gate.control_allowed]
+        agent = f"агент: разрешено камере {', '.join(map(str, allowed))}" if allowed else "агент выключен"
+        self._service["summary"].footer = f"{atem} · журнал помнит {mins} мин · {agent}"
         for kind, widget in self._service.items():
             if want[kind] is not None:
                 widget.update_view(rows, self.grid.selected)
@@ -1699,7 +1713,7 @@ class MainWindow(QMainWindow):
         a = s.analyzer if s else None
         r = a.latest() if a else None
         if r is None or r.target_id is None:
-            cell.target_label.setText("Цель: не выбрана — кликните по человеку на видео")
+            cell.target_label.setText("Цель не выбрана")  # что делать — в подсказке снизу
             cell.target_label.setStyleSheet("")
         elif r.target_state == "tracking":
             cell.target_label.setText(f"Цель: №{r.target_id} — веду")

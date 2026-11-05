@@ -64,3 +64,19 @@ def test_icon_files_exist_and_square():
         assert (icons / name).stat().st_size > 1000, name
     img = QImage(str(icons / "ptztracker-1024.png"))
     assert img.width() == img.height() == 1024
+
+
+def test_inter_is_loaded(qapp):
+    from PySide6.QtGui import QFontDatabase
+
+    from ptztracker.ui.theme import FONT_FAMILY, load_fonts
+
+    assert load_fonts() == FONT_FAMILY == "Inter Variable"
+    assert load_fonts() == FONT_FAMILY  # повторный вызов не дублирует
+    assert FONT_FAMILY in QFontDatabase.families()
+    app = QApplication.instance()
+    try:
+        apply_dark_theme(app)
+        assert app.font().family() == FONT_FAMILY
+    finally:
+        app.setStyleSheet("")

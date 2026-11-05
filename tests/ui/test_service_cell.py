@@ -159,3 +159,18 @@ def test_summary_gets_window_data(qtbot, tmp_path):
     assert rows[0].track in ("off", "on", "lost") and rows[1].track == "no_analysis"
     assert rows[0].video_fps is not None or rows[0].video_fps is None  # поле есть
     w.close()
+
+
+def test_summary_footer_line(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w._update_status()
+    foot = w._service["summary"].footer
+    assert "журнал" in foot and "агент" in foot and "ATEM" in foot
+    w.close()
+
+
+def test_target_label_short(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w._update_status()
+    assert w.cells[0].target_label.text() == "Цель не выбрана"
+    w.close()

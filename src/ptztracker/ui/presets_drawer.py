@@ -1,8 +1,9 @@
 """Выдвижная панель «Пресеты» (спека 2026-11-05, вариант А): под сеткой камер, над строкой состояния.
 
 Строка на камеру, выбранная — первой; в свёрнутом виде видна одна строка, за верхний край панель тянется
-вверх — добавляются строки других камер. Карточка: снимок кадра, номер, имя; последний вызванный — лаймовая
-рамка. Клик — вызвать, Shift+клик — записать, правый клик — переименовать, обновить снимок, стереть.
+вверх — добавляются строки других камер. Карточка: снимок кадра и номер; последний вызванный — лаймовая
+рамка. Клик — вызвать, Shift+клик — записать, правый клик — записать или стереть снимок. Имён у пресетов
+нет: пользователь 2026-11-05 — снимок и так показывает, что это за кадр.
 Панель только показывает и сообщает о действиях: камеру трогает окно."""
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from ptztracker.camera.preset_thumbs import PresetThumb
-from ptztracker.ui.theme import FS_CAPTION, R_TAG, SP, C, _rgba, qcolor
+from ptztracker.ui.theme import FS_CAPTION, R_PANEL, R_TAG, SP, C, _rgba, qcolor
 from ptztracker.ui.widgets import StateTag
 
 SLOTS = 12  # пресетов на камеру в панели (камера умеет 100; дальше — по мере надобности)
@@ -44,7 +45,6 @@ class PresetCard(QAbstractButton):
     def __init__(self, n: int, parent: QWidget | None = None):
         super().__init__(parent)
         self.n = n
-        self.name = ""
         self.last = False
         self._pix: QPixmap | None = None
         self._pix_src: str | None = None
@@ -59,10 +59,8 @@ class PresetCard(QAbstractButton):
             self._pix_src = src
             self._mtime = thumb.image.stat().st_mtime if src else None
             self._pix = QPixmap(src) if src else None
-        self.name = thumb.name if thumb else ""
         self.last = last
-        tip = f"Пресет {self.n}" + (f" — {self.name}" if self.name else "")
-        self.setToolTip(tip + "\nКлик — вызвать, Shift+клик — записать, правый клик — имя, снимок")
+        self.setToolTip(f"Пресет {self.n}\nКлик — вызвать, Shift+клик — записать")
         self.update()
 
     def sizeHint(self) -> QSize:
@@ -78,12 +76,6 @@ class PresetCard(QAbstractButton):
             p.setClipPath(path)
             p.drawPixmap(r.toRect(), self._pix)
             p.setClipping(False)
-            if self.name:
-                band = QRectF(r.left(), r.bottom() - 20, r.width(), 20)
-                p.save()
-                p.setClipPath(path)
-                p.fillRect(band, qcolor(C.BG, 200))
-                p.restore()
             border = QPen(qcolor(C.LIME if self.last else C.LINE), 2 if self.last else 1)
         else:
             p.setBrush(qcolor(C.BG))
@@ -95,8 +87,7 @@ class PresetCard(QAbstractButton):
             f.setPixelSize(FS_CAPTION - 1)
             p.setFont(f)
             p.setPen(qcolor(C.TEXT_FAINT))
-            hint = "" if self.name else "\nShift+клик"
-            p.drawText(r, Qt.AlignCenter, f"{self.n}{hint}")
+            p.drawText(r, Qt.AlignCenter, f"{self.n}\nShift+клик")
         if self.underMouse():
             p.fillPath(path, qcolor(C.TEXT, 18))
         p.setBrush(Qt.NoBrush)
@@ -113,12 +104,6 @@ class PresetCard(QAbstractButton):
             p.drawRoundedRect(badge, R_TAG - 1, R_TAG - 1)
             p.setPen(qcolor(C.TEXT))
             p.drawText(badge, Qt.AlignCenter, str(self.n))
-        if self.name:
-            f.setBold(False)
-            p.setFont(f)
-            p.setPen(qcolor(C.TEXT))
-            p.drawText(QRectF(r.left() + 6, r.bottom() - 20, r.width() - 12, 20), Qt.AlignLeft | Qt.AlignVCenter,
-                       p.fontMetrics().elidedText(self.name, Qt.ElideRight, int(r.width() - 12)))
         p.end()
 
 
@@ -134,6 +119,10 @@ class _WheelScroll(QScrollArea):
 
 
 class PresetRow(QWidget):
+    CARD_GAP = SP[1] - 1
+    HEAD_W = 44
+    EDGE_W = 20
+
     def __init__(self, drawer: PresetsDrawer, parent: QWidget | None = None):
         super().__init__(parent)
         self.drawer = drawer
@@ -141,21 +130,27 @@ class PresetRow(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(SP[0], SP[0], SP[0], SP[0])
         lay.setSpacing(SP[1])
-        head = QVBoxLayout()
-        head.setSpacing(2)
-        self.title = QLabel()
-        self.title.setFixedWidth(84)
-        self.title.setWordWrap(True)
-        self.title.setStyleSheet(f"color: {C.TEXT}; font-weight: 600; font-size: {FS_CAPTION}px;")
+        # слева — номер клетки, как в шапке камеры (у выбранной — белый); имя — в подсказке; эфир — под номером
+        head_box = QWidget()
+        head_box.setFixedWidth(self.HEAD_W)
+        head_box.setStyleSheet("background: transparent;")
+        head = QVBoxLayout(head_box)
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(SP[0])
+        self.number = QLabel()
+        self.number.setFixedSize(22, 22)
+        self.number.setAlignment(Qt.AlignCenter)
         self.tag = StateTag("pgm")
-        head.addWidget(self.title)
-        head.addWidget(self.tag)
         head.addStretch(1)
-        lay.addLayout(head)
+        head.addWidget(self.number, 0, Qt.AlignHCenter)
+        head.addWidget(self.tag, 0, Qt.AlignHCenter)
+        head.addStretch(1)
+        lay.addWidget(head_box)
         strip = QWidget()
+        strip.setStyleSheet("background: transparent;")
         sl = QHBoxLayout(strip)
         sl.setContentsMargins(0, 0, 0, 0)
-        sl.setSpacing(SP[1] - 1)
+        sl.setSpacing(self.CARD_GAP)
         self.cards = [PresetCard(n + 1) for n in range(SLOTS)]
         for c in self.cards:
             c.clicked.connect(lambda _=False, c=c: self._clicked(c.n))
@@ -170,36 +165,54 @@ class PresetRow(QWidget):
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setFixedHeight(CARD_H + 4)
-        self.more_left = self._edge("‹", -1)
-        self.more_right = self._edge("›", 1)
+        self.more_right = self._edge()
         bar = self.scroll.horizontalScrollBar()
         bar.rangeChanged.connect(lambda *_: self._sync_edges())
         bar.valueChanged.connect(lambda *_: self._sync_edges())
-        lay.addWidget(self.more_left)
-        lay.addWidget(self.scroll, 1)
+        lay.addWidget(self.scroll)
         lay.addWidget(self.more_right)
+        lay.addStretch(1)
+        self._lay = lay
         self._sync_edges()
 
-    def _edge(self, text: str, d: int) -> QToolButton:
+    def resizeEvent(self, e):  # noqa: N802
+        """В строке только целые карточки: ширина ленты — кратна карточке, «›» сразу за последней."""
+        super().resizeEvent(e)
+        m = self._lay.contentsMargins()
+        fixed = m.left() + m.right() + self.HEAD_W + self.EDGE_W + 2 * self._lay.spacing()
+        step = CARD_W + self.CARD_GAP
+        n = max(1, min(SLOTS, (self.width() - fixed + self.CARD_GAP) // step))
+        self.scroll.setFixedWidth(n * step - self.CARD_GAP)
+
+    def _edge(self) -> QToolButton:
+        """Одна стрелка справа: «›» — дальше; в конце ленты — «‹», назад к началу."""
         b = QToolButton()
-        b.setText(text)
-        b.setFixedSize(20, CARD_H)
+        b.setFixedSize(self.EDGE_W, CARD_H)
         b.setFocusPolicy(Qt.NoFocus)
         b.setCursor(Qt.PointingHandCursor)
         b.setStyleSheet(f"QToolButton {{ border: none; border-radius: 6px; color: {C.TEXT_DIM}; font-size: 18px;"
                         f" background: transparent; }} QToolButton:hover {{ background: {C.RAISED}; }}")
-        b.clicked.connect(lambda: self.scroll.horizontalScrollBar().setValue(
-            self.scroll.horizontalScrollBar().value() + d * 4 * (CARD_W + SP[1])))
+        b.clicked.connect(self._page)
         return b
 
-    def _sync_edges(self) -> None:
+    def _page(self) -> None:
         bar = self.scroll.horizontalScrollBar()
-        self.more_left.setVisible(bar.value() > 0)
-        self.more_right.setVisible(bar.value() < bar.maximum())
+        bar.setValue(0 if bar.value() >= bar.maximum() else bar.value() + self.scroll.width() + self.CARD_GAP)
+
+    def _sync_edges(self) -> None:
+        bar = self.scroll.horizontalScrollBar()  # стрелка держит место, чтобы лента не прыгала
+        b = self.more_right
+        b.setEnabled(bar.maximum() > 0)
+        b.setText("" if bar.maximum() == 0 else "‹" if bar.value() >= bar.maximum() else "›")
+        b.setToolTip("К началу" if b.text() == "‹" else "Дальше")
 
     def set(self, row: DrawerRow, selected: bool) -> None:
         self.slot = row.slot
-        self.title.setText(f"{row.slot + 1} · {row.name}")
+        self.number.setText(str(row.slot + 1))
+        self.number.setToolTip(f"Камера {row.slot + 1}: {row.name}")
+        self.number.setStyleSheet(
+            f"background: {C.TEXT if selected else C.RAISED_HI}; color: {C.BG if selected else C.TEXT};"
+            f" border-radius: {R_TAG + 1}px; font-weight: 700; font-size: {FS_CAPTION}px;")
         self.tag.setVisible(row.tally is not None)
         if row.tally:
             self.tag.set(row.tally)
@@ -217,9 +230,8 @@ class PresetRow(QWidget):
 
     def _menu(self, card: PresetCard, pos) -> None:
         m = QMenu(self)
-        m.addAction("Переименовать…", lambda: self.drawer.renameRequested.emit(self.slot, card.n))
         m.addAction("Записать сюда текущее положение…", lambda: self.drawer.storeRequested.emit(self.slot, card.n))
-        m.addAction("Стереть снимок и имя", lambda: self.drawer.eraseRequested.emit(self.slot, card.n))
+        m.addAction("Стереть снимок", lambda: self.drawer.eraseRequested.emit(self.slot, card.n))
         m.exec(card.mapToGlobal(pos))
 
 
@@ -259,7 +271,6 @@ class _Grip(QWidget):
 class PresetsDrawer(QWidget):
     recallRequested = Signal(int, int)  # клетка, номер пресета 1…
     storeRequested = Signal(int, int)
-    renameRequested = Signal(int, int)
     eraseRequested = Signal(int, int)
     rowsShownChanged = Signal(int)
     ROW_H = CARD_H + 12  # строка: карточки и отступы
@@ -267,12 +278,14 @@ class PresetsDrawer(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(f"PresetsDrawer {{ background: {C.SURFACE}; border-top: 1px solid {C.LINE}; }}")
+        # карточка, как клетки камер: скруглённая, с рамкой
+        self.setStyleSheet(f"PresetsDrawer {{ background: {C.SURFACE}; border: 1px solid {C.LINE};"
+                           f" border-radius: {R_PANEL}px; }}")
         self.rows: list[DrawerRow] = []
         self.row_widgets: list[PresetRow] = []
         self.rows_shown = 1
         self.grip = _Grip(self)
-        head = QLabel("<b>Пресеты</b> · клик — вызвать, Shift+клик — записать · тяните край вверх — другие камеры")
+        head = QLabel("<b>Пресеты</b> · клик — вызвать, Shift+клик — записать · потяните за край — другие камеры")
         head.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION - 0.5}px;")
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(SP[2], 0, SP[2], SP[1])

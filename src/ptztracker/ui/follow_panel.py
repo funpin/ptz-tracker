@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtGui import QPainter, QPen
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
@@ -12,13 +13,38 @@ from PySide6.QtWidgets import (
 
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.ui.state import TrackingView, tracking_view
-from ptztracker.ui.theme import FS_CAPTION, SP, C
+from ptztracker.ui.theme import FS_CAPTION, SP, C, qcolor
 from ptztracker.ui.widgets import SectionHeader, SilhouetteButton, TrackButton
 
 # крупность кадра: три силуэта и ползунок на трёх отметках (спека 2026-11-05, «Кадр»). Пояс слева/справа
 # убран из кнопок — вернётся перетаскиванием зоны в 1.2; агент и старые настройки ещё могут его задать
 SIZES = ("waist_center", "full", "wide")
 SIZE_TITLES = {"waist_center": "Пояс", "full": "Рост", "wide": "Общий"}
+
+
+class MarkedSlider(QSlider):
+    """Ползунок крупности с засечками под каждой отметкой (QSS-ползунок сам засечки не рисует)."""
+
+    HANDLE = 16
+
+    def mark_xs(self) -> list[float]:
+        n = self.maximum() - self.minimum()
+        span = self.width() - self.HANDLE
+        return [self.HANDLE / 2 + span * i / n for i in range(n + 1)] if n > 0 else []
+
+    def __init__(self, *a):
+        super().__init__(*a)
+        self.setMinimumHeight(24)
+
+    def paintEvent(self, e):  # noqa: N802
+        super().paintEvent(e)
+        p = QPainter(self)  # засечки — под дорожкой, ручка их не закрывает
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(qcolor(C.GREY), 1.5))
+        y = self.height() / 2 + 8
+        for x in self.mark_xs():
+            p.drawLine(QPointF(x, y), QPointF(x, y + 3))
+        p.end()
 
 
 class FollowPanel(QWidget):
@@ -57,7 +83,7 @@ class FollowPanel(QWidget):
             if i:
                 grid.addStretch(1)
             grid.addWidget(b)
-        self.size_slider = QSlider(Qt.Horizontal)
+        self.size_slider = MarkedSlider(Qt.Horizontal)
         self.size_slider.setRange(0, len(SIZES) - 1)
         self.size_slider.setPageStep(1)
         self.size_slider.setFocusPolicy(Qt.NoFocus)

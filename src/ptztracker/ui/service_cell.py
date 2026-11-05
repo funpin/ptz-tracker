@@ -90,6 +90,7 @@ class ServiceCell(QWidget):
         self._rows: list[ServiceRow] = []
         self._selected: int | None = None
         self._tags: dict[str, StateTag] = {}
+        self.footer = ""  # «Сводка»: строка общего под таблицей (ATEM, журнал, агент)
         self._badge = PadBadge()
         self.setMinimumSize(120, 90)
 
@@ -378,6 +379,12 @@ class ServiceCell(QWidget):
                        "калибровка" if r.calibrated else "нет калибровки")
             p.setPen(QPen(qcolor(C.LINE), 1))
             p.drawLine(QPointF(body.left(), y + row_h - 0.5), QPointF(body.right(), y + row_h - 0.5))
+        if self.footer:
+            y = body.top() + len(self._rows) * row_h + SP[2]
+            p.setFont(self._font(FS_CAPTION))
+            p.setPen(qcolor(C.TEXT_FAINT))
+            p.drawText(QRectF(body.left(), y, body.width(), 18), Qt.AlignLeft | Qt.AlignVCenter,
+                       p.fontMetrics().elidedText(self.footer, Qt.ElideRight, int(body.width())))
 
     @staticmethod
     def _fps_text(r: ServiceRow) -> str:

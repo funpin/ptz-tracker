@@ -37,7 +37,7 @@ version = { attr = "ptztracker.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-ptztracker = ["models/*.onnx"]
+ptztracker = ["models/*.onnx", "ui/icons/*.svg", "ui/fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

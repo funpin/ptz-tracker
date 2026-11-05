@@ -41,3 +41,11 @@ def test_calibrate_signal(qtbot):
     p.set_view(tracking_view(False, None, None, None, diverged=True))
     with qtbot.waitSignal(p.calibrateRequested, timeout=500):
         p.follow_btn.action_btn.click()
+
+
+def test_size_slider_has_marks(qtbot):
+    p = FollowPanel()
+    qtbot.addWidget(p)
+    p.resize(320, 200)
+    p.show()
+    assert len(p.size_slider.mark_xs()) == 3

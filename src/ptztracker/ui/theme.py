@@ -1,4 +1,6 @@
-from PySide6.QtGui import QColor, QFont, QPalette
+from pathlib import Path
+
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication
 
 
@@ -26,7 +28,19 @@ class C:
     OK = TEXT  # значки верхней панели: «всё в порядке»
 
 
-FONT_FAMILY = "Segoe UI"
+FONT_FAMILY = "Inter Variable"  # встроен (ui/fonts, лицензия OFL): одинаково на Windows и Mac
+_FONTS_DIR = Path(__file__).resolve().parent / "fonts"
+_fonts_loaded = False
+
+
+def load_fonts() -> str:
+    """Зарегистрировать Inter из папки программы (один раз); вернуть имя семейства."""
+    global _fonts_loaded
+    if not _fonts_loaded:
+        for f in sorted(_FONTS_DIR.glob("*.ttf")):
+            QFontDatabase.addApplicationFont(str(f))
+        _fonts_loaded = True
+    return FONT_FAMILY
 FS_CAPTION, FS_TEXT, FS_BUTTON, FS_STATE = 12, 13, 15, 24  # px
 H_BUTTON, H_CHOICE, H_STOP, H_STATE = 34, 40, 42, 118  # px
 SP = (4, 8, 12, 16, 24)
@@ -157,6 +171,7 @@ def apply_dark_theme(app: QApplication) -> None:
     for role in (QPalette.Text, QPalette.ButtonText, QPalette.WindowText):
         p.setColor(QPalette.Disabled, role, q(C.TEXT_FAINT))
     app.setPalette(p)
+    load_fonts()
     font = QFont(FONT_FAMILY)
     font.setPixelSize(FS_TEXT)
     app.setFont(font)
