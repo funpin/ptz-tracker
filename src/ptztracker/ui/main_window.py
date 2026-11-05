@@ -1529,7 +1529,9 @@ class MainWindow(QMainWindow):
         if b is not None:
             self.pads[pad] = b  # до обработки движений: _pad_moved/_pad_feedback отличают физический геймпад
             self._pad_nums[b] = pad
-        self._pad_apply(moves, fb)
+        # подключение — не переход: автомат моста сам заперт, если стик отклонён при подключении; второй замок
+        # отсюда (поток Qt, позже опроса) запирал бы и стик, отклонённый уже после подключения
+        self._pad_apply(moves, fb, connecting=pad)
         self._refresh_service_cells()
         return pad
 
@@ -1584,9 +1586,9 @@ class MainWindow(QMainWindow):
         moves, fb = self.pad_router.set_slots([c is not None for c in self.grid.cells])
         self._pad_apply(moves, fb)
 
-    def _pad_apply(self, moves: list[PadMove], fb: list[PadFeedback]) -> None:
+    def _pad_apply(self, moves: list[PadMove], fb: list[PadFeedback], connecting: int | None = None) -> None:
         for m in moves:
-            self._pad_moved(m)
+            self._pad_moved(m, connecting)
         for f in fb:
             self._pad_feedback(f)
         for i, cell in enumerate(self.cells):
@@ -1603,7 +1605,7 @@ class MainWindow(QMainWindow):
         elif any(self._pad_vel.get(pad, ())):
             cell.mixer.latch(f"pad{pad}")
 
-    def _pad_moved(self, m: PadMove) -> None:
+    def _pad_moved(self, m: PadMove, connecting: int | None = None) -> None:
         old = self.grid.cells[m.old_slot] if m.old_slot is not None else None
         new = self.grid.cells[m.new_slot] if m.new_slot is not None else None
         b = self.pads.get(m.pad)
@@ -1614,7 +1616,8 @@ class MainWindow(QMainWindow):
         if self.camera_menu.is_open and self._menu_pad == m.pad:
             self.camera_menu.close_menu()
         if new is not None:
-            self._pad_hold_on_new(m.pad, new)
+            if m.pad != connecting:
+                self._pad_hold_on_new(m.pad, new)
         elif b is not None:
             b.reset_motion()
 

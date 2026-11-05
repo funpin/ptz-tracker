@@ -230,7 +230,8 @@ def test_camera_switch_requires_recenter(qtbot, tmp_path):
     b.pad = stick(1.0)
     wait_right(qtbot, old)
     w.set_cell_camera(w.grid.selected, w._current_cfg().id)
-    assert pts(old)[-1] == "#PTS5050"
+    # стоп старой камере уходит из очереди её планировщика (клетка закрывается без ожидания сети)
+    qtbot.waitUntil(lambda: pts(old)[-1] == "#PTS5050", timeout=2000)
     sim = w.session.sim
     b.pad = stick(0.95)  # стик всё ещё держат — новая камера не едет
     qtbot.wait(500)
@@ -476,4 +477,13 @@ def test_battery_exposed_on_bridge(qtbot, tmp_path):
     assert w.pad.battery_charging is True and w.pad.battery_remaining_s() is None
     w.pad._on_conn(None)
     assert w.pad.battery_percent is None and w.pad.battery_charging is None
+    w.close()
+
+
+def test_connect_does_not_relatch_pad(qtbot, tmp_path):
+    """Подключение не запирает геймпад второй раз: автомат уже заперт сам, если стик отклонён при подключении.
+    Иначе стик, отклонённый сразу после подключения, не двигал бы камеру до возврата в центр (гонка с опросом)."""
+    w, b = make(qtbot, tmp_path)
+    assert w.pad_router.slot_of(w._bridge_pad) == 0
+    assert w.pad._mapper.gen == 0  # ни одного стопа (latch_stop) с момента подключения
     w.close()
