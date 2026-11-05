@@ -40,11 +40,11 @@ def test_dialog_lists_seen_pads_and_applies_at_once(qtbot, tmp_path):
     d = w.gamepads_dialog
     assert set(d.sliders) == {GUID_ID, "a0:b1:c2:d3:e4:f5"}
     live = d.status_labels["a0:b1:c2:d3:e4:f5"].text()
-    assert "подключён · камера 1" in live and SHARED_NOTE not in live
+    assert "управляет камерой 1" in live and SHARED_NOTE not in live
     old = d.status_labels[GUID_ID].text()
     assert "не подключён" in old and SHARED_NOTE in old
-    names = [w_.text() for i in range(d._grid.count()) if hasattr(w_ := d._grid.itemAt(i).widget(), "text")]
-    assert "DualSense · …e4:f5" in names
+    name = d.name_labels["a0:b1:c2:d3:e4:f5"].text()
+    assert "DualSense" in name and "…e4:f5" in name
     assert d.sliders[GUID_ID].value() == 20 and d.sliders["a0:b1:c2:d3:e4:f5"].value() == 50
     d.sliders["a0:b1:c2:d3:e4:f5"].setValue(90)
     assert w.pad.sensitivity == 90  # сразу, без «ОК»
@@ -71,3 +71,41 @@ def test_empty_dialog(qtbot):
     qtbot.addWidget(d)
     d.show()
     assert d.empty_label.isVisible() and not d.sliders
+
+
+# --- вид по макету docs/design/mockups/pads-atem.html -------------------------------------------
+
+
+def _rows():
+    from ptztracker.ui.gamepads_dialog import PadRow
+
+    return [PadRow("a0:b1:c2:d3:e4:f5", "DualSense", 40, True, 1, battery=82, battery_time="~5 ч", tally="pgm"),
+            PadRow("x1:x2:x3:x4:x5:x6", "Xbox Controller", 50, True, None),
+            PadRow(GUID_ID, "DualSense", 70, False)]
+
+
+def test_card_texts_and_tile(qtbot):
+    from ptztracker.ui.gamepads_dialog import GamepadsDialog
+    from ptztracker.ui.theme import C
+
+    d = GamepadsDialog(_rows(), True, lambda *a: None, lambda on: None)
+    qtbot.addWidget(d)
+    live = d.status_labels["a0:b1:c2:d3:e4:f5"].text()
+    assert "управляет камерой 1" in live and "82 %" in live and "~5 ч" in live
+    assert C.PGM in d.tiles["a0:b1:c2:d3:e4:f5"].styleSheet()
+    assert d.tiles["x1:x2:x3:x4:x5:x6"].isHidden()
+    assert "выберите клетку" in d.status_labels["x1:x2:x3:x4:x5:x6"].text()
+    assert "настройка сохранится" in d.status_labels[GUID_ID].text()
+    assert d.done_button.property("variant") == "primary"
+
+
+def test_curve_preview_follows_slider(qtbot):
+    from ptztracker.control.manual_curve import shape
+    from ptztracker.ui.gamepads_dialog import GamepadsDialog
+
+    d = GamepadsDialog(_rows(), True, lambda *a: None, lambda on: None)
+    qtbot.addWidget(d)
+    prev = d.curves["a0:b1:c2:d3:e4:f5"]
+    assert prev.sens == 40
+    d.sliders["a0:b1:c2:d3:e4:f5"].sliderMoved.emit(90)
+    assert prev.sens == 90 and abs(prev.value_at(0.5) - shape(0.5, 90)) < 1e-9

@@ -105,3 +105,28 @@ def test_atem_dialog_empty_is_allowed(qtbot):
     d.ip_edit.setText("")
     d.accept()
     assert d.result() == QDialog.Accepted and d.ip() == ""
+
+
+# --- вид по макету docs/design/mockups/pads-atem.html -------------------------------------------
+
+
+def test_atem_dialog_status_and_cameras(qtbot):
+    from ptztracker.ui.theme import C
+
+    d = AtemDialog("10.0.0.9", status=lambda: ("на связи", "ok"),
+                   cameras=lambda: [(1, "Сцена", 3, "pgm"), (2, "Зал", 1, "pvw"), (3, "Кафедра", 0, None)])
+    qtbot.addWidget(d)
+    d.show()
+    assert "На связи" in d.status_label.text() and C.LIME in d.status_dot.styleSheet()
+    texts = [r.text() for r in d.camera_labels]
+    assert any("вход 3" in t for t in texts) and any("вход не задан" in t for t in texts)
+    d.ip_edit.setText("10.0.0.10")
+    assert "после «Сохранить»" in d.status_label.text()
+    assert d.ok_button.text() == "Сохранить" and d.ok_button.property("variant") == "primary"
+
+
+def test_atem_off_button_clears_and_saves(qtbot):
+    d = AtemDialog("10.0.0.9")
+    qtbot.addWidget(d)
+    d.off_button.click()
+    assert d.result() == QDialog.Accepted and d.ip() == ""

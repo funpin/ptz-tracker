@@ -74,7 +74,7 @@ from ptztracker.ui.camera_menu import CameraMenu
 from ptztracker.ui.camera_strip import CameraStrip, StripItem
 from ptztracker.ui.follow_panel import SIZES, FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge
-from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow
+from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow, time_left_text
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.main_menu import MainMenu
 from ptztracker.ui.manual_controls import STICK_MIN, ManualControls
@@ -1442,6 +1442,11 @@ class MainWindow(QMainWindow):
         snap = self.atem.snapshot() if self.atem else None
         return (f"на связи · {self.cfg.atem_ip}", "ok") if snap and snap.online else ("нет связи", "fault")
 
+    def _atem_cameras(self) -> list[tuple[int, str, int, str | None]]:
+        """Для окна ATEM: клетка, имя камеры, её вход, эфир сейчас."""
+        return [(i + 1, c.cfg.name, atem_input_of(c.cfg), self._tally_per[i][1])
+                for i, c in enumerate(self.grid.cells) if c is not None]
+
     def _pads_menu_status(self) -> tuple[str, str]:
         n = sum(1 for b in self.pads.values() if b.connected)
         return (str(n), "neutral") if n else ("нет", "off")
@@ -1450,7 +1455,7 @@ class MainWindow(QMainWindow):
         return ("разрешён", "ok") if self.agent_badge.isVisibleTo(self) else ("выключен", "off")
 
     def _edit_atem(self) -> None:
-        d = AtemDialog(self.cfg.atem_ip, self)
+        d = AtemDialog(self.cfg.atem_ip, self, status=self._atem_menu_status, cameras=self._atem_cameras)
         if not d.exec():
             return
         self.cfg.atem_ip = d.ip()
@@ -2209,7 +2214,10 @@ class MainWindow(QMainWindow):
             b = live.get(pid)
             name = self.cfg.pad_names.get(pid) or ((b.info or {}).get("name") if b else None) or "Геймпад"
             cell = self._pad_slot_number(self._pad_nums.get(b)) if b is not None else None
-            rows.append(PadRow(pid, name, self.pad_sensitivity({"id": pid}), b is not None, cell))
+            batt = dict(battery=b.battery_percent, charging=bool(b.battery_charging),
+                        battery_time=time_left_text(b.battery_remaining_s())) if b is not None else {}
+            tally = self._tally_per[cell - 1][1] if cell is not None and cell <= len(self._tally_per) else None
+            rows.append(PadRow(pid, name, self.pad_sensitivity({"id": pid}), b is not None, cell, tally=tally, **batt))
         return rows
 
     def show_gamepads(self) -> None:
