@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QImage, QPainter, QPainterPath
+from PySide6.QtGui import QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QHBoxLayout, QWidget
 
 from ptztracker.ui.theme import FS_CAPTION, R_TAG, SP, C, qcolor
@@ -26,6 +27,22 @@ class StripItem:
     image: QImage | None
     service: str | None = None  # плитка служебного вида из свободной клетки: summary | position | graphs
     rows: list = field(default_factory=list)  # ServiceRow — для мини-вида
+
+
+def summary_clock_text(row) -> str:
+    """Время в эфире / слежения, а без времени — состояние словом («вручную», «ожидание»), а не прочерк."""
+    from ptztracker.ui.service_cell import ServiceCell
+
+    kind, sec = row.clock
+    return ServiceCell._mmss(sec) if sec is not None else ServiceCell.CLOCK_TEXT.get(kind, kind)
+
+
+def position_text(row) -> str:
+    """«−12° · ×1,5» — куда смотрит и насколько крупно."""
+    if row.ptz is None:
+        return "нет данных"
+    zx = row.ptz.zoom_x or 1.0
+    return f"{row.ptz.pan_deg:+.0f}° · ×{zx:.1f}".replace("-", "−").replace("+0°", "0°").replace(".", ",")
 
 
 class StripCard(QWidget):
@@ -94,9 +111,9 @@ class StripCard(QWidget):
 
 
     def _paint_service(self) -> None:
-        """Мини-вид: «Сводка» — дорожка и часы на камеру; «Положение» — маленькие круги с конусом; «Графики» —
-        только название (графики в 64 px не читаются)."""
-        from ptztracker.ui.service_cell import ServiceCell, position_geometry, tile_colors
+        """Мини-вид: «Сводка» — дорожка и часы на камеру; «Положение» — маленькие круги с конусом и подписью;
+        «Графики» — поворот и зум за 30 с строкой на камеру."""
+        from ptztracker.ui.service_cell import GRAPH_SECONDS, ServiceCell, position_geometry, tile_colors
 
         it = self.item
         p = QPainter(self)
@@ -135,7 +152,7 @@ class StripCard(QWidget):
                 kind, sec = row.clock
                 p.setPen(qcolor({"air": C.PGM, "on": C.LIME, "lost": C.LOST}.get(kind, C.TEXT_FAINT)))
                 p.drawText(QRectF(bar.right() + 4, y, r.right() - bar.right() - 8, lh), Qt.AlignRight | Qt.AlignVCenter,
-                           ServiceCell._mmss(sec))
+                           summary_clock_text(row))
         elif it.service == "position":
             d = r.height() - 30
             for i, row in enumerate(rows):
@@ -157,10 +174,50 @@ class StripCard(QWidget):
                     p.setBrush(qcolor(col, 90))
                     p.drawPath(cone)
                 bg, fg = tile_colors(row.tally)
+                p.setPen(Qt.NoPen)
                 p.setBrush(qcolor(bg))
                 p.drawEllipse(c, 6, 6)
                 p.setPen(qcolor(fg))
                 p.drawText(QRectF(c.x() - 6, c.y() - 6, 12, 12), Qt.AlignCenter, str(row.slot + 1))
+            if len(rows) == 1:  # одна камера — рядом с кругом цифрами: куда смотрит и насколько крупно
+                p.setPen(qcolor(C.TEXT_DIM))
+                x0 = 8 + d + 10
+                p.drawText(QRectF(x0, 22, r.right() - x0 - 6, d), Qt.AlignLeft | Qt.AlignVCenter, position_text(rows[0]))
+        elif it.service == "graphs":
+            now = time.monotonic()
+            lh = min(30.0, (r.height() - 26) / max(1, len(rows)))  # одна камера — графики во всю высоту
+            for i, row in enumerate(rows):
+                y = 22 + i * lh
+                bg, fg = tile_colors(row.tally)
+                ts = min(lh - 2, 12.0)
+                tile = QRectF(8, y + (lh - ts) / 2, ts, ts)
+                p.setPen(Qt.NoPen)
+                p.setBrush(qcolor(bg))
+                p.drawRoundedRect(tile, 3, 3)
+                p.setPen(qcolor(fg))
+                p.drawText(tile, Qt.AlignCenter, str(row.slot + 1))
+                col = C.LIME if row.track == "on" else C.TEXT_DIM
+                w_box = (r.right() - tile.right() - 14) / 2
+                for k, get in enumerate((lambda h: h.pan_deg, lambda h: h.zoom_x)):
+                    box = QRectF(tile.right() + 5 + k * (w_box + 4), y + 1, w_box, lh - 2)
+                    p.setPen(Qt.NoPen)
+                    p.setBrush(qcolor(C.RAISED))
+                    p.drawRoundedRect(box, 2, 2)
+                    pts = [(1.0 - (now - h.t) / GRAPH_SECONDS, get(h)) for h in row.history if get(h) is not None]
+                    if len(pts) < 2:
+                        continue
+                    lo, hi = min(v for _, v in pts), max(v for _, v in pts)
+                    span = (hi - lo) or 1.0
+                    path = QPainterPath()
+                    for j, (x, v) in enumerate(pts):
+                        pt = QPointF(box.left() + 2 + max(0.0, min(1.0, x)) * (box.width() - 4),
+                                     box.bottom() - 2 - (v - lo) / span * (box.height() - 4))
+                        path.moveTo(pt) if j == 0 else path.lineTo(pt)
+                    p.setPen(QPen(qcolor(col), 1.4))
+                    p.setBrush(Qt.NoBrush)
+                    p.drawPath(path)
+            p.setPen(qcolor(C.TEXT_FAINT))
+            p.drawText(QRectF(8, 4, r.width() - 14, 16), Qt.AlignRight | Qt.AlignVCenter, "поворот · зум")
         p.end()
 
 
