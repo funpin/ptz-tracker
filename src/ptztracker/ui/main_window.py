@@ -206,7 +206,7 @@ class MainWindow(QMainWindow):
                                                menu_open=self._menu_is_open, parent=self))
         self.pad = self._bridges[0]
         for b in self._bridges:
-            b.intents.connect(lambda its, b=b: self._on_pad_intents(its, self._pad_nums.get(b)))
+            b.intents.connect(lambda its, b=b: self._on_pad_intents(its, self._pad_nums.get(b), b))
             b.connectionChanged.connect(lambda info, b=b: self._on_pad_connection(info, b))
             b.batteryChanged.connect(self._update_pad_chip)
         self._last_waist = "waist_center"  # куда вернуться в пояс по R1 из «Роста»
@@ -1631,7 +1631,7 @@ class MainWindow(QMainWindow):
             self.on_pad_feedback(f)
 
     def _on_pad_connection(self, info, bridge: GamepadBridge | None = None) -> None:
-        b = bridge or self.pad
+        b = bridge if bridge is not None else self.pad
         if info is not None:
             if b not in self._pad_nums:
                 try:
@@ -1648,11 +1648,18 @@ class MainWindow(QMainWindow):
         if n is not None:
             self.pad_disconnected(n)
 
-    def _on_pad_intents(self, intents: list, pad: int | None = -1) -> None:
-        """Намерения геймпада n (поток Qt; -1 — первый; None — мост ещё без номера): те же пути, что клавиатура и кнопки окна."""
+    def _on_pad_intents(self, intents: list, pad: int | None = -1, bridge: GamepadBridge | None = None) -> None:
+        """Намерения геймпада n (поток Qt; -1 — первый; None — мост без номера): те же пути, что клавиатура и кнопки окна.
+
+        `bridge` — мост-отправитель. Мост без номера (5-й геймпад, хвост после отключения) ничего не делает
+        и никогда не действует от имени другого геймпада."""
         if pad == -1:
             pad = self._first_pad()
-        b = (self.pads.get(pad) if pad is not None else None) or self.pad
+        if pad is None:
+            if bridge is not None and any(isinstance(it, Disconnected) for it in intents):
+                bridge.zero_velocity()
+            return
+        b = bridge if bridge is not None else (self.pads.get(pad) or self.pad)
         moved = False
         for it in intents:
             if isinstance(it, (PanTilt, Zoom)):

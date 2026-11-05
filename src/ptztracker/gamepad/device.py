@@ -62,7 +62,10 @@ class SdlHub:
         self._scan_next = 0.0
 
     def backend(self, index: int) -> SdlBackend:
-        return SdlBackend(self, index)
+        """Вид одного контроллера; хаб уже открыт — вид сразу получает pygame и раскладку кнопок."""
+        b = SdlBackend(self, index)
+        b.open()
+        return b
 
     def open(self) -> bool:
         """Запускает joystick/controller и пустое видео dummy (без окон и звука). Любой сбой SDL — False и одна строка в лог."""

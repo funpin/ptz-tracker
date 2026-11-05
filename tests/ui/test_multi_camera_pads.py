@@ -276,3 +276,21 @@ def test_dots_per_pad(qtbot, tmp_path):
     qtbot.waitUntil(lambda: ("player", 1) in hub.backends[0].calls and ("player", 2) in hub.backends[1].calls,
                     timeout=3000)
     w.close()
+
+
+def test_intents_from_unnumbered_bridge_never_reach_pad_1(qtbot, tmp_path):
+    """Мост без номера (5-й геймпад или хвост после отключения) не действует от имени геймпада 1."""
+    from ptztracker.gamepad.intents import Disconnected, PanTilt
+
+    w, hub, _ = make_hub(qtbot, tmp_path)
+    hub.backends[0].pad = RawPad()
+    qtbot.waitUntil(lambda: len(w.pads) == 1, timeout=3000)
+    stray = w._bridges[1]
+    assert stray not in w._pad_nums
+    stray._vel = (1.0, 0.0, 0.0)
+    w._on_pad_intents([PanTilt(1.0, 0.0)], None, stray)
+    w._on_pad_intents([Disconnected()], None, stray)
+    qtbot.wait(300)
+    assert sorted(w.pads) == [1]  # геймпад 1 не отключён
+    assert not [c for c in pts(w, 0) if c != "#PTS5050"]  # его камера не поехала
+    w.close()

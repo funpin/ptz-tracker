@@ -149,3 +149,30 @@ def test_multipad_thread_runs_and_stops():
     time.sleep(0.05)
     m.stop(1.0)
     assert log[:2] == ["pump", "a"] and log[-2:] == ["a.shutdown", "close"]
+
+
+class AxisCtl(Ctl):
+    def get_axis(self, _a):
+        return 32767
+
+    def get_button(self, _b):
+        return False
+
+
+class AxisPg(FakePg):
+    CONTROLLER_AXIS_LEFTX = 0
+    CONTROLLER_AXIS_TRIGGERLEFT = 4
+    CONTROLLER_AXIS_TRIGGERRIGHT = 5
+
+    class error(Exception):  # noqa: N801
+        pass
+
+
+def test_hub_backend_view_polls_real_controller():
+    """Вид хаба — настоящий SdlBackend: без собственного open() он бы молчал (так было в 57e58b3)."""
+    hub, ctrl, _ = mk_hub()
+    hub.pg, hub.mapping = AxisPg, {"cross": 0}
+    view = hub.backend(1)
+    hub._slots[1] = AxisCtl(42)
+    pad = view.poll()
+    assert pad is not None and pad.axes["leftx"] == 1.0
