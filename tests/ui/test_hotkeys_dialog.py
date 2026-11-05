@@ -132,3 +132,29 @@ def test_keyboard_keys_parse():
     assert keyboard_keys("← → ↑ ↓") == "Left,Right,Up,Down"
     assert keyboard_keys("+ −") == "+,−"
     assert keyboard_keys("Пробел") == "Space"
+
+
+def test_drawing_does_not_move_and_no_duplicate_caption(qtbot):
+    d = HotkeysDialog()
+    qtbot.addWidget(d)
+    d.show()
+    qtbot.wait(50)
+    y0, h0 = d.stack.geometry().y(), d.stack.geometry().height()
+    for i in range(len(d.rows)):  # длинные и короткие пояснения
+        d.row_hovered(i)
+        qtbot.wait(5)
+        assert (d.stack.geometry().y(), d.stack.geometry().height()) == (y0, h0)
+    assert not hasattr(d, "effect_text")  # пояснение — только в списке справа
+
+
+def test_drawing_hover_scrolls_row_into_view(qtbot):
+    d = HotkeysDialog()
+    qtbot.addWidget(d)
+    d.resize(1040, 420)  # список не помещается целиком
+    d.show()
+    qtbot.wait(50)
+    d.pad.hovered.emit("create")
+    lit = next(r for r in d.rows if r.lit)
+    vp = d.list_scroll.viewport()
+    top = lit.mapTo(vp, lit.rect().topLeft()).y()
+    assert 0 <= top and top + lit.height() <= vp.height()

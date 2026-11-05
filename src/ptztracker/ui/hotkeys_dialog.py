@@ -6,10 +6,10 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
-    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QScrollArea,
     QStackedWidget,
     QTabBar,
@@ -120,7 +120,7 @@ class _Row(QFrame):
 class HotkeysDialog(QDialog):
     """Живая справка: вкладки Геймпад / Клавиатура / Мышь, рисунок слева, список справа.
     Наведение на строку подсвечивает кнопку на рисунке (стик ещё и двигается), наведение на рисунок —
-    строку. Снизу слева — что сделает камера."""
+    строку и прокручивает список к ней. Пояснение — только в списке справа: рисунок никогда не сдвигается."""
 
     TABS = ("Геймпад", "Клавиатура", "Мышь")
 
@@ -165,21 +165,18 @@ class HotkeysDialog(QDialog):
         self.stack = QStackedWidget()
         for d in self.drawings:
             self.stack.addWidget(d)
-        self.effect_title = QLabel("Наведите на действие или кнопку")
-        self.effect_title.setStyleSheet(f"color: {C.TEXT}; font-weight: 600;")
-        self.effect_text = QLabel("— на рисунке подсветится, чем это делается")
-        self.effect_text.setStyleSheet(f"color: {C.TEXT_DIM};")
-        self.effect_text.setWordWrap(True)
+        # одна постоянная строка-подсказка вместо меняющегося пояснения: рисунок не прыгает, текст не дублируется
+        self.tip_label = QLabel("Наведите на кнопку или на строку справа — подсветится пара")
+        self.tip_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
         left = QVBoxLayout()
         left.addWidget(self.stack, 1)
-        left.addWidget(self.effect_title)
-        left.addWidget(self.effect_text)
+        left.addWidget(self.tip_label)
 
         self.list_host = QWidget()
         self.list_lay = QVBoxLayout(self.list_host)
         self.list_lay.setContentsMargins(SP[1], SP[1], SP[1], SP[1])
         self.list_lay.setSpacing(2)
-        scroll = QScrollArea()
+        scroll = self.list_scroll = QScrollArea()
         scroll.setWidget(self.list_host)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
@@ -199,9 +196,12 @@ class HotkeysDialog(QDialog):
         lay.setSpacing(SP[2])
         lay.addLayout(head)
         lay.addLayout(body, 1)
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
-        buttons.rejected.connect(self.reject)
-        lay.addWidget(buttons)
+        close = QPushButton("Закрыть")
+        close.clicked.connect(self.reject)
+        foot = QHBoxLayout()
+        foot.addStretch(1)
+        foot.addWidget(close)
+        lay.addLayout(foot)
         self.rows: list[_Row] = []
         self.tabs.currentChanged.connect(self._show_tab)
         self._show_tab(0)
@@ -232,12 +232,6 @@ class HotkeysDialog(QDialog):
         for r in self.rows:
             r.set_lit(r.index == row)
         self.drawing.set_highlight(data[row][2] if row is not None else None)
-        if row is None:
-            self.effect_title.setText("Наведите на действие или кнопку")
-            self.effect_text.setText("— на рисунке подсветится, чем это делается")
-        else:
-            self.effect_title.setText(data[row][0])
-            self.effect_text.setText(data[row][1])
 
     def row_hovered(self, row: int | None) -> None:
         self.highlight(row)
@@ -253,5 +247,7 @@ class HotkeysDialog(QDialog):
             # у одного элемента бывает два действия (тачпад: нажать — стоп, свайп — крупность): стоп важнее
             match = next((n for n in found if "СТОП" in data[n][1]), found[0] if found else None)
         self.highlight(match)
+        if match is not None:  # навели на рисунок — строка справа сама прокручивается в видимую часть
+            self.list_scroll.ensureWidgetVisible(self.rows[match], 0, SP[2])
         if match is None and key is not None:
             self.drawing.set_highlight(None)
