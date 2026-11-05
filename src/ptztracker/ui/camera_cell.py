@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -18,17 +19,33 @@ from PySide6.QtWidgets import (
 
 from ptztracker.ui.icons import icon
 from ptztracker.ui.preview import PreviewWidget
-from ptztracker.ui.theme import CHEVRON, FS_CAPTION, R_PANEL, R_TAG, SP, C, _rgba
+from ptztracker.ui.theme import CHEVRON, FS_CAPTION, R_PANEL, R_TAG, SP, C, _rgba, qcolor
 from ptztracker.ui.widgets import PadBadge, PowerOverlay, StateTag, StatusPill, VideoFrame
 
 MAX_PADS = 4
 SHOWN_PADS = 2  # больше — первый и «+N»
 
 
+class _CycleBar(QWidget):
+    """Тонкая лаймовая полоска внизу служебной клетки: доля времени до следующей смены вида."""
+
+    def __init__(self):
+        super().__init__()
+        self.fraction = 0.0
+        self.setFixedHeight(2)
+
+    def paintEvent(self, e):  # noqa: N802
+        p = QPainter(self)
+        p.fillRect(self.rect(), qcolor(C.RAISED_HI))
+        p.fillRect(0, 0, round(self.width() * self.fraction), self.height(), qcolor(C.LIME))
+        p.end()
+
+
 class CameraCell(QFrame):
     cameraChosen = Signal(int, object)  # (клетка, id камеры или None)
     selectRequested = Signal(int)
     powerClicked = Signal(int)
+    viewToggleRequested = Signal(int)  # двойной клик по шапке: «4 камеры» ↔ «1 камера»
 
     def __init__(self, slot: int, parent: QWidget | None = None):
         super().__init__(parent)
@@ -131,9 +148,20 @@ class CameraCell(QFrame):
         lay.setSpacing(0)
         lay.addLayout(head)
         lay.addLayout(self._stack, 1)
+        self.cycle_bar = _CycleBar()  # «По очереди»: сколько осталось до смены вида
+        self.cycle_bar.hide()
+        lay.addWidget(self.cycle_bar)
         self._apply_border()
 
     # --- выбор ----------------------------------------------------------
+
+    def mouseDoubleClickEvent(self, e):  # noqa: N802
+        # только шапка: клики по видео — выбор цели, их не перехватываем
+        if e.button() == Qt.LeftButton and e.position().y() < self._stack.geometry().top():
+            self.viewToggleRequested.emit(self.slot)
+            e.accept()
+            return
+        super().mouseDoubleClickEvent(e)
 
     def _click_guard(self) -> bool:
         if self._selected:
@@ -144,10 +172,16 @@ class CameraCell(QFrame):
     def _on_index(self, _i: int) -> None:
         self.cameraChosen.emit(self.slot, self.combo.currentData())
 
-    def set_choices(self, items: list[tuple[str, str]], current: str | None) -> None:
+    def set_choices(self, items: list[tuple[str, str]], current: str | None,
+                    services: list[tuple[str, str]] = ()) -> None:
+        """services — что можно показать в пустой клетке («svc:summary», …); идут сразу под заголовком."""
         self.combo.blockSignals(True)
         self.combo.clear()
         self.combo.addItem(self._empty_title, None)
+        for data, title in services:
+            self.combo.addItem(title, data)
+        if services and items:
+            self.combo.insertSeparator(self.combo.count())
         for cam_id, name in items:
             self.combo.addItem(name, cam_id)
         i = self.combo.findData(current) if current is not None else 0
@@ -228,6 +262,12 @@ class CameraCell(QFrame):
         if text != self._empty_title:
             self._empty_title = text
             self.combo.setItemText(0, text)
+
+    def set_cycle(self, fraction: float | None) -> None:
+        self.cycle_bar.setVisible(fraction is not None)
+        if fraction is not None:
+            self.cycle_bar.fraction = fraction
+            self.cycle_bar.update()
 
     def set_service(self, widget: QWidget | None) -> None:
         if self._service is not None:

@@ -245,3 +245,23 @@ def test_slider_handles_not_clipped_in_window(qtbot, tmp_path):
         w.close()
         app.setStyleSheet(old_style)
         app.setPalette(old_pal)
+
+
+def test_sensitivity_label_not_cut_when_room(qtbot, tmp_path):
+    """Подпись сжимается только при нехватке места (Windows); в окне 1640×850 на Mac — целиком."""
+    from PySide6.QtWidgets import QLabel
+
+    app = QApplication.instance()
+    old_style, old_pal = app.styleSheet(), app.palette()
+    apply_dark_theme(app)
+    w = make(qtbot, tmp_path)
+    try:
+        w.resize(1640, 850)
+        qtbot.wait(300)
+        lab = next(x for x in w.controls.findChildren(QLabel) if x.text() == "Чувствительность")
+        if sys.platform == "darwin":
+            assert lab.width() >= lab.sizeHint().width()
+    finally:
+        w.close()
+        app.setStyleSheet(old_style)
+        app.setPalette(old_pal)

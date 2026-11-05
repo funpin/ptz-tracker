@@ -209,3 +209,34 @@ def test_rows_equal_with_cameras_below(qtbot, tmp_path):
     top = w.cells[0]
     assert abs(_picture_h(top) - _picture_w(top) * 9 / 16) <= 2
     w.close()
+
+
+def test_free_cell_choice_and_rotation(qtbot, tmp_path, monkeypatch):
+    """Три камеры — одна свободная клетка: в её списке «Сводка», «Положение камер», «По очереди · 30 с»
+    (пользователь 2026-11-05). По очереди — смена раз в 30 с, пока мышь над клеткой — пауза."""
+    w = make(qtbot, tmp_path)
+    w.set_cell_camera(2, "sim3")
+    assert w.service_kind(3) == "summary"
+    datas = [w.cells[3].combo.itemData(i) for i in range(w.cells[3].combo.count())]
+    assert {"svc:summary", "svc:position", "svc:cycle"} <= set(datas)
+    assert not any(str(d).startswith("svc:") for d in
+                   (w.cells[0].combo.itemData(i) for i in range(w.cells[0].combo.count())))
+    w.cells[3].cameraChosen.emit(3, "svc:position")
+    assert w.service_kind(3) == "position" and w.grid.cells[3] is None
+    w.cells[3].cameraChosen.emit(3, "svc:cycle")
+    first = w.service_kind(3)
+    w._cycle_tick(force=True)
+    assert w.service_kind(3) != first and w.service_kind(3) in ("summary", "position")
+    monkeypatch.setattr(w.cells[3], "underMouse", lambda: True)
+    cur = w.service_kind(3)
+    w._cycle_tick(force=True)
+    assert w.service_kind(3) == cur  # мышь над клеткой — смена на паузе
+    w.close()
+
+
+def test_two_free_cells_never_show_same_view(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)  # sim1, sim2; свободны 2 и 3
+    w.cells[3].cameraChosen.emit(3, "svc:summary")
+    kinds = {w.service_kind(2), w.service_kind(3)}
+    assert w.service_kind(3) == "summary" and len(kinds) == 2
+    w.close()

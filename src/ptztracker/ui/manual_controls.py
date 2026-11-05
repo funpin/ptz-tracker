@@ -185,12 +185,13 @@ class ManualControls(QWidget):
         sens_row = QHBoxLayout()
         sens_row.setSpacing(SP[0])
         sens_label = QLabel("Чувствительность")
-        sens_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        # целиком, пока хватает места; сжимается (и не раздвигает панель) только когда не хватает
+        sens_label.setMinimumWidth(1)
         sens_label.setToolTip(self.sens_slider.toolTip())
-        sens_row.addWidget(sens_label, 2)
+        sens_row.addWidget(sens_label)
         sens_row.addSpacing(SP[1])
         sens_row.addWidget(self._caption("Плавно"))
-        sens_row.addWidget(self.sens_slider, 3)
+        sens_row.addWidget(self.sens_slider, 1)
         sens_row.addWidget(self._caption("Резко"))
         self._sens_row = sens_row
 

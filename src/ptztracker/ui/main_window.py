@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QEvent, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QActionGroup, QDesktopServices
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QImage
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -70,6 +70,7 @@ from ptztracker.ui.atem_dialog import AtemDialog
 from ptztracker.ui.camera_cell import CameraCell
 from ptztracker.ui.camera_dialog import CameraDialog, merge_edit
 from ptztracker.ui.camera_menu import CameraMenu
+from ptztracker.ui.camera_strip import CameraStrip, StripItem
 from ptztracker.ui.follow_panel import SIZES, FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge
 from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow
@@ -86,7 +87,7 @@ from ptztracker.ui.state import (
     tracking_view,
     video_pill,
 )
-from ptztracker.ui.theme import FS_CAPTION, SP, C
+from ptztracker.ui.theme import FS_CAPTION, R_BUTTON, SP, C
 from ptztracker.ui.widgets import (
     BrandMark,
     KeyButton,
@@ -118,7 +119,7 @@ KEY_ZOOM_SPEED = 0.5
 SIDE_WIDTH = 372
 _HOTKEYS = [
     ("Пробел", "слежение"), ("1–3", "кадр: пояс, рост, общий"), ("← → ↑ ↓", "поворот"), ("+ −", "зум"), ("Esc", "стоп"),
-    ("F9", "сохранить момент"), ("M", "быстрые настройки (меню поверх видео)"),
+    ("F9", "сохранить момент"), ("M", "быстрые настройки (меню поверх видео)"), ("G", "4 камеры ↔ 1 камера крупно"),
 ]  # F1 («справка») сюда не добавляем: окно F1 показывает её само
 # в строке состояния — только главное; остальное в окне F1
 _PAN_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
@@ -150,6 +151,10 @@ def _clamp1(v: float) -> float:
 
 
 QWIDGETSIZE_MAX = (1 << 24) - 1  # «без предела» по высоте, как в Qt
+CYCLE_S = 30.0  # «По очереди» в свободной клетке: смена вида (пользователь 2026-11-05)
+CYCLE_KINDS = ("summary", "position")
+SERVICE_CHOICES = [("svc:summary", "Сводка"), ("svc:position", "Положение камер"),
+                   ("svc:graphs", "Графики PTZ"), ("svc:cycle", "По очереди · 30 с")]
 SIDE_FIT_RESERVE = 80  # окно 1640×850 на Mac: ~70 px свободно; стик растёт только сверх этого (запас под шрифт Windows)
 
 
@@ -292,6 +297,32 @@ class MainWindow(QMainWindow):
         brand.setStyleSheet(f"color: {C.TEXT}; font-weight: 800; font-size: 14px; letter-spacing: 0.5px;")
         tl.addWidget(brand)
         tl.addStretch(1)
+        # «4 камеры» / «1 камера» (клавиша G, двойной клик по шапке клетки)
+        self.view_grid_btn = QToolButton()
+        self.view_one_btn = QToolButton()
+        seg = QWidget()
+        sl = QHBoxLayout(seg)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(0)
+        for b, text, tip, side in ((self.view_grid_btn, "▦ 4", "Сетка: до 4 камер (G)", "left"),
+                                   (self.view_one_btn, "▢ 1", "Одна камера крупно (G)", "right")):
+            b.setText(text)
+            b.setToolTip(tip)
+            b.setCheckable(True)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(
+                f"QToolButton {{ background: transparent; color: {C.TEXT_DIM}; border: 1px solid {C.LINE};"
+                f" border-top-{side}-radius: {R_BUTTON}px; border-bottom-{side}-radius: {R_BUTTON}px;"
+                f" padding: 2px {SP[1]}px; font-size: {FS_CAPTION}px; font-weight: 600; }}"
+                f"QToolButton:hover {{ background: {C.RAISED}; }}"
+                f"QToolButton:checked {{ background: {C.TEXT}; color: {C.BG}; border-color: {C.TEXT}; }}")
+            sl.addWidget(b)
+        self.view_grid_btn.setChecked(True)
+        self.view_grid_btn.clicked.connect(lambda: self.set_single_view(False))
+        self.view_one_btn.clicked.connect(lambda: self.set_single_view(True))
+        tl.addWidget(seg)
+        tl.addSpacing(SP[1])
         for w in (self.atem_pill, self.top_pads, self.blackbox_btn, self.agent_badge):
             tl.addWidget(w)
         tl.addWidget(_vline())
@@ -380,6 +411,7 @@ class MainWindow(QMainWindow):
             c.skeleton_check.toggled.connect(lambda on, cell=c: self._on_skeleton(on, cell))
             c.preview.targetClicked.connect(lambda _id: self._update_status())
             c.powerClicked.connect(self._cell_power)
+            c.viewToggleRequested.connect(self._toggle_view_at)
         # пресеты — выдвижная панель под сеткой камер (кнопка «Пресеты» внизу или P); правая колонка не двигается
         self.thumbs = PresetThumbs(store.path.parent / "presets")
         self._thumb_cache: dict[str, dict] = {}
@@ -398,6 +430,15 @@ class MainWindow(QMainWindow):
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(SP[1])
         ll.addWidget(grid_host, 1)
+        # режим «1 камера»: остальные камеры — полоской под большой (клик — сделать большой)
+        self.single_view = False
+        self._service_pref: dict[int, str] = {}  # клетка → что в ней показывать (выбор оператора в её списке)
+        self._cycle_kind = CYCLE_KINDS[0]
+        self._cycle_started = time.monotonic()
+        self.strip = CameraStrip()
+        self.strip.hide()
+        self.strip.slotClicked.connect(self.select_slot)
+        ll.addWidget(self.strip)
         ll.addWidget(self.presets_drawer)
         central = QWidget()
         hl = QHBoxLayout(central)
@@ -699,7 +740,9 @@ class MainWindow(QMainWindow):
                 for c in self._cameras() if self.grid.slot_of(c.id) in (None, i)
             ]
             cur = self.grid.cells[i]
-            cell.set_choices(items, cur.cfg.id if cur else None)
+            # пустая клетка (не приветствие): ещё и что в ней показывать
+            free = cur is None and any(c is not None for c in self.grid.cells)
+            cell.set_choices(items, cur.cfg.id if cur else None, SERVICE_CHOICES if free else [])
 
     def _initial_grid(self) -> None:
         by_id = {c.id: c for c in self._cameras()}
@@ -726,6 +769,61 @@ class MainWindow(QMainWindow):
         self._refresh_cell_choices()
         self._refresh_service_cells()
         self._update_selected_status()
+        self._auto_view()
+
+    def _auto_view(self) -> None:
+        """Одна камера — сразу крупно: сетка с тремя служебными клетками ради неё не нужна."""
+        if sum(c is not None for c in self.grid.cells) == 1:
+            sel = next(i for i, c in enumerate(self.grid.cells) if c is not None)
+            if self.grid.selected != sel:
+                self.select_slot(sel)
+            self.set_single_view(True)
+
+    def set_single_view(self, on: bool) -> None:
+        self.single_view = on
+        self.view_one_btn.setChecked(on)
+        self.view_grid_btn.setChecked(not on)
+        self._apply_view()
+
+    def _toggle_view_at(self, slot: int) -> None:
+        if self.grid.cells[slot] is not None and slot != self.grid.selected:
+            self.select_slot(slot)
+            self.set_single_view(True)
+            return
+        self.set_single_view(not self.single_view)
+
+    def _apply_view(self) -> None:
+        """«1 камера»: выбранная клетка на всю сетку, остальные спрятаны (их сессии работают); «4» — как было."""
+        if not hasattr(self, "strip"):
+            return
+        gl = self.grid_host.layout()
+        sel = self.grid.selected
+        for i, c in enumerate(self.cells):
+            gl.removeWidget(c)
+            if self.single_view and i == sel:
+                gl.addWidget(c, 0, 0, 2, 2)
+            elif not self.single_view:
+                gl.addWidget(c, i // 2, i % 2)
+            c.setVisible(not self.single_view or i == sel)
+        self.strip.setVisible(self.single_view)
+        self._refresh_strip()
+        QTimer.singleShot(0, self._fit_rows)
+
+    def _refresh_strip(self) -> None:
+        if not self.single_view:
+            return
+        items = []
+        for i, c in enumerate(self.grid.cells):
+            if c is None or i == self.grid.selected:
+                continue
+            fr = c.session.frames.latest()
+            img = None
+            if fr is not None:
+                h, w = fr.image.shape[:2]
+                img = QImage(fr.image.data, w, h, fr.image.strides[0], QImage.Format_BGR888).scaledToHeight(
+                    72, Qt.SmoothTransformation)
+            items.append(StripItem(i, c.cfg.name, self._tally_per[i][1], img))
+        self.strip.set_items(items)
 
     def select_slot(self, slot: int) -> None:
         """Выбрать клетку: клавиатура, мышь, геймпад и правая панель теперь относятся к ней."""
@@ -739,6 +837,7 @@ class MainWindow(QMainWindow):
             old.mixer.release("mouse")
         self.grid.selected = slot
         self._select_effects()
+        self._apply_view()
         self._reallocate_analysis()
         self._save_grid()
         self._update_selected_status()
@@ -827,7 +926,13 @@ class MainWindow(QMainWindow):
         return got[1]
 
     def _on_cell_chosen(self, slot: int, camera_id) -> None:
-        """Оператор выбрал камеру в списке клетки."""
+        """Оператор выбрал камеру в списке клетки — или, в пустой клетке, что в ней показывать."""
+        if isinstance(camera_id, str) and camera_id.startswith("svc:"):
+            self._service_pref[slot] = camera_id[4:]
+            self._cycle_started = time.monotonic()
+            self._refresh_service_cells()
+            self._refresh_cell_choices()
+            return
         if slot != self.grid.selected:
             self.select_slot(slot)
         try:
@@ -1574,12 +1679,48 @@ class MainWindow(QMainWindow):
     # --- статус -------------------------------------------------------
 
     def service_kind(self, slot: int) -> str | None:
-        """Какая служебная клетка стоит в пустой клетке `slot` (спека «Пустые клетки»: первая пустая — сводка,
+        """Какая служебная клетка стоит в пустой клетке `slot` (без выбора оператора: первая пустая — сводка,
         вторая — положение камер, третья — графики). Без камер — только приветствие."""
+        return next((k for k, s in self._service_slot.items() if s == slot), None)
+
+    def _service_plan(self) -> dict[str, int | None]:
+        """Где какая служебная клетка: сначала выбор оператора в клетке (и «По очереди»), остальное — по порядку.
+        Один вид — в одной клетке."""
         empty = [i for i, c in enumerate(self.grid.cells) if c is None]
-        if len(empty) == GRID_SLOTS:
-            return None
-        return KINDS[empty.index(slot)] if slot in empty and empty.index(slot) < len(KINDS) else None
+        for slot in [s for s in self._service_pref if s not in empty]:
+            del self._service_pref[slot]  # в клетку поставили камеру — её выбор забыт
+        plan: dict[int, str] = {}
+        if len(empty) < GRID_SLOTS:
+            for slot in empty:
+                p = self._service_pref.get(slot)
+                if p == "cycle":
+                    p = next((k for k in (self._cycle_kind, *CYCLE_KINDS) if k not in plan.values()), None)
+                if p in KINDS and p not in plan.values():
+                    plan[slot] = p
+            for slot in empty:
+                if slot not in plan:
+                    k = next((k for k in KINDS if k not in plan.values()), None)
+                    if k is not None:
+                        plan[slot] = k
+        return {k: next((s for s, kk in plan.items() if kk == k), None) for k in KINDS}
+
+    def _cycle_tick(self, force: bool = False) -> None:
+        """«По очереди»: раз в CYCLE_S сменить вид; пока мышь над клеткой — пауза (не уезжает из-под глаз)."""
+        slot = next((s for s, p in self._service_pref.items() if p == "cycle"), None)
+        for i, cell in enumerate(self.cells):
+            if i != slot:
+                cell.set_cycle(None)
+        if slot is None:
+            return
+        now = time.monotonic()
+        if self.cells[slot].underMouse():
+            self._cycle_started = now
+        elif force or now - self._cycle_started >= CYCLE_S:
+            i = CYCLE_KINDS.index(self._cycle_kind) if self._cycle_kind in CYCLE_KINDS else -1
+            self._cycle_kind = CYCLE_KINDS[(i + 1) % len(CYCLE_KINDS)]
+            self._cycle_started = now
+            self._refresh_service_cells()
+        self.cells[slot].set_cycle(min(1.0, (now - self._cycle_started) / CYCLE_S))
 
     def _service_pads(self, slot: int) -> list[int]:
         return self.pad_router.pads_on(slot)
@@ -1587,7 +1728,7 @@ class MainWindow(QMainWindow):
     def _refresh_service_cells(self) -> None:
         empty = [i for i, c in enumerate(self.grid.cells) if c is None]
         no_cams = len(empty) == GRID_SLOTS
-        want = {k: (empty[n] if n < len(empty) and not no_cams else None) for n, k in enumerate(KINDS)}
+        want = self._service_plan()
         if self._welcome_on and not no_cams:
             self.cells[0].set_service(None)
             self._welcome_on = False
@@ -1650,6 +1791,8 @@ class MainWindow(QMainWindow):
         self._poll_update_check()
         self._refresh_manual_speed()
         self._refresh_service_cells()
+        self._refresh_strip()  # снимки и эфир в полоске «1 камера» — раз в тик статуса
+        self._cycle_tick()
         self._poll_positions()
         for i, c in enumerate(self.grid.cells):
             cell = self.cells[i]
@@ -1792,7 +1935,7 @@ class MainWindow(QMainWindow):
         gl = self.grid_host.layout()
         top = self.cells[0]
         service_below = self.grid.cells[2] is None and self.grid.cells[3] is None
-        if not service_below or self.grid.cells[0] is None:
+        if not service_below or self.grid.cells[0] is None or self.single_view:
             gl.setRowStretch(0, 1)
             for c in self.cells[:2]:
                 c.setMaximumHeight(QWIDGETSIZE_MAX)
@@ -1905,6 +2048,10 @@ class MainWindow(QMainWindow):
             if key == Qt.Key_P:
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self.presets_btn.toggle()
+                return True
+            if key == Qt.Key_G:
+                if et == QEvent.KeyPress and not event.isAutoRepeat():
+                    self.set_single_view(not self.single_view)
                 return True
             if key == Qt.Key_F9:  # сохранить момент: не ручное управление, слежение не трогаем
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
