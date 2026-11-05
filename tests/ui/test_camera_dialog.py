@@ -156,7 +156,7 @@ def test_info_tab_shows_everything_read_only(qtbot):
     d = CameraDialog(_full_cfg())
     qtbot.addWidget(d)
     d.show()
-    assert d.tabs.isTabVisible(1)
+    assert not d.calib_card.isHidden()
     t = _info(d)
     assert t["model"] == "AW-HE40 · прошивка 1.54"
     assert "2026" in t["calib_date"] and "05.11.2026" in t["calib_date"]
@@ -197,10 +197,10 @@ def test_info_tab_survives_broken_calibration(qtbot):
 def test_info_tab_hidden_for_new_and_sim(qtbot):
     d = CameraDialog()
     qtbot.addWidget(d)
-    assert d.tabs.count() == 1 or not d.tabs.isTabVisible(1)
+    assert d.calib_card.isHidden()
     s = CameraDialog(CameraConfig(id="s", name="Сим", ip="sim", kind="sim"))
     qtbot.addWidget(s)
-    assert s.tabs.count() == 1 or not s.tabs.isTabVisible(1)
+    assert s.calib_card.isHidden()
 
 
 def test_reset_calibration_asks_and_clears_only_calibration_and_speed(qtbot, monkeypatch):
@@ -282,3 +282,54 @@ def test_merge_edit_reset_forces_none_even_if_snapshot_had_no_speed_scale(qtbot,
     latest = dataclasses.replace(cfg, speed_scale={"pan": 1.3})  # слежение успело записать
     m = merge_edit(latest, d.snapshot, d.result_config(), d.reset_calibration)
     assert (m.calibration, m.speed_scale) == (None, None)
+
+
+# --- вид по макету docs/design/mockups/menu-camera-diag.html ------------------------
+
+
+def test_buttons_in_russian_and_primary(qtbot):
+    d = CameraDialog()
+    qtbot.addWidget(d)
+    assert d.ok_button.text() == "Добавить камеру" and d.ok_button.property("variant") == "primary"
+    e = CameraDialog(CameraConfig(id="c", name="А", ip="10.0.0.7"))
+    qtbot.addWidget(e)
+    assert e.ok_button.text() == "Сохранить"
+
+
+def test_kind_buttons_drive_kind(qtbot):
+    d = CameraDialog()
+    qtbot.addWidget(d)
+    d.show()
+    assert d.kind_buttons["panasonic"].isChecked()
+    d.kind_buttons["sim"].click()
+    assert d.kind_combo.currentData() == "sim" and d.kind_buttons["sim"].isChecked()
+    assert not d.conn_title.isVisible() and not d.more_button.isVisible()
+
+
+def test_advanced_hidden_until_opened(qtbot):
+    d = CameraDialog()
+    qtbot.addWidget(d)
+    d.show()
+    assert not d.rtsp_edit.isVisible() and not d.interval_spin.isVisible()
+    d.more_button.click()
+    assert d.rtsp_edit.isVisible() and d.interval_spin.isVisible()
+
+
+def test_probe_answer_coloured(qtbot):
+    from ptztracker.ui.theme import C
+
+    d = CameraDialog()
+    qtbot.addWidget(d)
+    d._on_probe_done("✔ На связи: AW-HE42")
+    assert C.LIME in d.test_result.styleSheet()
+    d._on_probe_done("✖ Нет связи: timeout")
+    assert C.FAULT in d.test_result.styleSheet()
+
+
+def test_password_can_be_shown(qtbot):
+    from PySide6.QtWidgets import QLineEdit
+
+    d = CameraDialog()
+    qtbot.addWidget(d)
+    d.show_pass.click()
+    assert d.pass_edit.echoMode() == QLineEdit.Normal

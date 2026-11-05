@@ -24,7 +24,7 @@ def test_no_service_menu(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     assert [a for a in w.menuBar().actions() if a.isVisible()] == []
     texts = [a.text() for a in w.main_menu_btn.menu().actions()]
-    assert any("ATEM" in t for t in texts) and any("Агент" in t for t in texts) and "Камеры" in texts
+    assert any("ATEM" in t for t in texts) and any("Агент" in t for t in texts) and "Камеры" in texts  # «Камеры» — подпись группы
     assert not any("Калибровка" in t or "Диагностика" in t for t in texts)  # про одну камеру — в ⋯ клетки
     cell = [a.text() for a in w.cells[0].more_btn.menu().actions()]
     assert any("Калибровка" in t for t in cell) and any("Диагностика" in t for t in cell)

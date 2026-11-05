@@ -60,6 +60,7 @@ class DiagContext:
     notify_port: int = 31004
     notify_wait_s: float = 15.0
     source_factory: Callable[[str], FrameSource] | None = None
+    on_result: Callable[["CheckResult"], None] | None = None  # итог каждой проверки — окну для списка
 
 
 def mask(text: str, ctx: DiagContext) -> str:
@@ -486,6 +487,8 @@ ALL_CHECKS = (
     ("notifications", check_notifications, True),
 )
 """(id, функция, нужна ли HTTP-связь с камерой)"""
+
+MOTION_CHECKS = ("command_latency", "speed_probe", "zoom_probe")  # без «Разрешить движение» пропускаются
 
 TITLES = {
     "reachability": "Связь с камерой",

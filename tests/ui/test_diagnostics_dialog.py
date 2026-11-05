@@ -24,3 +24,4 @@ def test_dialog_runs_and_shows_path(qtbot, tmp_path, monkeypatch):
         assert "ptz-diag-" in d.result_label.text()
     finally:
         srv.stop()
+

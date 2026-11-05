@@ -76,6 +76,7 @@ from ptztracker.ui.follow_panel import SIZES, FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge
 from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
+from ptztracker.ui.main_menu import MainMenu
 from ptztracker.ui.manual_controls import STICK_MIN, ManualControls
 from ptztracker.ui.presets_drawer import DrawerRow, PresetsDrawer
 from ptztracker.ui.service_cell import KINDS, TITLES, ServiceCell, ServiceRow, WelcomeView
@@ -477,9 +478,9 @@ class MainWindow(QMainWindow):
         self.show_folder_btn.hide()
         sb.addWidget(self.show_folder_btn)
 
-        # одно меню ☰ в окне — одинаково на Mac и Windows; меню «Сервис» в строке macOS нет
+        # одно меню ☰ в окне — одинаково на Mac и Windows; меню «Сервис» в строке macOS нет.
+        # Строки ☰ — заместители этих действий (ui/main_menu.py): группы, значки, состояние справа, без подменю
         menu = self.main_menu_btn.menu()
-        menu.addMenu(self.cameras_menu)
         # про одну камеру — в ⋯ её клетки (спека «Меню ☰ (только общее)»); действия общие для всех клеток
         self.calib_action = QAction("Калибровка камеры…", self)
         self.calib_action.triggered.connect(self._run_calibration)
@@ -489,12 +490,15 @@ class MainWindow(QMainWindow):
         self.power_action.triggered.connect(self._power_menu)
         self.osd_action = QAction("Быстрые настройки\tM", self)
         self.osd_action.triggered.connect(self._open_osd_menu)
-        self.atem_action = menu.addAction("ATEM…", self._edit_atem)
-        self.agent_action = menu.addAction("Агент…", self._show_agent_window)
-        self.pads_action = menu.addAction("Геймпады…", self.show_gamepads)
-        self.sim_action = menu.addAction("Симулятор (для тренировки)", self._open_sim_camera)
-        menu.addSeparator()
-        self.save_moment_action = QAction("Сохранить момент (F9)", self)  # не ручное управление: слежение не трогаем
+        self.atem_action = QAction("ATEM…", self)
+        self.atem_action.triggered.connect(self._edit_atem)
+        self.agent_action = QAction("Агент…", self)
+        self.agent_action.triggered.connect(self._show_agent_window)
+        self.pads_action = QAction("Геймпады…", self)
+        self.pads_action.triggered.connect(self.show_gamepads)
+        self.sim_action = QAction("Симулятор для тренировки", self)
+        self.sim_action.triggered.connect(self._open_sim_camera)
+        self.save_moment_action = QAction("Сохранить последние 5 минут\tF9", self)  # не ручное управление: слежение не трогаем
         self.save_moment_action.triggered.connect(lambda: self.save_moment())
         self.open_replay_action = QAction("Открыть журнал…", self)
         self.open_replay_action.triggered.connect(self._choose_replay)
@@ -504,32 +508,45 @@ class MainWindow(QMainWindow):
         for act in (self.save_moment_action, self.open_replay_action, self.rec_settings_action):
             box_menu.addAction(act)
         self.blackbox_btn.setMenu(box_menu)
-        box_sub = menu.addMenu("Журнал для разбора")
-        for act in (self.save_moment_action, self.open_replay_action, self.rec_settings_action):
-            box_sub.addAction(act)
-        menu.addSeparator()
         self.check_updates_action = QAction("Проверять обновления", self)
         self.check_updates_action.setCheckable(True)
         self.check_updates_action.setChecked(self.cfg.check_updates)
-        menu.addAction(self.check_updates_action)
         self.check_updates_action.toggled.connect(self._on_check_updates_toggled)
-        menu.addSeparator()
-        analyze_menu = menu.addMenu("Анализировать камер одновременно")
+        self.analyze_action = QAction("Камер с анализом", self)
         self.max_analyzed_group = QActionGroup(self)
         self.max_analyzed_group.setExclusive(True)
         self.max_analyzed_actions: list[QAction] = []
         for n in range(1, GRID_SLOTS + 1):
-            act = analyze_menu.addAction(str(n))
+            act = QAction(str(n), self)
             act.setCheckable(True)
             act.setData(n)
             act.setChecked(n == self.cfg.max_analyzed)
             self.max_analyzed_group.addAction(act)
             self.max_analyzed_actions.append(act)
         self.max_analyzed_group.triggered.connect(lambda act: self._on_max_analyzed(act.data()))
-        self.update_action = menu.addAction("", self._open_release_page)
+        self.update_action = QAction("", self)
+        self.update_action.triggered.connect(self._open_release_page)
         self.update_action.setVisible(False)
-        menu.addSeparator()
-        menu.addAction("Справка\tF1", self.show_hotkeys)
+        self.help_action = QAction("Справка и клавиши\tF1", self)
+        self.help_action.triggered.connect(self.show_hotkeys)
+        mm = self.main_menu = MainMenu(menu)
+        mm.add(self.update_action, "refresh")
+        mm.section("Камеры", first=True)
+        mm.add(self.add_action, "plus")
+        mm.add(self.sim_action, "video")
+        mm.add(self.del_action, "trash")
+        mm.section("Подключения")
+        mm.add(self.atem_action, "atem", self._atem_menu_status)
+        mm.add(self.pads_action, "gamepad", self._pads_menu_status)
+        mm.add(self.agent_action, "robot", self._agent_menu_status)
+        mm.section("Журнал для разбора")
+        mm.add(self.save_moment_action, "record")
+        mm.add(self.open_replay_action, "folder")
+        mm.add(self.rec_settings_action, "adjustments")
+        mm.section("Программа")
+        mm.add(self.analyze_action, "chip", choices=self.max_analyzed_actions)
+        mm.add(self.check_updates_action, "refresh")
+        mm.add(self.help_action, "help")
         for i, c in enumerate(self.cells):
             self._build_cell_menu(i, c.more_btn.menu(), stream_menu)
         self._saveFinished.connect(self._on_save_finished)
@@ -1403,7 +1420,7 @@ class MainWindow(QMainWindow):
         self.track_btn.set_cams(cams)
         sel = self.selected_cell
         if sel is not None and sel.session.analyzer is None and self.track_btn.kind() != "none":
-            self.track_btn.set_view("none", "", "У этой камеры нет анализа — ☰ → Анализировать камер одновременно",
+            self.track_btn.set_view("none", "", "У этой камеры нет анализа — ☰ → Камер с анализом",
                                     False)
             self._view_shown = None  # анализ появится — вид вернётся
 
@@ -1417,6 +1434,20 @@ class MainWindow(QMainWindow):
             self.atem.start()
         self._tally_shown = None
         self._sync_tally()
+
+    def _atem_menu_status(self) -> tuple[str, str]:
+        """Справа от «ATEM…» в ☰: не настроен / на связи · адрес / нет связи."""
+        if not self.cfg.atem_ip:
+            return ("не настроен", "off")
+        snap = self.atem.snapshot() if self.atem else None
+        return (f"на связи · {self.cfg.atem_ip}", "ok") if snap and snap.online else ("нет связи", "fault")
+
+    def _pads_menu_status(self) -> tuple[str, str]:
+        n = sum(1 for b in self.pads.values() if b.connected)
+        return (str(n), "neutral") if n else ("нет", "off")
+
+    def _agent_menu_status(self) -> tuple[str, str]:
+        return ("разрешён", "ok") if self.agent_badge.isVisibleTo(self) else ("выключен", "off")
 
     def _edit_atem(self) -> None:
         d = AtemDialog(self.cfg.atem_ip, self)
@@ -1611,7 +1642,7 @@ class MainWindow(QMainWindow):
         # на время диагностики программа не управляет камерой
         self._open_cell(slot, None)
         password = get_password(cam.id) if cam.username else None
-        dlg = DiagnosticsDialog(cam.ip, cam.username, password, parent=self)
+        dlg = DiagnosticsDialog(cam.ip, cam.username, password, parent=self, name=cam.name)
         dlg.setWindowTitle(f"{dlg.windowTitle()} — {cam.name}")
         dlg.exec()
         if self.grid.cells[slot] is None and self.grid.slot_of(cam.id) is None:

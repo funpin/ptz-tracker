@@ -10,15 +10,14 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
     QSpinBox,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +27,7 @@ from ptztracker.camera.protocol import Q_MODEL, CameraError, parse_model
 from ptztracker.config import CameraConfig, is_valid_ip
 from ptztracker.control.camera_model import zoom_ln
 from ptztracker.tally import MAX_ATEM_INPUT, atem_input_of
+from ptztracker.ui.theme import FS_CAPTION, R_PANEL, SP, C
 
 _SIM_NAME = "Тренировка"  # имя, которое диалог подставляет симулятору
 
@@ -123,6 +123,25 @@ def merge_edit(latest: CameraConfig, snapshot: CameraConfig, result: CameraConfi
     return dataclasses.replace(latest, **changes)
 
 
+LABEL_W = 120
+
+
+def _form(parent=None) -> QFormLayout:
+    f = QFormLayout(parent)
+    f.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    f.setHorizontalSpacing(SP[2])
+    f.setVerticalSpacing(SP[1])
+    f.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+    return f
+
+
+def _section(title: str) -> QLabel:
+    lab = QLabel(title.upper())
+    lab.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: 11px; font-weight: 600; letter-spacing: 1px;"
+                      " margin-top: 4px;")
+    return lab
+
+
 class _Signals(QObject):
     done = Signal(str)
 
@@ -148,7 +167,8 @@ class _ProbeTask(QRunnable):
 
 
 class CameraDialog(QDialog):
-    """Добавление/изменение камеры: тип, имя, IP, логин/пароль, RTSP, интервал команд.
+    """Добавление/изменение камеры: тип, имя, подключение, эфир, «Дополнительно» (RTSP, интервал), карточка
+    калибровки — одна страница по макету docs/design/mockups/menu-camera-diag.html.
     У симулятора (виртуальной камеры для тренировки) IP, логин, RTSP и связь не нужны."""
 
     def __init__(self, cfg: CameraConfig | None = None, password: str | None = None, parent=None):
@@ -180,53 +200,111 @@ class CameraDialog(QDialog):
         self.atem_spin.setSpecialValueText("нет")
         self.atem_spin.setValue(atem_input_of(cfg) if cfg else 0)
 
-        self.tracking_check = QCheckBox("Слежение доступно (нейросеть на этой камере)")
+        self.tracking_check = QCheckBox("нейросеть ведёт людей в этой камере")
         self.tracking_check.setChecked(cfg.tracking if cfg else True)
 
-        form = self._form = QFormLayout()
-        form.addRow("Тип камеры", self.kind_combo)
-        form.addRow("Название", self.name_edit)
-        form.addRow("IP-адрес", self.ip_edit)
-        form.addRow("Логин", self.user_edit)
-        form.addRow("Пароль", self.pass_edit)
-        form.addRow("RTSP-адрес (необязательно)", self.rtsp_edit)
-        form.addRow("Мин. интервал команд", self.interval_spin)
-        form.addRow("Вход ATEM", self.atem_spin)
-        form.addRow("", self.tracking_check)
+        # тип — две кнопки-переключателя; список kind_combo остаётся моделью (его читают окно и тесты)
+        self.kind_combo.setParent(self)
+        self.kind_combo.hide()
+        self.kind_buttons: dict[str, QPushButton] = {}
+        kind_row = QHBoxLayout()
+        kind_row.setSpacing(0)
+        for i in range(self.kind_combo.count()):
+            key = self.kind_combo.itemData(i)
+            b = QPushButton(self.kind_combo.itemText(i))
+            b.setProperty("variant", "seg")
+            b.setCheckable(True)
+            b.setAutoDefault(False)
+            b.setEnabled(self.kind_combo.isEnabled())
+            b.clicked.connect(lambda _=False, k=key: self.kind_combo.setCurrentIndex(self.kind_combo.findData(k)))
+            self.kind_buttons[key] = b
+            kind_row.addWidget(b)
+        kind_row.addStretch(1)
 
         self.test_button = QPushButton("Проверить связь")
+        self.test_button.setAutoDefault(False)
         self.test_result = QLabel("")
         self.test_result.setWordWrap(True)
-        test_row = QHBoxLayout()
-        test_row.addWidget(self.test_button)
-        test_row.addWidget(self.test_result, 1)
+        self.show_pass = QPushButton("показать")
+        self.show_pass.setProperty("variant", "ghost")
+        self.show_pass.setCheckable(True)
+        self.show_pass.setAutoDefault(False)
+        self.show_pass.toggled.connect(
+            lambda on: (self.pass_edit.setEchoMode(QLineEdit.Normal if on else QLineEdit.Password),
+                        self.show_pass.setText("скрыть" if on else "показать")))
+        ip_row = QHBoxLayout()
+        ip_row.setSpacing(SP[1])
+        ip_row.addWidget(self.ip_edit, 1)
+        ip_row.addWidget(self.test_button)
+        pass_row = QHBoxLayout()
+        pass_row.setSpacing(SP[1])
+        pass_row.addWidget(self.pass_edit, 1)
+        pass_row.addWidget(self.show_pass)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.ok_button = buttons.button(QDialogButtonBox.Ok)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        top = self._form = _form()
+        top.addRow("Тип", kind_row)
+        top.addRow("Название", self.name_edit)
+        self.conn_title = _section("Подключение")
+        conn = self._conn_form = _form()
+        conn.addRow("IP-адрес", ip_row)
+        conn.addRow("", self.test_result)
+        conn.addRow("Логин", self.user_edit)
+        conn.addRow("Пароль", pass_row)
+        self.air_title = _section("Эфир")
+        air = self._air_form = _form()
+        air.addRow("Вход ATEM", self.atem_spin)
+        air.addRow("Слежение", self.tracking_check)
+        self.atem_spin.setMaximumWidth(120)
+        self.interval_spin.setMaximumWidth(120)
+        # редкое — под «Дополнительно»: менять, только если просит разработчик
+        self.more_button = QPushButton("▸ Дополнительно — RTSP и интервал команд")
+        self.more_button.setProperty("variant", "ghost")
+        self.more_button.setCheckable(True)
+        self.more_button.setAutoDefault(False)
+        self.more_box = QWidget()
+        adv = _form(self.more_box)
+        adv.setContentsMargins(0, 0, 0, 0)
+        adv.addRow("RTSP-адрес", self.rtsp_edit)
+        adv.addRow("Интервал команд", self.interval_spin)
+        self.more_box.hide()
+        self.more_button.toggled.connect(self._toggle_more)
 
-        settings = QWidget()
-        sl = QVBoxLayout(settings)
-        sl.addLayout(form)
-        sl.addLayout(test_row)
-        sl.addStretch(1)
-
-        # «Сведения»: только показ (модель и прошивку находит сама программа); у новой камеры и симулятора их нет
+        # «Отмена» слева от главной белой кнопки — одинаково на Mac и Windows
+        self.ok_button = QPushButton("Сохранить" if cfg else "Добавить камеру")
+        self.ok_button.setProperty("variant", "primary")
+        self.ok_button.setDefault(True)
+        cancel = QPushButton("Отмена")
+        cancel.setAutoDefault(False)
+        self.ok_button.clicked.connect(self.accept)
+        cancel.clicked.connect(self.reject)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(SP[2])
+        buttons.addStretch(1)
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.ok_button)
+        # «Сведения» о калибровке — карточкой в том же окне; у новой камеры и симулятора её нет
         self._has_info = cfg is not None and cfg.kind != "sim"
-        self.tabs = QTabWidget()
-        self.tabs.addTab(settings, "Настройки")
-        self.tabs.addTab(self._build_info(), "Сведения")
-        self.tabs.setTabVisible(1, self._has_info)
-        self.tabs.tabBar().setVisible(self._has_info)
+        self.calib_card = self._build_info()
+        self.calib_card.setVisible(self._has_info)
         if not self._has_info:
             self.model_label.hide()
         self._refresh_info()
-
         lay = QVBoxLayout(self)
-        lay.addWidget(self.tabs)
-        lay.addWidget(buttons)
-
+        lay.setContentsMargins(SP[3], SP[3], SP[3], SP[3])
+        lay.setSpacing(SP[2])
+        for part in (top, self.conn_title, conn, self.air_title, air):
+            (lay.addLayout if isinstance(part, QFormLayout) else lay.addWidget)(part)
+        lay.addWidget(self.more_button, 0, Qt.AlignLeft)
+        lay.addWidget(self.more_box)
+        lay.addWidget(self.calib_card)
+        lay.addStretch(1)
+        lay.addLayout(buttons)
+        self.setMinimumWidth(540)
+        for f in (top, conn, air, adv):  # подписи всех разделов — одной ширины, поля встают в один столбец
+            for i in range(f.rowCount()):
+                item = f.itemAt(i, QFormLayout.LabelRole)
+                if item is not None and item.widget() is not None:
+                    item.widget().setFixedWidth(LABEL_W)
         self._signals = _Signals()
         self._signals.done.connect(self._on_probe_done)
         self.test_button.clicked.connect(self._probe)
@@ -246,26 +324,53 @@ class CameraDialog(QDialog):
         return self._cfg
 
     def _build_info(self) -> QWidget:
-        page = QWidget()
-        form = QFormLayout(page)
+        card = QFrame()
+        card.setObjectName("calibCard")
+        card.setStyleSheet(f"QFrame#calibCard {{ background: {C.SURFACE}; border: 1px solid {C.LINE};"
+                           f" border-radius: {R_PANEL}px; }}")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(0, SP[1], 0, SP[1])
+        lay.setSpacing(0)
+        head = QHBoxLayout()
+        head.setContentsMargins(SP[2], 0, SP[1], SP[0])
+        head.addWidget(_section("Сведения и калибровка"))
+        head.addStretch(1)
+        self.reset_button = QPushButton("Сбросить калибровку…")
+        self.reset_button.setProperty("variant", "ghost")
+        self.reset_button.setAutoDefault(False)
+        self.reset_button.setStyleSheet(f"font-size: {FS_CAPTION}px; color: {C.TEXT_DIM}; min-height: 24px;")
+        self.reset_button.setToolTip("Забыть калибровку и поправку скорости только этой камеры. "
+                                     "Применится после «Сохранить»; слежение вернётся к стандартным настройкам")
+        self.reset_button.clicked.connect(self._on_reset_calibration)
+        head.addWidget(self.reset_button)
+        lay.addLayout(head)
         self.info_values: dict[str, QLabel] = {}
-        for key, title in (
+        for i, (key, title) in enumerate((
             ("model", "Модель камеры"), ("calib_date", "Калибровка сделана"), ("calib_stream", "Поток при калибровке"),
             ("calib_model", "Калибровали на"), ("calib_zoom", "Точки зума"), ("calib_tilt", "Наклон"),
             ("speed_scale", "Поправка скорости"), ("unsupported", "Камера не умеет"),
-        ):
+        )):
+            row = QWidget()
+            row.setStyleSheet(f"background: {'rgba(245,245,242,0.035)' if i % 2 else 'transparent'};")
+            rl = QHBoxLayout(row)
+            rl.setContentsMargins(SP[2], 3, SP[2], 3)
+            name = QLabel(title)
+            name.setFixedWidth(160)
+            name.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
             lab = QLabel()
             lab.setWordWrap(True)
+            lab.setStyleSheet(f"font-size: {FS_CAPTION}px;")
             lab.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            rl.addWidget(name)
+            rl.addWidget(lab, 1)
             self.info_values[key] = lab
-            form.addRow(title, lab)
+            lay.addWidget(row)
         self.model_label = self.info_values["model"]
-        self.reset_button = QPushButton("Сбросить калибровку")
-        self.reset_button.setToolTip("Забыть калибровку и поправку скорости только этой камеры. "
-                                     "Применится после «ОК»; слежение вернётся к стандартным настройкам")
-        self.reset_button.clicked.connect(self._on_reset_calibration)
-        form.addRow(self.reset_button)
-        return page
+        return card
+
+    def _toggle_more(self, on: bool) -> None:
+        self.more_box.setVisible(on)
+        self.more_button.setText(("▾" if on else "▸") + " Дополнительно — RTSP и интервал команд")
 
     def _refresh_info(self) -> None:
         cfg = self._cfg
@@ -293,10 +398,17 @@ class CameraDialog(QDialog):
 
     def _on_kind(self, *_) -> None:
         sim = self._is_sim()
-        for w in (self.ip_edit, self.user_edit, self.pass_edit, self.rtsp_edit, self.interval_spin, self.atem_spin):
-            self._form.setRowVisible(w, not sim)
-        self.test_button.setVisible(not sim)
-        self.test_result.setVisible(not sim)
+        for key, b in self.kind_buttons.items():
+            b.setChecked(key == self.kind_combo.currentData())
+        # у симулятора нет сети и ATEM: остаются тип, название и слежение
+        for w in (self.conn_title, self.air_title):
+            w.setVisible(not sim)
+        for i in range(self._conn_form.rowCount()):
+            self._conn_form.setRowVisible(i, not sim)
+        self._air_form.setRowVisible(self.atem_spin, not sim)
+        self.more_button.setVisible(not sim)
+        if sim:
+            self.more_button.setChecked(False)
         if sim and not self.name_edit.text().strip():
             self.name_edit.setText(_SIM_NAME)
         elif not sim and self.name_edit.text() == _SIM_NAME:
@@ -313,12 +425,16 @@ class CameraDialog(QDialog):
         self.test_button.setEnabled(is_valid_ip(self.ip_edit.text()))
 
     def _probe(self) -> None:
+        self.test_result.setStyleSheet(f"color: {C.TEXT_DIM};")
         self.test_result.setText("Проверяю…")
         QThreadPool.globalInstance().start(
             _ProbeTask(self.ip_edit.text(), self.user_edit.text() or None, self.pass_edit.text() or None, self._signals)
         )
 
     def _on_probe_done(self, msg: str) -> None:
+        # ответ строкой под адресом: лайм — на связи, красный — нет связи или пароль, оранжевый — непонятный ответ
+        color = {"✔": C.LIME, "✖": C.FAULT}.get(msg[:1], C.LOST)
+        self.test_result.setStyleSheet(f"color: {color};")
         self.test_result.setText(msg)
 
     def result_config(self) -> CameraConfig:

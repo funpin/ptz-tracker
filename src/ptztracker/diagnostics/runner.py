@@ -66,6 +66,16 @@ def _report_txt(ctx: DiagContext, results: list[CheckResult], started: datetime)
     return "\n".join(lines) + "\n"
 
 
+def _report(ctx: DiagContext, res: CheckResult) -> None:
+    """Итог проверки — окну; ошибка в окне диагностику не прерывает."""
+    if ctx.on_result is None:
+        return
+    try:
+        ctx.on_result(res)
+    except Exception:
+        log.exception("on_result")
+
+
 def run_diagnostics(ctx: DiagContext) -> Path:
     started = datetime.now()
     ctx.out_dir.mkdir(parents=True, exist_ok=True)
@@ -85,6 +95,7 @@ def run_diagnostics(ctx: DiagContext) -> Path:
         for cid, fn, needs_http in ALL_CHECKS:
             if needs_http and not state.get("reachable"):
                 results.append(CheckResult(cid, TITLES[cid], "skip", "Пропущено: нет HTTP-связи с камерой."))
+                _report(ctx, results[-1])
                 continue
             ctx.progress(f"Проверка: {TITLES[cid]}…")
             t0 = time.monotonic()
@@ -96,6 +107,7 @@ def run_diagnostics(ctx: DiagContext) -> Path:
             res.details["duration_s"] = round(time.monotonic() - t0, 2)
             log.info("%s → %s: %s", cid, res.status, res.summary)
             results.append(res)
+            _report(ctx, res)
     finally:
         if pacer := state.get("pacer"):
             pacer.try_send(P.STOP_PT)

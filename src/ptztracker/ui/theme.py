@@ -82,6 +82,14 @@ QPushButton[variant="ghost"]:hover {{ background: {C.RAISED_HI}; }}
 QPushButton[variant="choice"] {{ min-height: {H_CHOICE}px; }}
 QPushButton[variant="choice"]:checked {{ background: {_rgba(C.TEXT, 0.06)};
     border-color: {C.TEXT}; }}
+QPushButton[variant="primary"] {{ background: {C.TEXT}; color: {C.BG}; border-color: {C.TEXT};
+    font-weight: 600; }}
+QPushButton[variant="primary"]:hover {{ background: {C.TEXT_DIM}; border-color: {C.TEXT_DIM}; }}
+QPushButton[variant="primary"]:disabled {{ background: {C.RAISED}; color: {C.TEXT_FAINT}; border-color: {C.LINE}; }}
+QPushButton[variant="seg"] {{ min-height: 28px; padding: 0 {SP[2]}px; font-size: {FS_TEXT}px; }}
+QPushButton[variant="seg"]:checked {{ background: {C.TEXT}; color: {C.BG}; border-color: {C.TEXT};
+    font-weight: 600; }}
+QPushButton[variant="seg"]:checked:disabled {{ background: {C.TEXT_DIM}; color: {C.BG}; border-color: {C.TEXT_DIM}; }}
 QPushButton[variant="stop"] {{ min-height: {H_STOP}px; color: {C.FAULT};
     border: 1px solid {C.FAULT}; font-weight: 700; }}
 QPushButton[variant="stop"]:hover {{ background: {_rgba(C.FAULT, 0.18)}; }}

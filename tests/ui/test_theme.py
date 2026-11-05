@@ -118,3 +118,10 @@ def test_combobox_is_chip_without_arrow_box():
     arrow = qss.split("QComboBox::down-arrow {", 1)[1].split("}", 1)[0]
     path = arrow.split("url(", 1)[1].split(")", 1)[0]
     assert Path(path).name == "chevron-down.svg" and Path(path).is_file()
+
+
+def test_primary_button_is_white_with_graphite_text():
+    qss = stylesheet()
+    i = qss.index('QPushButton[variant="primary"]')
+    rule = qss[i:qss.index("}", i)]
+    assert C.TEXT in rule and f"color: {C.BG}" in rule
