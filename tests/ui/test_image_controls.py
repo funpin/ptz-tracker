@@ -191,3 +191,20 @@ def test_stick_grows_on_tall_screen(qtbot, tmp_path):
     w.resize(1640, 850)
     qtbot.waitUntil(lambda: w.controls.joystick.width() == 176, timeout=2000)
     w.close()
+
+
+def test_windows_full_hd_maximized_with_presets(qtbot, tmp_path, monkeypatch):
+    """Windows 1920×1080, масштаб 100%, окно развёрнуто (минус «Пуск» и заголовок ≈ 1920×1001):
+    правая колонка без прокрутки с запасом, пресеты делят место с камерами, видео остаётся крупным."""
+    w = make(qtbot, tmp_path)
+    monkeypatch.setattr(w, "isMaximized", lambda: True)
+    w.resize(1920, 1001)
+    w.presets_btn.click()
+    qtbot.wait(500)
+    w.resize(1920, 1001)
+    qtbot.wait(300)
+    assert w.height() == 1001  # развёрнутое окно не растёт
+    assert w.side_scroll.verticalScrollBar().maximum() == 0, _heights(w)
+    assert w.side_scroll.viewport().height() - w.side_scroll.widget().sizeHint().height() >= 40, _heights(w)
+    assert w.cells[0].video_frame.height() >= 300
+    w.close()
