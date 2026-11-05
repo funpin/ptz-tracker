@@ -308,9 +308,14 @@ class MainWindow(QMainWindow):
             kl.addWidget(_keycap_label(key))
             kl.addWidget(self._caption(what))
             kl.addSpacing(SP[1])
+        self.version_label = QLabel(f"v{__version__}")
+        self.version_label.setStyleSheet(f"color: {C.TEXT_FAINT};")
         self.credit_label = QLabel("by funpin.ru & Claude")
+        # отступ справа: в окне со скруглёнными углами подпись не упирается в край
         self.credit_label.setStyleSheet(f"color: {C.TEXT_FAINT};")
+        self.credit_label.setContentsMargins(0, 0, SP[3], 0)
         sb.addPermanentWidget(keys)
+        sb.addPermanentWidget(self.version_label)
         sb.addPermanentWidget(self.credit_label)
         # чёрный ящик: «Показать в папке» после F9 — слева в строке состояния
         self.show_folder_btn = QPushButton("Показать в папке")

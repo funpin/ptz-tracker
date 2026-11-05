@@ -117,3 +117,17 @@ def test_unsupported_features_survive_sync_image(qtbot):
     c.set_unsupported(["gain", "wb", "color_temp"])
     c.sync_image(ImageState(gain=0x20, wb=0, color_temp=10))
     assert c.gain_slider.isHidden() and c.wb_combo.isHidden() and c.ctemp_slider.isHidden()
+
+
+def test_zoom_is_vertical_rocker_right_of_stick(qtbot):
+    # место справа от стика занимает зум, как на пульте PTZ: вверх — ближе
+    c, s = make(qtbot)
+    sl, js = c.zoom_slider, c.joystick
+    assert sl.orientation() == Qt.Vertical
+    jg = js.geometry()
+    sg = sl.geometry()
+    sl_left = sl.mapTo(c, sg.topLeft() - sg.topLeft()).x()
+    js_right = js.mapTo(c, jg.topLeft() - jg.topLeft()).x() + jg.width()
+    assert sl_left > js_right
+    sl.setValue(sl.maximum())
+    assert s.zoom[-1] > 0

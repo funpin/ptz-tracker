@@ -98,6 +98,10 @@ QSlider::sub-page:horizontal {{ background: {C.ACCENT}; border-radius: 3px; }}
 QSlider::handle:horizontal {{ width: 18px; height: 18px; margin: -6px 0;
     border-radius: 9px; background: {C.TEXT}; }}
 QSlider::handle:horizontal:disabled {{ background: {C.TEXT_FAINT}; }}
+QSlider::groove:vertical {{ width: 6px; background: {C.RAISED_HI}; border-radius: 3px; }}
+QSlider::handle:vertical {{ width: 18px; height: 18px; margin: 0 -6px;
+    border-radius: 9px; background: {C.TEXT}; }}
+QSlider::handle:vertical:disabled {{ background: {C.TEXT_FAINT}; }}
 
 QScrollBar:vertical {{ width: 8px; background: transparent; margin: 0; }}
 QScrollBar::handle:vertical {{ background: {C.RAISED_HI}; border-radius: 4px; min-height: 24px; }}
