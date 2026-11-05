@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 160" role="img" aria-labelledby="title desc">
+  <title id="title">PTZ Tracker logo</title>
+  <desc id="desc">PTZ Tracker wordmark with a geometric tracking symbol.</desc>
+  <g transform="translate(16 20)" fill="none" stroke="#17191D" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M31 58V42c0-6.075 4.925-11 11-11h16"/>
+    <path d="M62 89h16c6.075 0 11-4.925 11-11V62"/>
+  </g>
+  <circle cx="76" cy="80" r="10" fill="#B7F34A"/>
+  <path d="M145 30V130" stroke="#777C83" stroke-width="1.5"/>
+  <g fill="#17191D" font-family="Inter, Manrope, Arial, sans-serif">
+    <text x="175" y="77" font-size="48" font-weight="750" letter-spacing="1">PTZ</text>
+    <text x="177" y="116" font-size="29" font-weight="400" letter-spacing="6">TRACKER</text>
+  </g>
+</svg>

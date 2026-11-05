@@ -40,8 +40,8 @@ class _Row(QWidget):
         lay.addWidget(self.value, 1)
 
     def style(self, selected: bool, enabled: bool) -> None:
-        bg = _rgba(C.ACCENT, 0.24) if selected else "transparent"
-        border = C.ACCENT if selected else "transparent"
+        bg = _rgba(C.TEXT, 0.06) if selected else "transparent"
+        border = C.TEXT if selected else "transparent"
         self.setStyleSheet(f"_Row {{ background: {bg}; border: 1px solid {border}; border-radius: {R_BUTTON}px; }}")
         col = C.TEXT if enabled else C.TEXT_FAINT
         self.title.setStyleSheet(f"color: {col};")

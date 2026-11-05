@@ -52,3 +52,15 @@ def test_apply_dark_theme_sets_palette(qapp: QApplication):
         assert app.styleSheet().strip()
     finally:
         app.setStyleSheet("")
+
+
+def test_icon_files_exist_and_square():
+    from pathlib import Path
+
+    from PySide6.QtGui import QImage
+
+    icons = Path(__file__).resolve().parents[2] / "packaging" / "icons"
+    for name in ("ptztracker.ico", "ptztracker.icns", "ptztracker-1024.png"):
+        assert (icons / name).stat().st_size > 1000, name
+    img = QImage(str(icons / "ptztracker-1024.png"))
+    assert img.width() == img.height() == 1024
