@@ -36,6 +36,7 @@ from ptztracker.config import GRID_SLOTS, AppConfig, CameraConfig, ConfigStore, 
 from ptztracker.control.camera_model import DEFAULT_TABLE_ID
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
+from ptztracker.control.manual_curve import DEFAULT_SENS, clamp_sens, shape, tele_scale
 from ptztracker.gamepad.device import GamepadThread, MultiPadThread, SdlBackend, SdlHub
 from ptztracker.gamepad.feedback import RUMBLE_NOWHERE, RUMBLE_PRESET_STORED, RUMBLE_TAKEN, PadStatus
 from ptztracker.gamepad.intents import (
@@ -100,7 +101,8 @@ def sim_cameras() -> list[CameraConfig]:
     return [dataclasses.replace(SIM_CAMERA, id=f"sim{i}", name=f"Симулятор {i}") for i in range(1, GRID_SLOTS + 1)]
 
 
-KEY_PAN_SPEED = 0.4
+KEY_PAN_SPEED = 0.4  # до кривой чувствительности: «Резко» — как в 1.0.1
+ZOOM_POLL_S = 1.0  # «медленнее на крупном плане»: #GZ не чаще раза в секунду на камеру (слежение спрашивает само)
 KEY_ZOOM_SPEED = 0.5
 SIDE_WIDTH = 372
 _HOTKEYS = [
@@ -443,6 +445,9 @@ class MainWindow(QMainWindow):
         self.follow_panel.followRequested.connect(self._on_follow_requested)
         self.follow_panel.calibrateRequested.connect(self._run_calibration)
         self.controls.stopRequested.connect(self.emergency_stop)
+        self.controls.set_sensitivity(self.cfg.stick_sensitivity, self.cfg.slow_on_tele)
+        self.controls.sensitivityChanged.connect(self._on_stick_sensitivity)
+        self.controls.slowTeleChanged.connect(self._on_slow_tele)
         self.follow_panel.compositionChanged.connect(self._on_composition)
         self.follow_panel.effortChanged.connect(self._on_effort)
         self._follow_timer = QTimer(self)
@@ -762,6 +767,7 @@ class MainWindow(QMainWindow):
                 opened = None
             if opened is not None:
                 s = opened.session
+                opened.mixer.pt_scale = lambda s=s: self._manual_pt_scale(s)
                 for p in self.pad_router.pads_on(slot):  # камеру в клетке сменили: новая поедет после центра стика
                     self._pad_hold_on_new(p, opened)
                 cell.preview.set_source(s.frames)
@@ -1343,6 +1349,7 @@ class MainWindow(QMainWindow):
 
     def _update_status(self) -> None:
         self._poll_update_check()
+        self._refresh_manual_speed()
         self._refresh_service_cells()
         self._poll_positions()
         for i, c in enumerate(self.grid.cells):
@@ -1626,14 +1633,62 @@ class MainWindow(QMainWindow):
     def _apply_held(self) -> None:
         """Клавиатура — в смеситель выбранной клетки, геймпад — в смеситель его клетки; сумма источников ±1 по оси."""
         h = self._held
-        kv = (KEY_PAN_SPEED * ((Qt.Key_Right in h) - (Qt.Key_Left in h)),
-              KEY_PAN_SPEED * ((Qt.Key_Up in h) - (Qt.Key_Down in h)),
+        pan = shape(KEY_PAN_SPEED, self.cfg.stick_sensitivity)  # стрелки — через ту же кривую, что мышь
+        kv = (pan * ((Qt.Key_Right in h) - (Qt.Key_Left in h)),
+              pan * ((Qt.Key_Up in h) - (Qt.Key_Down in h)),
               KEY_ZOOM_SPEED * (bool(h & _ZOOM_IN_KEYS) - bool(h & _ZOOM_OUT_KEYS)))
         kc = self.selected_cell
         if kc is not None:
             self._send_velocity(self._source(kc, "keyboard"), kv)
         for n, b in list(self.pads.items()):
             self.pad_velocity(n, *b.velocity())
+
+    # --- чувствительность ручного управления ---------------------------
+
+    def _manual_pt_scale(self, s: CameraSession) -> float:
+        """Множитель ручного поворота камеры: «медленнее на крупном плане» по её зуму; слежение его не видит."""
+        return tele_scale(s.zoom_x) if self.cfg.slow_on_tele else 1.0
+
+    def _on_stick_sensitivity(self, sens: int) -> None:
+        self.cfg.stick_sensitivity = clamp_sens(sens)
+        self._save()
+        if self._held:
+            self._apply_held()
+
+    def _on_slow_tele(self, on: bool) -> None:
+        self.cfg.slow_on_tele = bool(on)
+        self._save()
+        self._refresh_manual_speed()
+
+    def _refresh_manual_speed(self) -> None:
+        """Такт окна: зум камер для «медленнее на крупном плане» и пересчёт скорости, пока стик держат."""
+        for c in self.grid.cells:
+            if c is None:
+                continue
+            if self.cfg.slow_on_tele:
+                c.session.poll_zoom(ZOOM_POLL_S)
+            c.mixer.refresh()
+
+    def pad_sensitivity(self, info: dict | None) -> int:
+        """Чувствительность геймпада по его опознавателю (окно «Геймпады…»); незнакомый — по умолчанию."""
+        pid = (info or {}).get("id")
+        return clamp_sens(self.cfg.pad_sensitivity.get(pid, DEFAULT_SENS)) if pid else DEFAULT_SENS
+
+    def set_pad_sensitivity(self, pad_id: str, sens: int) -> None:
+        """Из окна «Геймпады…»: сохранить и сразу применить к подключённым геймпадам с этим опознавателем."""
+        self.cfg.pad_sensitivity[pad_id] = clamp_sens(sens)
+        self._save()
+        for b in self._bridges:
+            if (b.info or {}).get("id") == pad_id:
+                b.set_sensitivity(self.cfg.pad_sensitivity[pad_id])
+
+    def _remember_pad(self, b: GamepadBridge, info: dict) -> None:
+        pid, name = info.get("id"), info.get("name") or "Геймпад"
+        if pid:
+            b.set_sensitivity(self.pad_sensitivity(info))
+            if self.cfg.pad_names.get(pid) != name:
+                self.cfg.pad_names[pid] = name
+                self._save()
 
     @staticmethod
     def _send_velocity(s, v: tuple[float, float, float]) -> None:
@@ -1780,6 +1835,7 @@ class MainWindow(QMainWindow):
     def _on_pad_connection(self, info, bridge: GamepadBridge | None = None) -> None:
         b = bridge if bridge is not None else self.pad
         if info is not None:
+            self._remember_pad(b, info)
             if b not in self._pad_nums:
                 try:
                     self.pad_connected(bridge=b)

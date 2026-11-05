@@ -172,7 +172,7 @@ def test_keyboard_and_pad_sum_clamped(qtbot, tmp_path):
     qtbot.keyPress(w, Qt.Key_Right)
     assert sent[-1] == (1.0, 0.0)  # 1,0 + 0,4 → не больше 1
     qtbot.keyPress(w, Qt.Key_Up)
-    assert sent[-1] == (1.0, 0.4)
+    assert sent[-1] == (1.0, 0.16)  # стрелки через кривую по умолчанию: 0,4² (control.manual_curve)
     qtbot.keyRelease(w, Qt.Key_Up)
     qtbot.keyRelease(w, Qt.Key_Right)
     w.close()
@@ -421,7 +421,7 @@ def test_no_pygame_window_works(qtbot, tmp_path):
     qtbot.wait(400)
     qtbot.keyRelease(w, Qt.Key_Right)
     qtbot.wait(300)
-    assert sim.pan_deg > 0.5
+    assert sim.pan_deg > 0.2  # стрелки по умолчанию — через кривую чувствительности (~1,3°/с)
     assert pts(sim)[-1] == "#PTS5050"
     w._sync_pad()
     w.emergency_stop()
@@ -493,4 +493,31 @@ def test_connect_does_not_relatch_pad(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)
     assert w.pad_router.slot_of(w._bridge_pad) == 0
     assert w.pad._mapper.gen == 0  # ни одного стопа (latch_stop) с момента подключения
+    w.close()
+
+
+class IdPadBackend(PadBackend):
+    def info(self):
+        return {**super().info(), "id": "SN-1", "has_serial": True}
+
+
+def test_pad_sensitivity_by_id_applied_on_connect_and_live(qtbot, tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cfg.pad_sensitivity = {"SN-1": 100}
+    store.save(cfg)
+    w, b = make(qtbot, tmp_path, backend=IdPadBackend())
+    assert w.pad.sensitivity == 100
+    assert w.cfg.pad_names == {"SN-1": "DualSense"}  # окно «Геймпады…» покажет имя
+    sim = w.session.sim
+    b.pad = stick(0.12 + 0.88 * 0.5)
+    qtbot.waitUntil(lambda: bool(pts(sim)) and pts(sim)[-1] == "#PTS7550", timeout=2000)  # 0,5 — как в 1.0.1
+    b.pad = stick(0.0)
+    qtbot.waitUntil(lambda: pts(sim)[-1] == "#PTS5050", timeout=2000)
+    w.set_pad_sensitivity("SN-1", 50)
+    assert w.pad.sensitivity == 50 and ConfigStore(tmp_path / "c.json").load().pad_sensitivity == {"SN-1": 50}
+    b.pad = stick(0.12 + 0.88 * 0.5)
+    qtbot.waitUntil(lambda: pts(sim)[-1] == "#PTS6350", timeout=2000)  # 0,25
+    b.pad = stick(0.0)
+    qtbot.waitUntil(lambda: pts(sim)[-1] == "#PTS5050", timeout=2000)
     w.close()

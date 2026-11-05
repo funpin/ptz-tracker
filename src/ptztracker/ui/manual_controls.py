@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from ptztracker.camera import protocol as P
 from ptztracker.camera.session import CameraSession, ImageState
+from ptztracker.control.manual_curve import DEFAULT_SENS, SENS_MAX, SENS_MIN, clamp_sens, shape
 from ptztracker.ui.joystick import JoystickWidget
 from ptztracker.ui.theme import FS_CAPTION, H_STOP, SP, C
 from ptztracker.ui.widgets import KeyButton, SectionHeader, keycap_width, paint_keycap
@@ -55,6 +56,8 @@ class ManualControls(QWidget):
     Gain и баланс белого — настройка картинки: слежение не выключают (как ирис)."""
 
     stopRequested = Signal()
+    sensitivityChanged = Signal(int)  # мышь и стрелки: 0 — «Плавно», 100 — «Резко»
+    slowTeleChanged = Signal(bool)  # «Медленнее на крупном плане» (мышь, стрелки и геймпады)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -96,6 +99,35 @@ class ManualControls(QWidget):
         stick_row.addSpacing(SP[3] * 2)
         stick_row.addLayout(zoom_col)
         stick_row.addStretch(1)
+
+        # чувствительность стика под ним: форма кривой «наклон → скорость», полный наклон — полная скорость
+        self.sensitivity = DEFAULT_SENS
+        self.sens_slider = QSlider(Qt.Horizontal)
+        self.sens_slider.setRange(SENS_MIN, SENS_MAX)
+        self.sens_slider.setValue(DEFAULT_SENS)
+        self.sens_slider.setPageStep(10)
+        self.sens_slider.setFocusPolicy(Qt.NoFocus)  # стрелки — камере, не ползунку
+        self.sens_slider.setToolTip(
+            "Чувствительность мыши и стрелок. «Плавно» — мягче у центра, легче сделать маленький поворот;"
+            " «Резко» — как раньше. Полный наклон всегда даёт полную скорость.\n"
+            "У каждого геймпада своя чувствительность: ☰ → «Геймпады…»")
+        self.sens_slider.valueChanged.connect(self._on_sens)
+        self.slow_tele_check = QCheckBox("Медленнее на крупном плане")
+        self.slow_tele_check.setChecked(True)
+        self.slow_tele_check.setFocusPolicy(Qt.NoFocus)
+        self.slow_tele_check.setToolTip(
+            "На крупном плане тот же наклон стика поворачивает камеру медленнее — кадр не улетает."
+            " Мышь, стрелки и геймпады; слежение это не меняет.")
+        self.slow_tele_check.toggled.connect(self.slowTeleChanged)
+        # две строки: в одну с флажком не помещается по ширине панели на Windows (шрифт шире)
+        sens_row = QHBoxLayout()
+        sens_row.setSpacing(SP[0])
+        sens_row.addWidget(QLabel("Чувствительность"))
+        sens_row.addSpacing(SP[1])
+        sens_row.addWidget(self._caption("Плавно"))
+        sens_row.addWidget(self.sens_slider, 1)
+        sens_row.addWidget(self._caption("Резко"))
+        self._sens_row = sens_row
 
         self.stop_btn = KeyButton("СТОП КАМЕРЫ", "Esc", variant="stop")
         self.stop_btn.setFixedHeight(H_STOP)
@@ -182,6 +214,8 @@ class ManualControls(QWidget):
         lay.setSpacing(SP[1])
         lay.addWidget(SectionHeader("Камера", "движение выключает слежение"))
         lay.addLayout(stick_row)
+        lay.addLayout(sens_row)
+        lay.addWidget(self.slow_tele_check)
         lay.addWidget(self.stop_btn)
         lay.addLayout(il)
         lay.addLayout(gl)
@@ -248,9 +282,21 @@ class ManualControls(QWidget):
                 b.setDown(False)
             self._focus(0.0)
 
+    def set_sensitivity(self, sens: int, slow_on_tele: bool) -> None:
+        """Показать сохранённые настройки, не отправляя сигналов."""
+        self.sensitivity = clamp_sens(sens)
+        for wd, val in ((self.sens_slider, self.sensitivity), (self.slow_tele_check, bool(slow_on_tele))):
+            wd.blockSignals(True)
+            (wd.setValue if wd is self.sens_slider else wd.setChecked)(val)
+            wd.blockSignals(False)
+
+    def _on_sens(self, v: int) -> None:
+        self.sensitivity = clamp_sens(v)
+        self.sensitivityChanged.emit(self.sensitivity)
+
     def _on_joystick(self, x: float, y: float) -> None:
         if self._s:
-            self._s.set_pan_tilt_velocity(x, y)
+            self._s.set_pan_tilt_velocity(shape(x, self.sensitivity), shape(y, self.sensitivity))
 
     def _on_zoom(self, v: int) -> None:
         if self._s:

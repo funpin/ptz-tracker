@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 
 def _clamp(v: float) -> float:
@@ -20,6 +24,10 @@ class VelocityMixer:
         self._values: dict[str, tuple[float, float, float, float]] = {}
         self._latched: set[str] = set()
         self._sent: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+        # множитель ручного поворота/наклона («медленнее на крупном плане»); слежение идёт мимо смесителя
+        self.pt_scale: Callable[[], float] = lambda: 1.0
+        self._sent_pt: tuple[float, float] = (0.0, 0.0)
+        self._scale_warned = False
 
     def total(self) -> tuple[float, float, float, float]:
         sums = [0.0, 0.0, 0.0, 0.0]
@@ -57,12 +65,37 @@ class VelocityMixer:
         self._latched.update(n for n, v in self._values.items() if any(v))
         self._values.clear()
         self._sent = (0.0, 0.0, 0.0, 0.0)
+        self._sent_pt = (0.0, 0.0)
+
+    def _scaled_pt(self, pan: float, tilt: float) -> tuple[float, float]:
+        if not (pan or tilt):
+            return (0.0, 0.0)
+        try:
+            k = max(0.0, min(1.0, float(self.pt_scale())))
+        except Exception as e:
+            if not self._scale_warned:
+                self._scale_warned = True
+                log.debug("Множитель ручного поворота не посчитан: %s: %s", type(e).__name__, e)
+            k = 1.0
+        return (round(pan * k, 3) + 0.0, round(tilt * k, 3) + 0.0)
+
+    def _send_pt(self, pt: tuple[float, float]) -> None:
+        self._sent_pt = pt
+        self._target.set_pan_tilt_velocity(*pt)
+
+    def refresh(self) -> None:
+        """Раз за такт окна: множитель мог измениться (зум), пока стик держат — шлём новую скорость."""
+        pan, tilt = self._sent[:2]
+        if pan or tilt:
+            pt = self._scaled_pt(pan, tilt)
+            if pt != self._sent_pt:
+                self._send_pt(pt)
 
     def _flush(self) -> None:
         new = self.total()
         old = self._sent
         if new[:2] != old[:2]:
-            self._target.set_pan_tilt_velocity(new[0], new[1])
+            self._send_pt(self._scaled_pt(new[0], new[1]))
         if new[2] != old[2]:
             self._target.set_zoom_velocity(new[2])
         if new[3] != old[3]:

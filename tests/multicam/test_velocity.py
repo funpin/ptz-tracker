@@ -96,3 +96,32 @@ def test_release_clears_latch():
     m.release("pad1")
     m.set("pad1", pan=1)
     assert t.calls[-1] == ("pt", 1.0, 0.0)
+
+
+def test_pt_scale_only_pan_tilt_and_refresh():
+    t = Target()
+    m = VelocityMixer(t)
+    k = [0.5]
+    m.pt_scale = lambda: k[0]
+    m.set("pad1", pan=0.8, tilt=-0.4, zoom=0.6, focus=0.2)
+    assert ("pt", 0.4, -0.2) in t.calls and ("z", 0.6) in t.calls and ("f", 0.2) in t.calls
+    n = len(t.calls)
+    m.refresh()  # масштаб тот же — ничего не шлём
+    assert len(t.calls) == n
+    k[0] = 0.25  # зум ушёл в теле, стик держат
+    m.refresh()
+    assert t.calls[-1] == ("pt", 0.2, -0.1)
+    m.set("pad1")
+    assert [c for c in t.calls if c[0] == "pt"][-1] == ("pt", 0.0, 0.0)
+    k[0] = 1.0
+    n = len(t.calls)
+    m.refresh()  # стоит — ничего не шлём
+    assert len(t.calls) == n
+
+
+def test_pt_scale_failure_means_no_slowdown():
+    t = Target()
+    m = VelocityMixer(t)
+    m.pt_scale = lambda: 1 / 0
+    m.set("a", pan=0.5)
+    assert t.calls[-1] == ("pt", 0.5, 0.0)

@@ -144,6 +144,7 @@ class CameraSession:
         self._zoom_x: float | None = None
         self._ptz_poll_t = -1e9
         self._apc_t = -1e9  # последний ответ #APC: свежий — опрос не нужен (#GZ не в счёт)
+        self._gz_t = -1e9  # последний ответ #GZ или запрос его (poll_zoom)
         # сведения о камере: стартуют с настроек, уточняются ответами камеры; настройки сессия не меняет —
         # окно читает camera_info() из потока Qt и сохраняет само
         self._info_lock = threading.Lock()
@@ -545,10 +546,26 @@ class CameraSession:
         self.scheduler.submit("q_apc", P.Q_PAN_TILT, Priority.QUERY, only_if_changed=False)
         self.scheduler.submit("q_gz", P.Q_ZOOM, Priority.QUERY, only_if_changed=False)
 
+    @property
+    def zoom_x(self) -> float | None:
+        """Масштаб по последнему ответу #GZ (1 — широкий угол, he42.ZOOM_RATIO — теле); None — не знаем."""
+        return self._zoom_x
+
+    def poll_zoom(self, min_interval: float) -> None:
+        """Спросить #GZ (очередь QUERY), если ответа не было min_interval с: «медленнее на крупном плане»."""
+        if self.scheduler is None or self._quiet or self._power in ("standby", "switching"):
+            return
+        now = time.monotonic()
+        if now - self._gz_t < min_interval:
+            return
+        self._gz_t = now
+        self.scheduler.submit("q_gz", P.Q_ZOOM, Priority.QUERY, only_if_changed=False)
+
     def _on_ptz_reply(self, cmd: str, reply: str) -> None:
         if cmd == P.Q_ZOOM:
             frac = (P.parse_zoom(reply) - P.LENS_MIN) / (P.LENS_MAX - P.LENS_MIN)
             self._zoom_x = he42.ZOOM_RATIO ** min(1.0, max(0.0, frac))
+            self._gz_t = time.monotonic()
             p = self._ptz
             if p is not None:
                 self._add_ptz(dataclasses.replace(p, t=time.monotonic(), zoom_x=self._zoom_x))

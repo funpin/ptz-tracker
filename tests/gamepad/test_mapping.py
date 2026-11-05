@@ -126,6 +126,7 @@ def test_stop_latches_until_recenter():
     m.latch_stop()
     assert m.update(pad(leftx=0.9), 0.1) == []
     assert m.update(pad(leftx=0.0), 0.2) == []
+    m.sensitivity = 100  # линейная кривая: видно саму мёртвую зону
     assert m.update(pad(leftx=0.8), 0.3) == [PanTilt(0.77, 0.0)]  # (0.8-0.12)/0.88 после мёртвой зоны
 
 
@@ -221,3 +222,24 @@ def test_menu_nav_release():
     assert m.update(pad({"dpad_down"}), 0.2) == [MenuNav(0, 1)]
     assert m.update(pad(), 0.3) == []
     assert mk().update(pad({"dpad_left"}), 0.0) != [] and mk().update(pad(), 0.1) == []
+
+
+def test_stick_curve_after_deadzone():
+    half = 0.12 + 0.88 * 0.5  # половина хода после мёртвой зоны
+    for sens, want in ((100, 0.5), (50, 0.25), (0, 0.13)):
+        m = mk()
+        m.sensitivity = sens
+        assert m.update(pad(leftx=half, lefty=-half), 0.0) == [PanTilt(want, want)]
+        assert m.update(pad(leftx=-1.0), 0.1) == [PanTilt(-1.0, 0.0)]  # полный наклон — полная скорость
+
+
+def test_default_sensitivity_softer_than_101():
+    m = mk()
+    assert m.sensitivity == 50
+    assert m.update(pad(leftx=0.12 + 0.88 * 0.5), 0.0) == [PanTilt(0.25, 0.0)]
+
+
+def test_curve_does_not_touch_zoom():
+    m = mk()
+    m.sensitivity = 0
+    assert m.update(pad(r2=0.12 + 0.88 * 0.5), 0.0) == [Zoom(0.5)]

@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import math
 
+from ptztracker.camera import he42
+
+MIN_OUT = 0.02  # camera.speed.velocity_to_code: меньше — код 50 (стоит); кривая не расширяет мёртвую зону
 DEFAULT_SENS = 50  # степень 2: мягче у центра, чем линейная кривая 1.0.1
 SENS_MIN, SENS_MAX = 0, 100
 
@@ -27,8 +30,24 @@ def exponent(sens: float) -> float:
 
 
 def shape(v: float, sens: float) -> float:
-    """|v|^e со знаком v; ±1 остаётся ±1, ноль — ноль, монотонна."""
+    """|v|^e со знаком v; ±1 остаётся ±1, ноль — ноль, не убывает. Наклон, который до кривой двигал камеру,
+    двигает и после: не меньше самой малой скорости MIN_OUT."""
     a = min(1.0, abs(float(v)))
     if a == 0.0:
         return 0.0
-    return math.copysign(a ** exponent(sens), v)
+    out = a ** exponent(sens)
+    if a >= MIN_OUT:
+        out = max(out, MIN_OUT)
+    return math.copysign(out, v)
+
+
+TELE_SCALE_MIN = 0.15  # на теле не медленнее этой доли: иначе стик на полном наклоне почти не двигает камеру
+
+
+def tele_scale(zoom_x: float | None) -> float:
+    """«Медленнее на крупном плане»: множитель ручного поворота = угол обзора ÷ угол на широком (he42.hfov_deg),
+    не меньше TELE_SCALE_MIN. Зум не известен — 1."""
+    if zoom_x is None or not zoom_x > 1.0:
+        return 1.0
+    frac = min(1.0, math.log(zoom_x) / math.log(he42.ZOOM_RATIO))
+    return max(TELE_SCALE_MIN, he42.hfov_deg(frac) / he42.HFOV_WIDE_DEG)
