@@ -1,4 +1,4 @@
-"""Верхняя панель: короткие значки, одно меню ☰ в окне, TRACK справа."""
+"""Верхняя панель: знак, значки эфира, одно меню ☰ (только общее), TRACK справа; про камеру — в ⋯ клетки."""
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
@@ -24,8 +24,11 @@ def test_no_service_menu(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     assert [a for a in w.menuBar().actions() if a.isVisible()] == []
     texts = [a.text() for a in w.main_menu_btn.menu().actions()]
-    assert any("Калибровка" in t for t in texts) and any("Диагностика" in t for t in texts)
-    assert any("ATEM" in t for t in texts) and any("Агент" in t for t in texts)
+    assert any("ATEM" in t for t in texts) and any("Агент" in t for t in texts) and "Камеры" in texts
+    assert not any("Калибровка" in t or "Диагностика" in t for t in texts)  # про одну камеру — в ⋯ клетки
+    cell = [a.text() for a in w.cells[0].more_btn.menu().actions()]
+    assert any("Калибровка" in t for t in cell) and any("Диагностика" in t for t in cell)
+    assert any("ожидания" in t or "Включить" in t for t in cell) and "Видеопоток" in cell
     w.close()
 
 
@@ -44,7 +47,7 @@ def test_top_bar_texts_short(qtbot, tmp_path):
     w._update_status()
     for pill in (w.video_pill, w.analysis_pill):
         assert 0 < len(pill.full_text) <= 16, pill.full_text
-    assert w.blackbox_btn.full_text == ""  # чёрный ящик — только значок
+    assert w.blackbox_btn.full_text == "Журнал"
     assert "лог" in w.blackbox_btn.toolTip().lower()
     w.close()
 
@@ -88,7 +91,7 @@ def test_narrow_window_keeps_everything(qtbot, tmp_path):
     w._update_status()
     assert w._top.sizeHint().width() <= w.width()
     assert w.video_pill.text() != "" and w.analysis_pill.text() != ""
-    assert w.cameras_btn.isVisible() and w.track_btn.text() in ("TRACK OFF", "TRACK ON")
+    assert w.track_btn.isVisible() and w.track_btn.text() in ("TRACK OFF", "TRACK ON")
     w.close()
 
 
@@ -96,7 +99,7 @@ def test_compacts_when_bar_too_wide(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     w.atem_pill.set("3 · PGM", "pgm", "")
     w.atem_pill.show()
-    w.cameras_btn.setMinimumWidth(w.width() - 300)  # крупный шрифт Windows / длинное имя камеры
+    w.blackbox_btn.setMinimumWidth(w.width() - 400)  # крупный шрифт Windows
     w._fit_top_bar()
     assert w.atem_pill.text() == ""
     assert w.track_btn.text() in ("TRACK OFF", "TRACK ON")
@@ -113,9 +116,11 @@ def test_tech_status_lives_in_bottom_bar(qtbot, tmp_path):
     w.close()
 
 
-def test_cameras_button_shows_camera_icon(qtbot, tmp_path):
+def test_brand_mark_left(qtbot, tmp_path):
+    from ptztracker.ui.widgets import BrandMark
+
     w = make(qtbot, tmp_path)
-    assert w.cameras_btn._icon_name == "camera"
+    assert w._top.findChildren(BrandMark)
     w.close()
 
 
@@ -125,12 +130,17 @@ def test_menu_buttons_have_no_arrow():
     assert "menu-indicator" in stylesheet()
 
 
-def test_footer_keys_short_and_point_to_f1():
-    from ptztracker.ui.main_window import _FOOTER_KEYS, _HOTKEYS
+def test_footer_has_help_not_key_captions(qtbot, tmp_path):
+    from PySide6.QtWidgets import QLabel
 
-    known = dict(_HOTKEYS) | {"F1": "все клавиши"}
-    assert len(_FOOTER_KEYS) <= 5 and _FOOTER_KEYS[-1][0] == "F1"
-    assert all(k in known for k, _ in _FOOTER_KEYS)
+    w = make(qtbot, tmp_path)
+    texts = {lb.text() for lb in w.statusBar().findChildren(QLabel)}
+    assert not texts & {"слежение", "стоп", "сохранить момент", "все клавиши"}
+    assert w.help_btn.text() == "Справка" and w.help_btn.hotkey == "F1"
+    w.help_btn.click()
+    assert w.hotkeys_dialog is not None and w.hotkeys_dialog.isVisible()
+    w.hotkeys_dialog.close()
+    w.close()
 
 
 def test_stream_menu_switches_stream(qtbot, tmp_path, monkeypatch):
@@ -148,7 +158,14 @@ def test_stream_menu_switches_stream(qtbot, tmp_path, monkeypatch):
 
 def test_cameras_menu(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
-    texts = [a.text() for a in w.cameras_btn.menu().actions()]
+    texts = [a.text() for a in w.cameras_menu.actions()]
     assert texts[:3] == ["Добавить камеру…", "Изменить камеру…", "Удалить камеру…"]
     assert not w.edit_action.isEnabled()  # симулятор не редактируется
+    w.close()
+
+
+def test_track_squares_follow_analysis(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: [n for n, _k, _s in w.track_btn._cams] == [1], timeout=3000)
+    assert w.track_btn._cams[0][2] is True  # выбрана
     w.close()

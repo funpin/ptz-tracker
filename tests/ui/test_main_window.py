@@ -169,7 +169,7 @@ def test_save_runs_in_background(qtbot, tmp_path):
 def test_record_indicator_shows_buffer(qtbot, tmp_path):
     w = make_rec(qtbot, tmp_path)
     w._update_status()
-    assert "последних 5 мин" in w.blackbox_btn.toolTip() and w.blackbox_btn.text() == ""
+    assert "последних 5 мин" in w.blackbox_btn.toolTip() and w.blackbox_btn.text() == "Журнал"
     w.close()
 
 

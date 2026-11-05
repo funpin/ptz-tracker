@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QEvent, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QPainter
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -85,7 +85,7 @@ from ptztracker.ui.state import (
     video_pill,
 )
 from ptztracker.ui.theme import FS_CAPTION, SP, C
-from ptztracker.ui.widgets import StatusPill, VideoFrame, keycap_width, paint_keycap
+from ptztracker.ui.widgets import BrandMark, KeyButton, PadBadge, StatusPill, VideoFrame
 from ptztracker.updates import CHECK_INTERVAL_S, RELEASE_PAGE, UpdateChecker, UpdateInfo, is_newer
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
 
@@ -111,7 +111,6 @@ _HOTKEYS = [
     ("F9", "сохранить момент"), ("M", "меню камеры"),
 ]  # F1 («справка») сюда не добавляем: окно F1 показывает её само
 # в строке состояния — только главное; остальное в окне F1
-_FOOTER_KEYS = [("Пробел", "слежение"), ("Esc", "стоп"), ("F9", "сохранить момент"), ("F1", "все клавиши")]
 _PAN_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
 _MENU_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter}
 _ZOOM_IN_KEYS = {Qt.Key_Plus, Qt.Key_Equal}
@@ -138,25 +137,6 @@ _PAD_SIZES = ("waist", "full", "wide")  # L1/R1: только крупность
 
 def _clamp1(v: float) -> float:
     return max(-1.0, min(1.0, v))
-
-
-class _Cap(QWidget):
-    """Клавиша-подсказка (только рисунок)."""
-
-    def __init__(self, text: str):
-        super().__init__()
-        self._text = text
-        self.setFixedSize(int(keycap_width(text)) + 1, 24)
-        self.setFocusPolicy(Qt.NoFocus)
-
-    def paintEvent(self, e):  # noqa: N802
-        p = QPainter(self)
-        paint_keycap(p, self.width(), self.height() / 2, self._text)
-        p.end()
-
-
-def _keycap_label(text: str) -> QWidget:
-    return _Cap(text)
 
 
 def _vline() -> QFrame:
@@ -236,10 +216,9 @@ class MainWindow(QMainWindow):
         self.controls = ManualControls()
         self.follow_panel = FollowPanel()
 
-        # верхняя строка: камера слева; то, что важно в эфире (ATEM, чёрный ящик, геймпад, агент); меню ☰; TRACK.
-        # Видео и анализ — внизу, в строке состояния
-        self.cameras_btn = self._menu_button("camera", "Камеры: добавить, изменить, удалить")
-        cam_menu = self.cameras_btn.menu()
+        # верхняя строка: знак; то, что важно в эфире (ATEM, геймпады, журнал, агент); меню ☰; TRACK.
+        # Всё про одну камеру — в шапке её клетки; видео и анализ выбранной — внизу слева
+        self.cameras_menu = cam_menu = QMenu("Камеры", self)
         self.add_action = cam_menu.addAction("Добавить камеру…", self._add_camera)
         self.edit_action = cam_menu.addAction("Изменить камеру…", self._edit_camera)
         self.del_action = cam_menu.addAction("Удалить камеру…", self._delete_camera)
@@ -264,8 +243,18 @@ class MainWindow(QMainWindow):
         self.blackbox_btn.setPopupMode(QToolButton.InstantPopup)
         self.agent_badge = StatusPill("robot", "AGENT", "accent")
         self.agent_badge.hide()
-        self.pad_chip = StatusPill("gamepad")
-        self.pad_chip.hide()
+        # геймпады: значок каждого подключённого — номер и заряд; подробности в подсказке
+        self.top_pads = QWidget()
+        tp = QHBoxLayout(self.top_pads)
+        tp.setContentsMargins(0, 0, 0, 0)
+        tp.setSpacing(SP[0])
+        self.top_pad_badges = [PadBadge(framed=False) for _ in range(4)]
+        for b in self.top_pad_badges:
+            tp.addWidget(b)
+            b.setCursor(Qt.PointingHandCursor)
+            b.mousePressEvent = lambda _e: self.show_gamepads()
+            b.hide()
+        self.top_pads.hide()
         self.hotkeys_dialog: HotkeysDialog | None = None
         self.gamepads_dialog: GamepadsDialog | None = None
         self.main_menu_btn = self._menu_button("menu", "Меню")
@@ -280,9 +269,12 @@ class MainWindow(QMainWindow):
         tl = QHBoxLayout(self._top)
         tl.setContentsMargins(SP[1], SP[0], SP[1], SP[0])
         tl.setSpacing(SP[1])
-        tl.addWidget(self.cameras_btn)
+        tl.addWidget(BrandMark(24))
+        brand = QLabel("PTZ <span style='font-weight:400; letter-spacing:3px; font-size:10px;'>TRACKER</span>")
+        brand.setStyleSheet(f"color: {C.TEXT}; font-weight: 800; font-size: 14px; letter-spacing: 0.5px;")
+        tl.addWidget(brand)
         tl.addStretch(1)
-        for w in (self.atem_pill, self.blackbox_btn, self.pad_chip, self.agent_badge):
+        for w in (self.atem_pill, self.top_pads, self.blackbox_btn, self.agent_badge):
             tl.addWidget(w)
         tl.addWidget(_vline())
         tl.addWidget(self.main_menu_btn)
@@ -359,26 +351,26 @@ class MainWindow(QMainWindow):
         hl.addWidget(side_col)
         self.setCentralWidget(central)
 
-        # строка состояния: слева сообщения; справа видео и анализ | главные клавиши | версия и подпись
+        # строка состояния: слева сообщения; справа видео и анализ выбранной камеры | Пресеты, Справка | версия.
+        # Подписей клавиш нет — всё в справке F1
         sb = self.statusBar()
         sb.setSizeGripEnabled(False)
-        keys = QWidget()
-        kl = QHBoxLayout(keys)
-        kl.setContentsMargins(0, 0, 0, 0)
-        kl.setSpacing(SP[0])
-        for i, (key, what) in enumerate(_FOOTER_KEYS):
-            if i:
-                kl.addSpacing(SP[2])
-            kl.addWidget(_keycap_label(key))
-            kl.addWidget(self._caption(what))
+        self.presets_btn = KeyButton("Пресеты", "P")
+        self.presets_btn.setCheckable(True)
+        self.help_btn = KeyButton("Справка", "F1")
+        for b in (self.presets_btn, self.help_btn):
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setStyleSheet(f"QPushButton {{ min-height: 24px; max-height: 24px; padding: 0 {SP[1]}px;"
+                            f" font-size: {FS_CAPTION}px; border-radius: 6px; }}")
+        self.help_btn.clicked.connect(self.show_hotkeys)
         self.version_label = QLabel(f"v{__version__}")
         self.version_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
         self.credit_label = QLabel("by funpin.ru & Claude")
         self.credit_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
         # отступ справа: в окне со скруглёнными углами подпись не упирается в край
         self.credit_label.setContentsMargins(0, 0, SP[2], 0)
-        for wd in (self.video_pill, self.analysis_pill, _vline(), keys, _vline(), self.version_label,
-                   self.credit_label):
+        for wd in (self.video_pill, self.analysis_pill, _vline(), self.presets_btn, self.help_btn, _vline(),
+                   self.version_label, self.credit_label):
             sb.addPermanentWidget(wd)
         # чёрный ящик: «Показать в папке» после F9 — слева в строке состояния
         self.show_folder_btn = QPushButton("Показать в папке")
@@ -388,6 +380,7 @@ class MainWindow(QMainWindow):
 
         # одно меню ☰ в окне — одинаково на Mac и Windows; меню «Сервис» в строке macOS нет
         menu = self.main_menu_btn.menu()
+        menu.addMenu(self.cameras_menu)
         # про одну камеру — в ⋯ её клетки (спека «Меню ☰ (только общее)»); действия общие для всех клеток
         self.calib_action = QAction("Калибровка камеры…", self)
         self.calib_action.triggered.connect(self._run_calibration)
@@ -412,7 +405,7 @@ class MainWindow(QMainWindow):
         for act in (self.save_moment_action, self.open_replay_action, self.rec_settings_action):
             box_menu.addAction(act)
         self.blackbox_btn.setMenu(box_menu)
-        box_sub = menu.addMenu("Чёрный ящик")
+        box_sub = menu.addMenu("Журнал для разбора")
         for act in (self.save_moment_action, self.open_replay_action, self.rec_settings_action):
             box_sub.addAction(act)
         menu.addSeparator()
@@ -436,6 +429,8 @@ class MainWindow(QMainWindow):
         self.max_analyzed_group.triggered.connect(lambda act: self._on_max_analyzed(act.data()))
         self.update_action = menu.addAction("", self._open_release_page)
         self.update_action.setVisible(False)
+        menu.addSeparator()
+        menu.addAction("Справка\tF1", self.show_hotkeys)
         for i, c in enumerate(self.cells):
             self._build_cell_menu(i, c.more_btn.menu(), stream_menu)
         self._saveFinished.connect(self._on_save_finished)
@@ -446,6 +441,7 @@ class MainWindow(QMainWindow):
         self.show_folder_btn.clicked.connect(self._show_saved_folder)
 
         self.follow_panel.followRequested.connect(self._on_follow_requested)
+        self.track_btn.camToggled.connect(lambda n: self._toggle_follow_slot(n - 1))
         self.follow_panel.calibrateRequested.connect(self._run_calibration)
         self.controls.stopRequested.connect(self.emergency_stop)
         self.controls.set_sensitivity(self.cfg.stick_sensitivity, self.cfg.slow_on_tele)
@@ -1036,6 +1032,22 @@ class MainWindow(QMainWindow):
     def save_config(self) -> None:
         self._save()
 
+    def _toggle_follow_slot(self, slot: int) -> None:
+        """Квадратик камеры на TRACK: то же, что Пробел для этой камеры, выбор не меняется."""
+        if slot == self.grid.selected:
+            self.toggle_follow()
+            return
+        c = self.grid.cells[slot]
+        f = c.session.follower if c else None
+        if f is None:
+            return
+        if f.enabled:
+            c.gate.revoke()  # оператор забрал камеру — как Esc: агент теряет разрешение этой камеры
+            f.disable("выключено оператором")
+        elif tracking_refusal(self._states(), slot, self.cfg.max_analyzed) is None:
+            f.enable()
+        self._sync_follow()
+
     def toggle_follow(self) -> None:
         f = self._follower()
         self._on_follow_requested(not (f and f.enabled))
@@ -1072,6 +1084,17 @@ class MainWindow(QMainWindow):
         if v != self._view_shown:
             self._view_shown = v
             self.follow_panel.set_view(v)
+        cams = []
+        for i, c in enumerate(self.grid.cells):
+            if c is not None and c.session.analyzer is not None:
+                kind = {"on": "on", "lost": "lost"}.get(self._current_view(c).kind, "off")
+                cams.append((i + 1, kind, i == self.grid.selected))
+        self.track_btn.set_cams(cams)
+        sel = self.selected_cell
+        if sel is not None and sel.session.analyzer is None and self.track_btn.kind() != "none":
+            self.track_btn.set_view("none", "", "У этой камеры нет анализа — ☰ → Анализировать камер одновременно",
+                                    False)
+            self._view_shown = None  # анализ появится — вид вернётся
 
     def _restart_atem(self) -> None:
         """Остановить старый клиент ATEM и создать новый из cfg.atem_ip (пусто — Tally выключен)."""
@@ -1442,7 +1465,7 @@ class MainWindow(QMainWindow):
         if not s:
             self.video_pill.set(*video_pill(None, ""))
             self.analysis_pill.set("", "off", "Анализ: камера не выбрана")
-            self.blackbox_btn.set("", "off", "Чёрный ящик: камера не выбрана")
+            self.blackbox_btn.set("Журнал", "off", "Журнал для разбора: камера не выбрана")
             self._fit_top_bar()
             return
         self._update_recalibration_hint(s, cam)
@@ -1454,7 +1477,7 @@ class MainWindow(QMainWindow):
         self.video_pill.set(text, kind, tip)
         mins = s.app_cfg.record_buffer_s // 60
         self.blackbox_btn.set(
-            "", "neutral" if s.recorder.active else "off",
+            "Журнал", "neutral" if s.recorder.active else "off",
             f"Чёрный ящик: хранит логи последних {mins} мин (не видео). F9 — сохранить момент"
             if s.recorder.active else "Чёрный ящик выключен",
         )
@@ -2088,28 +2111,28 @@ class MainWindow(QMainWindow):
         return next((b for b in self._bridges if b.connected), None)
 
     def _update_pad_chip(self) -> None:
-        """Чип «номер · заряд · сколько осталось»; без геймпада скрыт."""
-        b = self._chip_bridge()
-        if b is None:
-            self.pad_chip.hide()
-            self._fit_top_bar()
-            return
-        num = self._pad_slot_number(self._pad_nums.get(b))
-        parts = [str(num)] if num is not None else []
-        pct, kind = b.battery_percent, "ok"
-        if pct is not None:
-            parts.append(f"{pct}%")
-            if b.battery_charging:
-                parts.append("заряжается")
-            else:
-                rem = b.battery_remaining_s()
-                parts.append("считаю…" if rem is None else fmt_remaining(rem))
-                if pct <= 20:
-                    kind = "warn"
-        name = (b.info or {}).get("name") or "Геймпад"
-        tip = f"{name}: огоньки на геймпаде показывают номер клетки камеры" + (f"\nЗаряд {pct}%" if pct is not None else "")
-        self.pad_chip.set(" · ".join(parts), kind, tip)
-        self.pad_chip.show()
+        """Сверху — значок каждого подключённого геймпада: номер и заряд; без геймпадов скрыто."""
+        live = sorted((n, b) for n, b in self.pads.items() if b.connected)
+        for i, badge in enumerate(self.top_pad_badges):
+            if i >= len(live):
+                badge.hide()
+                continue
+            n, b = live[i]
+            pct, chg = b.battery_percent, bool(b.battery_charging)
+            badge.set(n, pct, chg)
+            slot = self._pad_slot_number(n)
+            tip = f"{(b.info or {}).get('name') or 'Геймпад'} {n}"
+            tip += f" — камера в клетке {slot} (огоньки на геймпаде)" if slot else " — без камеры"
+            if pct is not None:
+                if chg:
+                    tip += f"\nЗаряд {pct}%, заряжается"
+                else:
+                    rem = b.battery_remaining_s()
+                    tip += f"\nЗаряд {pct}%, " + ("считаю, на сколько хватит…" if rem is None
+                                                  else f"хватит на {fmt_remaining(rem)}")
+            badge.setToolTip(tip + "\nКлик — окно «Геймпады…»")
+            badge.show()
+        self.top_pads.setVisible(bool(live))
         self._fit_top_bar()
 
     def _sync_pad_player(self) -> None:

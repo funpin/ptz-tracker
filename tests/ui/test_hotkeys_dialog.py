@@ -44,31 +44,30 @@ def test_fmt_remaining():
 
 def test_gamepad_chip_hidden_without_device(qtbot, tmp_path):
     w, _b = make(qtbot, tmp_path, backend=PadBackend(fail=True))
-    assert w.pad_chip.isHidden()
+    assert w.top_pads.isHidden()
     w.close()
 
 
 def test_gamepad_chip_shows_number_and_battery(qtbot, tmp_path):
     cams = [CameraConfig(id="a", name="KZ_PTZ_2", ip="10.0.0.2", pad_number=None)]
     w, b = make(qtbot, tmp_path, cameras=cams)
-    assert not w.pad_chip.isHidden()
-    assert w.pad_chip.full_text == "1"
+    badge = w.top_pad_badges[0]
+    assert not w.top_pads.isHidden() and not badge.isHidden()
+    assert badge.battery_text() == "—" and "клетке 1" in badge.toolTip()
     w.pad._on_batt(60, False)
-    assert w.pad_chip.full_text == "1 · 60% · считаю…"
+    assert badge.battery_text() == "60" and "считаю" in badge.toolTip()
     w.pad._battery.remaining_s = lambda: 3 * 3600 + 600
     w.pad._on_batt(60, False)
-    assert w.pad_chip.full_text == "1 · 60% · ≈3 ч 10 мин"
+    assert "≈3 ч 10 мин" in badge.toolTip()
     w.pad._on_batt(60, True)
-    assert w.pad_chip.full_text == "1 · 60% · заряжается"
-    w.pad._on_batt(None, None)
-    assert w.pad_chip.full_text == "1"
+    assert "заряжается" in badge.toolTip()
     w.close()
 
 
 def test_gamepad_chip_hides_on_disconnect(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)
     w.pad._on_conn(None)
-    assert w.pad_chip.isHidden()
+    assert w.top_pads.isHidden()
     w.close()
 
 
