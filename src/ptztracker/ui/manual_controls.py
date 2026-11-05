@@ -120,13 +120,18 @@ class ManualControls(QWidget):
             "На крупном плане тот же наклон стика поворачивает камеру медленнее — кадр не улетает."
             " Мышь, стрелки и геймпады; слежение это не меняет.")
         self.slow_tele_check.toggled.connect(self.slowTeleChanged)
+        # подписи не раздвигают панель (на Windows шрифт шире): при нехватке места обрезаются, смысл — в подсказке
+        self.slow_tele_check.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         # две строки: в одну с флажком не помещается по ширине панели на Windows (шрифт шире)
         sens_row = QHBoxLayout()
         sens_row.setSpacing(SP[0])
-        sens_row.addWidget(QLabel("Чувствительность"))
+        sens_label = QLabel("Чувствительность")
+        sens_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        sens_label.setToolTip(self.sens_slider.toolTip())
+        sens_row.addWidget(sens_label, 2)
         sens_row.addSpacing(SP[1])
         sens_row.addWidget(self._caption("Плавно"))
-        sens_row.addWidget(self.sens_slider, 1)
+        sens_row.addWidget(self.sens_slider, 3)
         sens_row.addWidget(self._caption("Резко"))
         self._sens_row = sens_row
 

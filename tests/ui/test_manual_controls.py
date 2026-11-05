@@ -137,3 +137,18 @@ def test_zoom_column_not_taller_than_stick(qtbot):
     # Windows (крупный шрифт): колонка выше стика удлиняла правую панель, и та прокручивалась
     c, _ = make(qtbot)
     assert c._zoom_col.sizeHint().height() <= c.joystick.height()
+
+
+def test_sensitivity_texts_do_not_widen_panel(qtbot):
+    # Windows (шрифт шире): «Чувствительность» и «Медленнее на крупном плане» раздвигали панель до 407 px
+    from PySide6.QtWidgets import QLabel
+
+    from ptztracker.ui.main_window import SIDE_WIDTH
+
+    c, _ = make(qtbot)
+    c.slow_tele_check.setText("Медленнее на крупном плане " * 4)
+    for lab in c.findChildren(QLabel):
+        if lab.text() == "Чувствительность":
+            lab.setText("Чувствительность " * 4)
+    c.layout().invalidate()
+    assert c.minimumSizeHint().width() <= SIDE_WIDTH - 16
