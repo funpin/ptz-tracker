@@ -136,7 +136,6 @@ class CameraSession:
         self._pending_steps: dict[str, tuple[int, float]] = {}  # что -> (шаг, момент запроса)
         self._step_lock = threading.RLock()
         self._img_t: dict[str, float] = {}
-        self._gain_auto_logged = False
         # положение P/T/Z из ответов #APC/#GZ (любого источника: опрос окна, Follower, LimitWatch)
         self._ptz_lock = threading.Lock()
         self._ptz: PtzPosition | None = None
@@ -669,13 +668,11 @@ class CameraSession:
         return self._queue_step("iris", d, "q_iris", P.Q_IRIS)
 
     def gain_step(self, d: int) -> bool:
-        """Gain на следующий/предыдущий код (+1 ярче). Из AUTO — ручной на прежнем значении, без шага;
-        если прежнего не видели — камере ничего не шлём, False."""
+        """Gain на следующий/предыдущий код (+1 ярче). Из AUTO — первое нажатие только снимает «Авто»:
+        ручной на последнем виденном ручном значении, если его не видели — 0 dB (решение 2026-11-05)."""
         g = self._image.gain
-        if g is not None and g != P.GAIN_AUTO and self._fresh("gain"):
+        if g is not None and self._fresh("gain"):
             return self._gain_apply(d)
-        if g == P.GAIN_AUTO and self._last_manual_gain is None and self._fresh("gain"):
-            return self._gain_apply(d)  # сообщит False и запишет в журнал
         return self._queue_step("gain", d, "q_gain", P.Q_GAIN)
 
     def _iris_apply(self, d: int) -> bool:
@@ -697,12 +694,7 @@ class CameraSession:
             return False
         codes = P.GAIN_CODES
         if g == P.GAIN_AUTO:
-            if self._last_manual_gain not in codes:
-                if not self._gain_auto_logged:
-                    self._gain_auto_logged = True
-                    log.info("Gain на авто, ручного значения не видели: шаг пропущен")
-                return False
-            new = self._last_manual_gain
+            new = self._last_manual_gain if self._last_manual_gain in codes else codes[0]
         else:
             i = codes.index(g) if g in codes else min(range(len(codes)), key=lambda k: abs(codes[k] - g))
             new = codes[max(0, min(len(codes) - 1, i + (1 if d > 0 else -1)))]

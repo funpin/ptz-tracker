@@ -163,7 +163,7 @@ class ManualControls(QWidget):
         self.iris_slider.setValue(50)
         self.iris_slider.setEnabled(False)
         self.iris_auto.toggled.connect(self._on_iris_auto)
-        self.iris_slider.valueChanged.connect(lambda v: self._s and self._s.set_iris(v / 100))
+        self.iris_slider.valueChanged.connect(self._on_iris)
         il = self._row("Ирис", self.iris_auto, self.iris_slider)
 
         # gain: шаги по 3 dB (коды GAIN_CODES) и «Авто»
@@ -303,9 +303,15 @@ class ManualControls(QWidget):
             self._s.set_zoom_velocity(v / 100)
 
     def _on_iris_auto(self, on: bool) -> None:
+        self._touch("iris")
         self.iris_slider.setEnabled(not on)
         if self._s:
             self._s.set_iris_auto(on)
+
+    def _on_iris(self, v: int) -> None:
+        self._touch("iris")
+        if self._s:
+            self._s.set_iris(v / 100)
 
     # --- изображение: gain и баланс белого --------------------------------
 
@@ -368,7 +374,7 @@ class ManualControls(QWidget):
         def fresh(name: str) -> bool:
             return now - self._touched.get(name, float("-inf")) > TOUCH_HOLD_S
 
-        widgets = (self.gain_auto, self.gain_slider, self.wb_combo, self.ctemp_slider)
+        widgets = (self.gain_auto, self.gain_slider, self.wb_combo, self.ctemp_slider, self.iris_auto, self.iris_slider)
         for wd in widgets:
             wd.blockSignals(True)
         try:
@@ -382,6 +388,13 @@ class ManualControls(QWidget):
                     self.wb_combo.setCurrentIndex(i)
             if img.color_temp is not None and fresh("ctemp"):
                 self.ctemp_slider.setValue(img.color_temp)
+            # ирис: «Авто» снимает и крестовина геймпада (CameraSession.iris_step) — флажок по ответам камеры
+            if fresh("iris"):
+                if img.iris_auto is not None:
+                    self.iris_auto.setChecked(img.iris_auto)
+                    self.iris_slider.setEnabled(not img.iris_auto)
+                if img.iris is not None:
+                    self.iris_slider.setValue(round(100 * (img.iris - P.LENS_MIN) / (P.LENS_MAX - P.LENS_MIN)))
         finally:
             for wd in widgets:
                 wd.blockSignals(False)
