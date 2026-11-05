@@ -70,7 +70,7 @@ def test_pads_badges(qtbot):
     assert not c.pad_badges[0].isVisible()
     c.set_pads([(1, 83, False), (3, 18, False)])
     assert [b.isVisible() for b in c.pad_badges[:3]] == [True, True, False]
-    assert c.pad_badges[0].battery_text() == "83" and c.more_pads.isHidden()
+    assert c.pad_badges[0].battery_text() == "средний" and c.more_pads.isHidden()
     c.set_pads([(1, 83, False), (2, 50, False), (3, None, False), (4, 10, True)])
     assert [b.isVisible() for b in c.pad_badges] == [True, False, False, False]
     assert c.more_pads.isVisible() and c.more_pads.text() == "+3"

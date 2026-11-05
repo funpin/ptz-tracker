@@ -204,8 +204,8 @@ def test_track_cam_click_does_not_toggle_selected(qtbot):
 
 def test_pad_badge_values(qtbot):
     widths = set()
-    for args, text in (((1, 0, False), "0"), ((2, 100, False), "100"), ((3, None, False), "—"),
-                       ((4, 46, True), "46")):
+    for args, text in (((1, 0, False), "почти пусто"), ((2, 100, False), "полный"), ((3, None, False), "—"),
+                       ((4, 46, True), "заряжается"), ((5, 70, False), "средний"), ((6, 20, False), "мало")):
         b = PadBadge()
         qtbot.addWidget(b)
         b.set(*args)
@@ -265,10 +265,12 @@ def test_battery_time_text():
     assert battery_time_text(None) == "—"
 
 
-def test_pad_badge_time_mode(qtbot):
+def test_pad_badge_shows_level_not_numbers(qtbot):
     b = PadBadge(framed=False)
     qtbot.addWidget(b)
-    b.set(2, 60, False, time_text="1.5h")
-    assert b.battery_text() == "1.5h"
-    b.set(2, 60, True, time_text="1.5h")  # заряжается — время до разрядки не важно, показываем %
-    assert b.battery_text() == "60"
+    b.set(2, 70, False, time_text="1.5h")  # SDL даёт заряд грубо: ни процентов, ни часов на батарейке
+    assert b.battery_text() == "средний"
+    b.set(2, None, True)
+    assert b.battery_text() == "заряжается"
+    assert not b.grab().isNull()
+

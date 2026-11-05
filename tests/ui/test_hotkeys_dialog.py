@@ -54,17 +54,17 @@ def test_gamepad_chip_shows_number_and_battery(qtbot, tmp_path):
     badge = w.top_pad_badges[0]
     assert not w.top_pads.isHidden() and not badge.isHidden()
     assert badge.battery_text() == "—" and "клетке 1" in badge.toolTip()
-    w.pad._on_batt(60, False)
-    assert badge.battery_text() == "60" and "считаю" in badge.toolTip()
+    w.pad._on_batt(70, False)  # SDL: 5/20/70/100 — процентов не показываем, только уровень
+    assert badge.battery_text() == "средний" and "Заряд: средний" in badge.toolTip() and "%" not in badge.toolTip()
     w.pad._battery.remaining_s = lambda: 3 * 3600 + 600
-    w.pad._on_batt(60, False)
+    w.pad._on_batt(70, False)
     assert "≈3 ч 10 мин" in badge.toolTip()
-    w.pad._on_batt(60, True)
-    assert "заряжается" in badge.toolTip()
+    w.pad._on_batt(70, True)
+    assert badge.battery_text() == "заряжается" and "Заряжается" in badge.toolTip()
     w.pad._on_batt(None, True)  # SDL при зарядке уровня не даёт
-    assert badge.battery_text() == "—" and "Заряжается" in badge.toolTip()
+    assert badge.battery_text() == "заряжается" and "Заряжается" in badge.toolTip()
     w.pad._on_batt(None, None)
-    assert "аряжается" not in badge.toolTip()
+    assert badge.battery_text() == "—" and "аряжается" not in badge.toolTip()
     w.close()
 
 

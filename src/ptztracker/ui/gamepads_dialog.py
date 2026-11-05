@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from ptztracker.control.manual_curve import SENS_MAX, SENS_MIN, clamp_sens, shape
 from ptztracker.ui.icons import icon
 from ptztracker.ui.theme import FS_CAPTION, R_PANEL, SP, C, qcolor
+from ptztracker.ui.widgets import battery_level
 
 SHARED_NOTE = "одинаковые геймпады без серийного номера делят эту настройку"
 _GUID_ID = re.compile(r"^(?:[0-9A-Fa-f]{32}|\?):")  # gamepad.device: без серийного номера — «GUID:имя»
@@ -68,9 +69,11 @@ def status_text(r: PadRow) -> str:
         text = "без камеры — выберите клетку кнопкой на геймпаде"
     else:
         text = f"управляет камерой {r.cell}"
-    if r.connected and r.battery is not None:
-        text += f" · {'заряжается, ' if r.charging else ''}{r.battery} %"
-        if r.battery_time and not r.charging:
+    if r.connected and r.charging:  # SDL при зарядке уровня не даёт
+        text += " · заряжается"
+    elif r.connected and (lvl := battery_level(r.battery)) is not None:
+        text += f" · заряд {lvl[0]}"  # без процентов: SDL даёт заряд грубо (5/20/70/100 %)
+        if r.battery_time:
             text += f" · {r.battery_time}"
     return text + ("" if has_serial(r.pad_id) else f" · {SHARED_NOTE}")
 

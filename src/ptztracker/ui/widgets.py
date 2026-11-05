@@ -419,9 +419,23 @@ def battery_time_text(seconds: float | None) -> str:
     return f"{round(hours)}h" if hours >= 2 else f"{round(hours, 1):g}h"
 
 
+def battery_level(pct: int | None) -> tuple[str, float] | None:
+    """Заряд словом и долей заливки батарейки. SDL отдаёт заряд грубо (5/20/70/100 %), поэтому процентов
+    не показываем — только уровень."""
+    if pct is None:
+        return None
+    if pct >= 90:
+        return "полный", 1.0
+    if pct >= 50:
+        return "средний", 0.66
+    if pct >= 15:
+        return "мало", 0.33
+    return "почти пусто", 0.12
+
+
 class PadBadge(QWidget):
-    """Геймпад: значок, номер (как огоньки на геймпаде) и батарейка с процентом внутри, как в iOS.
-    Один виджет и для верхней строки, и для шапки клетки, и для «Сводки»."""
+    """Геймпад: значок, номер (как огоньки на геймпаде) и батарейка с уровнем заряда (без цифр: SDL даёт
+    заряд грубо). Один виджет и для верхней строки, и для шапки клетки, и для «Сводки»."""
 
     W, H = 86, 24
     BAT_W, BAT_H = 34, 17
@@ -445,9 +459,11 @@ class PadBadge(QWidget):
             self.update()
 
     def battery_text(self) -> str:
-        if self._time and not self._charging:
-            return self._time
-        return "—" if self._pct is None else str(self._pct)
+        """Уровень словом (для подсказки и тестов); на самой батарейке — только заливка."""
+        if self._charging:
+            return "заряжается"
+        lvl = battery_level(self._pct)
+        return "—" if lvl is None else lvl[0]
 
     @staticmethod
     def fill_color(pct: int | None, charging: bool) -> str:
@@ -483,8 +499,10 @@ class PadBadge(QWidget):
         p.setPen(Qt.NoPen)
         p.setBrush(qcolor(C.TEXT, 46))
         p.drawPath(body)
-        if self._pct is not None:
-            fill = QRectF(bat.left(), bat.top(), bat.width() * max(0, min(100, self._pct)) / 100, bat.height())
+        lvl = battery_level(self._pct)
+        if lvl is not None or self._charging:
+            frac = lvl[1] if lvl is not None else 1.0  # при зарядке уровня нет — батарейка полная лаймовая
+            fill = QRectF(bat.left(), bat.top(), bat.width() * frac, bat.height())
             p.save()
             p.setClipPath(body)
             p.fillRect(fill, qcolor(self.fill_color(self._pct, self._charging)))
@@ -495,13 +513,8 @@ class PadBadge(QWidget):
         p.setPen(Qt.NoPen)
         p.setBrush(qcolor(C.TEXT, 140))
         p.drawRoundedRect(QRectF(bat.right() + 1, bat.center().y() - 2.5, 2, 5), 1, 1)
-        f.setPixelSize(11)
-        f.setWeight(QFont.ExtraBold)
-        p.setFont(f)
-        p.setPen(qcolor(self.text_color(self._pct)))
-        text_rect = bat
         if self._charging:  # молния рисуется, а не символом: эмодзи на Windows цветное
-            bx, cy = bat.left() + 7, bat.center().y()
+            bx, cy = bat.center().x(), bat.center().y()
             bolt = QPainterPath(QPointF(bx + 1.5, cy - 6))
             for dx, dy in ((-3.5, 1), (-0.5, 1), (-1.5, 6), (3.5, -1), (0.5, -1), (1.5, -6)):
                 bolt.lineTo(bx + dx, cy + dy)
@@ -509,9 +522,6 @@ class PadBadge(QWidget):
             p.setPen(Qt.NoPen)
             p.setBrush(qcolor(C.BG))
             p.drawPath(bolt)
-            text_rect = bat.adjusted(9, 0, 0, 0)
-        p.setPen(qcolor(self.text_color(self._pct)))
-        p.drawText(text_rect, Qt.AlignCenter, self.battery_text())
         p.end()
 
 

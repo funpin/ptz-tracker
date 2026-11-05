@@ -91,7 +91,7 @@ def test_card_texts_and_tile(qtbot):
     d = GamepadsDialog(_rows(), True, lambda *a: None, lambda on: None)
     qtbot.addWidget(d)
     live = d.status_labels["a0:b1:c2:d3:e4:f5"].text()
-    assert "управляет камерой 1" in live and "82 %" in live and "~5 ч" in live
+    assert "управляет камерой 1" in live and "заряд средний" in live and "%" not in live and "~5 ч" in live
     assert C.PGM in d.tiles["a0:b1:c2:d3:e4:f5"].styleSheet()
     assert d.tiles["x1:x2:x3:x4:x5:x6"].isHidden()
     assert "выберите клетку" in d.status_labels["x1:x2:x3:x4:x5:x6"].text()
@@ -109,3 +109,10 @@ def test_curve_preview_follows_slider(qtbot):
     assert prev.sens == 40
     d.sliders["a0:b1:c2:d3:e4:f5"].sliderMoved.emit(90)
     assert prev.sens == 90 and abs(prev.value_at(0.5) - shape(0.5, 90)) < 1e-9
+
+
+def test_charging_without_level():
+    from ptztracker.ui.gamepads_dialog import PadRow, status_text
+
+    t = status_text(PadRow("a0:b1:c2:d3:e4:f5", "DualSense", 50, True, 1, battery=None, charging=True))
+    assert t.endswith("· заряжается") and "%" not in t

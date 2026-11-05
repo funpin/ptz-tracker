@@ -97,7 +97,7 @@ from ptztracker.ui.widgets import (
     StateTag,
     StatusPill,
     VideoFrame,
-    battery_time_text,
+    battery_level,
 )
 from ptztracker.updates import CHECK_INTERVAL_S, RELEASE_PAGE, UpdateChecker, UpdateInfo, is_newer
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
@@ -2571,21 +2571,15 @@ class MainWindow(QMainWindow):
                 continue
             n, b = live[i]
             pct, chg = b.battery_percent, bool(b.battery_charging)
-            rem = None if chg or pct is None else b.battery_remaining_s()
-            # сверху — сколько ещё проработает (6h, 1.5h, 30m); пока не посчитано — процент
-            badge.set(n, pct, chg, battery_time_text(rem) if rem is not None else None)
+            badge.set(n, pct, chg)  # без цифр: SDL даёт заряд грубо (5/20/70/100 %)
             slot = self._pad_slot_number(n)
             tip = f"{(b.info or {}).get('name') or 'Геймпад'} {n}"
             tip += f" — камера в клетке {slot} (огоньки на геймпаде)" if slot else " — без камеры"
-            if pct is not None:
-                if chg:
-                    tip += f"\nЗаряд {pct}%, заряжается"
-                else:
-                    rem = b.battery_remaining_s()
-                    tip += f"\nЗаряд {pct}%, " + ("считаю, на сколько хватит…" if rem is None
-                                                  else f"хватит на {fmt_remaining(rem)}")
-            elif chg:  # SDL при зарядке уровня не даёт
+            if chg:  # SDL при зарядке уровня не даёт
                 tip += "\nЗаряжается"
+            elif (lvl := battery_level(pct)) is not None:
+                rem = b.battery_remaining_s()
+                tip += f"\nЗаряд: {lvl[0]}" + ("" if rem is None else f", хватит примерно на {fmt_remaining(rem)}")
             badge.setToolTip(tip + "\nКлик — окно «Геймпады…»")
             badge.show()
         self.top_pads.setVisible(bool(live))

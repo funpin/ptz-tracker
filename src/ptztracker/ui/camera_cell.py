@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from ptztracker.ui.icons import icon
 from ptztracker.ui.preview import PreviewWidget
 from ptztracker.ui.theme import CHEVRON, FS_CAPTION, R_PANEL, R_TAG, SP, C, _rgba, qcolor
-from ptztracker.ui.widgets import PadBadge, PowerOverlay, StateTag, StatusPill, VideoFrame
+from ptztracker.ui.widgets import PadBadge, PowerOverlay, StateTag, StatusPill, VideoFrame, battery_level
 
 MAX_PADS = 4
 SHOWN_PADS = 2  # больше — первый и «+N»
@@ -227,8 +227,9 @@ class CameraCell(QFrame):
         if rest:
             self.more_pads.setText(f"+{len(rest)}")
             self.more_pads.setToolTip("\n".join(
-                f"Геймпад {n}: " + ("заряд неизвестен" if pct is None else f"{pct}%")
-                + (", заряжается" if chg else "") for n, pct, chg in pads))
+                f"Геймпад {n}: " + ("заряжается" if chg else
+                                    "заряд неизвестен" if (lvl := battery_level(pct)) is None else f"заряд {lvl[0]}")
+                for n, pct, chg in pads))
 
     def set_header(self, tally: str | None, state: str | None, sim: bool, power: str | None) -> None:
         """tally: pgm|pvw|None; state: on|lost|off|standby|no_analysis|None; power: on|standby|None (нет кнопки)."""
