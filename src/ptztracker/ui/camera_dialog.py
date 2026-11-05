@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from ptztracker.camera.client import AuthRequired, CameraClient, CameraUnreachable
 from ptztracker.camera.protocol import Q_MODEL, CameraError, parse_model
 from ptztracker.config import CameraConfig, is_valid_ip
+from ptztracker.control.camera_model import zoom_ln
 from ptztracker.tally import MAX_ATEM_INPUT, atem_input_of
 
 _SIM_NAME = "Тренировка"  # имя, которое диалог подставляет симулятору
@@ -70,12 +71,22 @@ def speed_scale_text(scale) -> str:
     return " · ".join(parts) or "нет"
 
 
+def _zoom_points_text(pts: list[int]) -> str:
+    """«3 точки (от широкого до ×8,5)»: сколько положений зума измерено и до какого увеличения."""
+    if not pts:
+        return "нет данных"
+    n = len(pts)
+    word = "точка" if n % 10 == 1 and n % 100 != 11 else "точки" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "точек"
+    top = math.exp(max(0.0, zoom_ln(max(pts))))
+    return f"{n} {word} (от широкого до ×{top:.1f})".replace(".", ",")
+
+
 def calibration_texts(cfg: CameraConfig, reset: bool = False) -> dict[str, str]:
     """Строки раздела «Сведения» о калибровке. Читает сохранённый словарь с оглядкой: он мог быть повреждён."""
     calib = None if reset or not isinstance(cfg.calibration, dict) else cfg.calibration
     if calib is None:
         date = ("сброшена (применится после «ОК»)" if reset
-                else "не делалась (используется таблица по умолчанию)")
+                else "не делалась (используются стандартные настройки)")
         return dict(calib_date=date, calib_stream="—", calib_model="—", calib_zoom="—", calib_tilt="—")
     pts = calib.get("zoom_points")
     pts = [z for z in pts if isinstance(z, int)] if isinstance(pts, list) else []
@@ -86,7 +97,7 @@ def calibration_texts(cfg: CameraConfig, reset: bool = False) -> dict[str, str]:
         calib_stream=_STREAM_NAMES.get(calib.get("stream_kind"), "не записан"),
         calib_model=(_model_fw(model, fw) or model) if isinstance(model, str) and model
         else f"не записана (калибровка из {_NO_INFO})",
-        calib_zoom=f"{len(pts)} ({', '.join(f'0x{z:X}' for z in sorted(pts))})" if pts else "нет данных",
+        calib_zoom=_zoom_points_text(pts),
         calib_tilt="измерен" if calib.get("tilt") else "не измерен",
     )
 
@@ -95,13 +106,18 @@ def unsupported_text(features) -> str:
     return ", ".join(_FEATURE_NAMES.get(f, f) for f in features) or "нет"
 
 
-def merge_edit(latest: CameraConfig, snapshot: CameraConfig, result: CameraConfig) -> CameraConfig:
+def merge_edit(latest: CameraConfig, snapshot: CameraConfig, result: CameraConfig,
+               reset_calibration: bool = False) -> CameraConfig:
     """Применить к свежей записи камеры только то, что оператор изменил в диалоге (result против snapshot,
-    с которым диалог открылся). Всё, что окно успело узнать за время диалога (модель, поправка скорости), остаётся."""
+    с которым диалог открылся). Всё, что окно успело узнать за время диалога (модель, поправка скорости), остаётся.
+    Подтверждённый сброс калибровки снимает калибровку и поправку скорости и в свежей записи, даже если слежение
+    записало поправку, пока диалог был открыт."""
     changes = {f.name: getattr(result, f.name) for f in dataclasses.fields(CameraConfig)
                if getattr(result, f.name) != getattr(snapshot, f.name)}
     if result.ip != snapshot.ip:  # другой адрес — возможно, другая камера: прежние сведения о ней не годятся
         changes.update(model=None, firmware=None, unsupported=[])
+    if reset_calibration:
+        changes.update(calibration=None, speed_scale=None)
     changes["unsupported"] = list(changes.get("unsupported", latest.unsupported))  # копия, не общий список
     return dataclasses.replace(latest, **changes)
 
@@ -223,6 +239,11 @@ class CameraDialog(QDialog):
         self._on_kind()
 
     @property
+    def reset_calibration(self) -> bool:
+        """Оператор подтвердил «Сбросить калибровку» (применится после «ОК»)."""
+        return self._reset_calibration
+
+    @property
     def snapshot(self) -> CameraConfig | None:
         """Камера такой, какой её открыли (для merge_edit)."""
         return self._cfg
@@ -244,7 +265,7 @@ class CameraDialog(QDialog):
         self.model_label = self.info_values["model"]
         self.reset_button = QPushButton("Сбросить калибровку")
         self.reset_button.setToolTip("Забыть калибровку и поправку скорости только этой камеры. "
-                                     "Применится после «ОК»; слежение вернётся к таблице по умолчанию")
+                                     "Применится после «ОК»; слежение вернётся к стандартным настройкам")
         self.reset_button.clicked.connect(self._on_reset_calibration)
         form.addRow(self.reset_button)
         return page

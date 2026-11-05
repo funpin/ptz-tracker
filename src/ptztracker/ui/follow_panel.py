@@ -125,7 +125,10 @@ class FollowPanel(QWidget):
     def _show_calib_label(self) -> None:
         if not self._calibrated:
             text = "Камера не откалибрована: меню ☰ → Калибровка (2 мин)"
+            color = C.LOST  # без калибровки слежение хуже: предупреждение
         else:
             text = self._note or ""
+            color = C.TEXT_DIM  # «откалибруйте заново» — спокойная подсказка, не тревога
+        self.calib_label.setStyleSheet(f"color: {color}; font-size: {FS_CAPTION}px;")
         self.calib_label.setText(text)
         self.calib_label.setVisible(bool(text))

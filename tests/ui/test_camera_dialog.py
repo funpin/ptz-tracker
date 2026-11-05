@@ -1,3 +1,5 @@
+import dataclasses
+
 from ptztracker.config import CameraConfig
 from ptztracker.ui.camera_dialog import CameraDialog
 
@@ -160,7 +162,7 @@ def test_info_tab_shows_everything_read_only(qtbot):
     assert "2026" in t["calib_date"] and "05.11.2026" in t["calib_date"]
     assert "1280×720" in t["calib_stream"]
     assert t["calib_model"] == "AW-HE40 · прошивка 1.54"
-    assert "3" in t["calib_zoom"]  # три точки зума
+    assert t["calib_zoom"].startswith("3 точки (от широкого до ×") and "0x" not in t["calib_zoom"]
     assert t["calib_tilt"] == "измерен"
     assert "1,40" in t["speed_scale"] and "0,90" in t["speed_scale"]
     assert "Gain" in t["unsupported"] and "температура" in t["unsupported"]
@@ -265,3 +267,18 @@ def test_merge_edit_applies_only_dialog_changes_over_newer_state(qtbot):
     m = merge_edit(latest, d.snapshot, d.result_config())
     m.unsupported.append("x")
     assert latest.unsupported == ["power"]
+
+
+def test_merge_edit_reset_forces_none_even_if_snapshot_had_no_speed_scale(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from ptztracker.ui.camera_dialog import merge_edit
+
+    cfg = _full_cfg(speed_scale=None)
+    d = CameraDialog(cfg)
+    qtbot.addWidget(d)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    d.reset_button.click()
+    latest = dataclasses.replace(cfg, speed_scale={"pan": 1.3})  # слежение успело записать
+    m = merge_edit(latest, d.snapshot, d.result_config(), d.reset_calibration)
+    assert (m.calibration, m.speed_scale) == (None, None)

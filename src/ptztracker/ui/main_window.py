@@ -438,8 +438,10 @@ class MainWindow(QMainWindow):
         self.release_all_held()
         self._speed_scale_saved_t = float("-inf")  # «раз в минуту» — для каждой камеры заново
         self._recalib_hint_for = None  # подсказка не возвращается после переключения туда-обратно
-        self._unsupported_shown = ()
-        self.controls.set_unsupported(())
+        # то, что про камеру уже известно, сразу: скрытые строки не мигают при каждом переключении
+        known = tuple(sorted(f for f in cam.unsupported if isinstance(f, str))) if cam is not None else ()
+        self._unsupported_shown = known
+        self.controls.set_unsupported(known)
         if self.session:
             self.session.stop()
             self.session = None
@@ -724,7 +726,7 @@ class MainWindow(QMainWindow):
             # пока диалог был открыт, окно могло узнать модель или сохранить поправку скорости: берём свежую запись
             # и меняем в ней только то, что оператор тронул
             latest = next((c for c in self.cfg.cameras if c.id == result.id), None)
-            cam = merge_edit(latest, d.snapshot, result) if latest is not None else result
+            cam = merge_edit(latest, d.snapshot, result, d.reset_calibration) if latest is not None else result
             self.cfg.cameras = [cam if c.id == cam.id else c for c in self.cfg.cameras]
             self._save()
             self._fill_combo(cam.id)
@@ -991,8 +993,8 @@ class MainWindow(QMainWindow):
         """Мягкая подсказка под кнопками кадра, если калибровка сделана на другой камере или в прежней версии.
         Не блокирует ничего; для каждой камеры показывается один раз за запуск (до смены камеры)."""
         hint = None
-        if cam is not None and cam.kind != "sim":
-            info = s.camera_info()
+        info = s.camera_info()
+        if cam is not None and cam.kind != "sim" and (info.model is not None or s.online):
             hint = recalibration_hint(cam.calibration, info.model, info.firmware)
         if hint and (cam.id == self._recalib_hint_for or cam.id not in self._recalib_hinted):
             self._recalib_hinted.add(cam.id)

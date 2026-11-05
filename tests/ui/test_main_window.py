@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 
 from ptztracker.config import ConfigStore
 from ptztracker.ui.main_window import MainWindow
+from ptztracker.ui.theme import C
 
 
 def make(qtbot, tmp_path):
@@ -501,7 +502,7 @@ def _hint(w):
     return None if lbl.isHidden() else lbl.text()
 
 
-def test_recalibration_hint_for_other_model_and_old_calibration(qtbot, tmp_path):
+def test_recalibration_hint_for_other_model_and_old_calibration(qtbot, tmp_path, monkeypatch):
     store = ConfigStore(tmp_path / "c.json")
     cfg = store.load()
     cfg.cameras[0].calibration = _calib("AW-HE42")
@@ -516,16 +517,27 @@ def test_recalibration_hint_for_other_model_and_old_calibration(qtbot, tmp_path)
     w.close()
     cfg = store.load()
     cfg.cameras[0].calibration = _calib(None)  # калибровка до 1.0: модели в ней нет
+    cfg.cameras[0].model = None  # и сама камера пока не назвалась
     store.save(cfg)
     w = MainWindow(store)
     qtbot.addWidget(w)
     w.show()
+    from ptztracker.camera.session import CameraSession
+
+    monkeypatch.setattr(CameraSession, "online", property(lambda self: False))
+    w._update_status()
+    assert _hint(w) is None  # камера ещё не отозвалась и модель неизвестна: подсказка рано
+    monkeypatch.setattr(CameraSession, "online", property(lambda self: True))
     w._update_status()
     assert "прежней версии" in _hint(w)
+    assert C.LOST not in w.follow_panel.calib_label.styleSheet()
     w.close()
 
 
-def test_recalibration_hint_once_per_session_per_camera(qtbot, tmp_path):
+def test_recalibration_hint_once_per_session_per_camera(qtbot, tmp_path, monkeypatch):
+    from ptztracker.camera.session import CameraSession
+
+    monkeypatch.setattr(CameraSession, "online", property(lambda self: True))
     store = ConfigStore(tmp_path / "c.json")
     cfg = store.load()
     cfg.cameras[0].calibration = _calib(None)
@@ -640,4 +652,60 @@ def test_each_camera_remembers_its_own_everything(qtbot, tmp_path):
     qtbot.addWidget(w)
     w.camera_combo.setCurrentIndex(1)
     assert w.session.follower.calib.pan_scale == 0.8 and w.session.cfg.model == "AW-HE40"
+    w.close()
+
+
+def test_reset_beats_speed_scale_saved_while_dialog_open(qtbot, tmp_path, monkeypatch):
+    """Диалог открылся без поправки, слежение записало её, оператор сбросил калибровку и нажал «ОК»:
+    в настройках не остаётся ни калибровки, ни поправки."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from ptztracker.ui.camera_dialog import CameraDialog
+
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cfg.cameras[0].calibration = _calib("AW-HE42")
+    store.save(cfg)
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+
+    def fake_exec(self):
+        w.cfg.cameras[0].speed_scale = {"pan": 1.3, "tilt": 1.0, "zoom": 1.0}  # записало слежение
+        self.reset_button.click()
+        return True
+
+    monkeypatch.setattr(CameraDialog, "exec", fake_exec)
+    w._edit_camera()
+    cam = store.load().cameras[0]
+    assert (cam.calibration, cam.speed_scale) == (None, None)
+    w.close()
+
+
+def test_camera_info_unchanged_is_saved_once(qtbot, tmp_path, monkeypatch):
+    store = ConfigStore(tmp_path / "c.json")
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    _detect(w, "AW-HE40", "1.54", ["gain"])
+    calls = []
+    real = w.store.save
+    monkeypatch.setattr(w.store, "save", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    for _ in range(5):
+        w._update_status()
+    assert calls == []
+    w.close()
+
+
+def test_switch_camera_seeds_unsupported_from_stored(qtbot, tmp_path):
+    from ptztracker.config import CameraConfig
+
+    store = ConfigStore(tmp_path / "c.json")
+    cfg = store.load()
+    cfg.cameras.append(CameraConfig(id="b", name="Б", ip="10.0.0.13", unsupported=["gain"]))
+    store.save(cfg)
+    w = MainWindow(store)
+    qtbot.addWidget(w)
+    w.show()
+    w.camera_combo.setCurrentIndex(1)
+    assert w.controls.gain_slider.isHidden()  # без ожидания ответа камеры
     w.close()
