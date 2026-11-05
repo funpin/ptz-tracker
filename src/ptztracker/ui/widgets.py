@@ -606,7 +606,7 @@ class PowerOverlay(QWidget):
         кнопка серая с пояснением (способ выйти из ожидания остаётся на виду)."""
         if view == "standby":
             self.title_label.setText(f"Камера {camera_name} найдена, но выключена (режим ожидания)")
-            self.hint_label.setText("Нажмите, чтобы включить" if can_power
+            self.hint_label.setText("Нажмите, чтобы включить · с геймпада: Options, затем ×" if can_power
                                     else "Эта камера не принимает команду питания — включите её кнопкой на корпусе")
             self.power_btn.setEnabled(can_power)
             self.power_btn.setToolTip("Включить камеру" if can_power
@@ -644,6 +644,11 @@ class VideoFrame(QFrame):
         """Виджет поверх видео: «top-left» — под ярлыком слежения, «top-center» — сверху по центру, «bottom-left» — внизу слева."""
         w.setParent(self)
         self._overlays.append((w, corner))
+        self._place_tags()
+
+    def set_overlay_corner(self, w: QWidget, corner: str) -> None:
+        """Перенести виджет поверх видео в другой угол (меню Panasonic — влево, чтобы не закрывать меню камеры)."""
+        self._overlays = [(x, corner if x is w else c) for x, c in self._overlays]
         self._place_tags()
 
     def remove_overlay(self, w: QWidget) -> None:
@@ -702,6 +707,8 @@ class VideoFrame(QFrame):
                 continue
             if corner == "center":
                 w.move(max(off, (self.width() - w.width()) // 2), max(off, (self.height() - w.height()) // 2))
+            elif corner == "left":  # слева по центру высоты: меню Panasonic камера рисует в середине кадра
+                w.move(off + SP[1], max(off, (self.height() - w.height()) // 2))
             elif corner == "top-center":
                 w.move(max(off, (self.width() - w.width()) // 2), off + SP[1])
             elif corner == "top-left":

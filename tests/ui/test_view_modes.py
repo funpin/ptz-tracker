@@ -78,3 +78,18 @@ def test_one_camera_opens_single(qtbot, tmp_path):
     w._auto_view()  # то же, что при запуске с одной камерой
     assert w.single_view and [it.item.service for it in w.strip.items] == ["summary", "position", "graphs"]
     w.close()
+
+
+def test_strip_thumbnails_refresh_often_only_in_single_view(qtbot, tmp_path):
+    from ptztracker.ui.main_window import STRIP_MS
+
+    assert STRIP_MS <= 100  # не меньше 10 кадров в секунду в полоске
+    w = make(qtbot, tmp_path)
+    w.set_single_view(True)
+    qtbot.waitUntil(lambda: bool(w.strip.items) and w.strip.items[0].item.image is not None, timeout=4000)
+    card = w.strip.items[0]
+    seq0 = card.seq
+    qtbot.waitUntil(lambda: card.seq != seq0, timeout=2000)  # новый кадр — без ожидания тика статуса (0,5 с)
+    w.set_single_view(False)
+    assert not w._strip_timer.isActive()
+    w.close()

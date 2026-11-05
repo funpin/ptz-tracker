@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QBoxLayout, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ptztracker.camera import protocol as P
 from ptztracker.ui.theme import FS_CAPTION, FS_TEXT, R_BUTTON, R_PANEL, SP, C, _rgba
@@ -66,6 +66,7 @@ WHY = {
     "synchro": "Крутите, пока полосы на LED-экране не исчезнут.",
     "pedestal": "Уровень чёрного: подогнать картинку под соседние камеры, чтобы при переключении не было скачка.",
     "detail": "Резкость контуров: подогнать под соседние камеры; «Высокая» делает лица жёстче.",
+    "power": "Камера в режиме ожидания. × или → — включить (видео появится секунд через 8).",
     "osd": "Всё остальное, что умеет камера, — в её собственном меню Panasonic. Оно появляется в видео камеры"
            " (у камеры в эфире — и в эфире).",
 }
@@ -73,8 +74,9 @@ OSD_AUTOCLOSE_S = 60.0
 TITLE_QUICK = "Быстрые настройки"
 TITLE_OSD = "Меню Panasonic на камере"
 KEYS_QUICK = "↑↓ пункт · ←→ значение · ○ закрыть"
-KEYS_OSD = "↑↓ · → выбрать · ← назад · ○ закрыть"
-ORDER = ("focus", "wb", "ctemp", "iris", "gain", "shutter", "synchro", "pedestal", "detail", "osd")
+KEYS_OSD = "↑↓ пункт · → выбрать\n← назад · ○ закрыть"
+OSD_WIDTH = 230  # в меню Panasonic — узкая плашка слева: середину кадра занимает меню самой камеры
+ORDER = ("power", "focus", "wb", "ctemp", "iris", "gain", "shutter", "synchro", "pedestal", "detail", "osd")
 REFUSED_HINT = ("Камера не принимает эту настройку: она в режиме Full Auto. Выключите Full Auto "
                 "(«Меню Panasonic на камере» → Scene) — тогда настройки заработают.")
 OSD_HINT = "Меню рисует сама камера — смотрите на картинку этой клетки. ○ или Esc — закрыть меню камеры."
@@ -83,6 +85,7 @@ HZ50 = True  # ⚠ сеть 50 Гц (Россия): подписи затвор�
 
 class CameraMenu(QFrame):
     openChanged = Signal(bool)
+    placementChanged = Signal(str)  # center | left — где меню поверх видео
 
     def __init__(self, session: Callable[[], object | None], controls, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -110,7 +113,7 @@ class CameraMenu(QFrame):
         self.keys_label = QLabel(KEYS_QUICK)
         self.keys_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION - 1}px;")
         self.keys_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        head = QHBoxLayout()
+        head = self._head = QHBoxLayout()
         head.setContentsMargins(SP[2], 2, SP[2], 2)
         head.addWidget(self.title_label)
         head.addStretch(1)
@@ -118,6 +121,8 @@ class CameraMenu(QFrame):
         lay.addLayout(head)
         self.osd_mode = False
         self.on_air: Callable[[], bool] = lambda: False  # окно подставляет: камера меню сейчас в PGM
+        self.on_power_on: Callable[[], None] = lambda: None  # окно подставляет: включить камеру меню
+        self._placement = "center"
         self._rows: dict[str, _Row] = {}
         for key in ORDER:
             r = _Row(key)
@@ -179,7 +184,18 @@ class CameraMenu(QFrame):
         img = self._image()
         return self._cur("ctemp", getattr(img, "color_temp", None))
 
+    def _power(self) -> str:
+        p = getattr(self._s(), "power", "on")
+        return p if isinstance(p, str) else "on"
+
+    def _asleep(self) -> bool:
+        return self._power() in ("standby", "switching")
+
     def _enabled(self, key: str) -> bool:
+        if key == "power":
+            return self._power() == "standby"
+        if self._asleep():
+            return False
         if key == "focus":
             return self._s() is not None
         if key == "iris":
@@ -198,6 +214,8 @@ class CameraMenu(QFrame):
         return False
 
     def visible_keys(self) -> list[str]:
+        if self._asleep():  # камера спит — в меню только «Включить камеру» (геймпаду больше нечем её включить)
+            return ["power"]
         keys = ["focus", "wb"]
         if self._wb() == P.WB_VAR:
             keys.append("ctemp")
@@ -236,6 +254,7 @@ class CameraMenu(QFrame):
         out["pedestal"] = "—" if pd is None else f"{pd:+d}  ◀ ▶".replace("+0", "0")
         out["detail"] = "—" if dt is None else P.DETAIL_MODES.get(dt, "?")
         out["osd"] = "›"
+        out["power"] = "включается…" if self._power() == "switching" else "×"
         return out
 
     def _set_hint_color(self, color: str) -> None:
@@ -255,11 +274,20 @@ class CameraMenu(QFrame):
             above = [k for k in ORDER[:i] if k in keys and self._enabled(k)]
             self._cursor = above[-1] if above else next((k for k in keys if self._enabled(k)), keys[0])
         vals = self.values()
-        titles = {"focus": "Фокус", "wb": "Баланс белого", "ctemp": "   Цвет. температура",
+        titles = {"power": "Включить камеру", "focus": "Фокус", "wb": "Баланс белого", "ctemp": "   Цвет. температура",
                   "iris": "Ирис", "gain": "Gain", "shutter": "Затвор", "synchro": "   Частота Synchro",
                   "pedestal": "Уровень чёрного", "detail": "Резкость", "osd": "Меню Panasonic на камере"}
         self.title_label.setText(TITLE_OSD if self.osd_mode else TITLE_QUICK)
         self.keys_label.setText(KEYS_OSD if self.osd_mode else KEYS_QUICK)
+        # меню Panasonic: узкая плашка слева — название и клавиши столбиком, без пояснения
+        self.setFixedWidth(OSD_WIDTH if self.osd_mode else WIDTH)
+        self._head.setDirection(QBoxLayout.TopToBottom if self.osd_mode else QBoxLayout.LeftToRight)
+        self.keys_label.setAlignment(Qt.AlignLeft if self.osd_mode else Qt.AlignRight | Qt.AlignVCenter)
+        self.hint.setVisible(not self.osd_mode)
+        placement = "left" if self.osd_mode else "center"
+        if placement != self._placement:
+            self._placement = placement
+            self.placementChanged.emit(placement)
         for k, r in self._rows.items():
             r.setVisible(k in keys and not self.osd_mode)
             r.title.setText(titles[k])
@@ -271,15 +299,18 @@ class CameraMenu(QFrame):
         self.hint.setText(OSD_HINT if self.osd_mode else REFUSED_HINT if refused else WHY.get(self._cursor, ""))
         # перенос строк: высоту считаем по ширине меню, иначе пояснение обрезается снизу
         m = self.layout().contentsMargins()
-        self.hint.setFixedHeight(self.hint.heightForWidth(WIDTH - m.left() - m.right()))
+        self.hint.setFixedHeight(0 if self.osd_mode else self.hint.heightForWidth(WIDTH - m.left() - m.right()))
         self.adjustSize()
+
+    def placement(self) -> str:
+        return self._placement
 
     # --- открытие и закрытие ---------------------------------------------------
 
     def open(self) -> None:
         if not self.is_open:
             self.is_open = True
-            self._cursor = "focus"
+            self._cursor = "power" if self._asleep() else "focus"
             self.show()
             self.raise_()
             self._tick.start()
@@ -345,6 +376,10 @@ class CameraMenu(QFrame):
         k = self._cursor
         if not self._enabled(k):
             return
+        if k == "power":
+            if d > 0:
+                self.on_power_on()
+            return
         self._light(k)
         if k == "focus":
             if not self._controls.af_check.isChecked():
@@ -371,6 +406,11 @@ class CameraMenu(QFrame):
             self._s().osd_key("enter")
             return
         k = self._cursor
+        if k == "power":
+            if self._enabled(k):
+                self.on_power_on()
+            self._render()
+            return
         if self._enabled(k):
             self._light(k)
             if k == "osd":

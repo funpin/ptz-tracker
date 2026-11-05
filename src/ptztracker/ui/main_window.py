@@ -165,6 +165,8 @@ def _clamp1(v: float) -> float:
 
 
 QWIDGETSIZE_MAX = (1 << 24) - 1  # «без предела» по высоте, как в Qt
+STRIP_MS = 80  # снимки в полоске «1 камера» — ~12 кадров в секунду (пользователь 2026-11-06: хотя бы 10–15)
+STRIP_THUMB_H = 72
 CYCLE_S = 30.0  # «По очереди» в свободной клетке: смена вида (пользователь 2026-11-05)
 CYCLE_KINDS = ("summary", "position")
 SERVICE_CHOICES = [("svc:summary", "Сводка"), ("svc:position", "Положение камер"),
@@ -353,6 +355,9 @@ class MainWindow(QMainWindow):
         self.camera_menu.openChanged.connect(self._on_menu_changed)
         # меню Panasonic камера рисует в своё видео: у камеры в эфире — спросить перед открытием
         self.camera_menu.on_air = lambda: (s := self._menu_slot()) is not None and self._tally_per[s][1] == "pgm"
+        self.camera_menu.on_power_on = lambda: self._power_on(self._menu_slot())  # Options → «Включить камеру»
+        self.camera_menu.placementChanged.connect(
+            lambda corner: self._menu_host is not None and self._menu_host.set_overlay_corner(self.camera_menu, corner))
 
         side = QWidget()
         sl = QVBoxLayout(side)
@@ -592,6 +597,10 @@ class MainWindow(QMainWindow):
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._update_status)
         self._status_timer.start(500)
+        # снимки камер в полоске «1 камера» — чаще тика статуса; таймер идёт только в этом режиме
+        self._strip_timer = QTimer(self)
+        self._strip_timer.setInterval(STRIP_MS)
+        self._strip_timer.timeout.connect(self._refresh_strip_frames)
 
         QApplication.instance().installEventFilter(self)
         self._restart_atem()
@@ -849,9 +858,35 @@ class MainWindow(QMainWindow):
             elif not self.single_view:
                 gl.addWidget(c, i // 2, i % 2)
             c.setVisible(not self.single_view or i == sel)
+        if self.single_view:
+            self._strip_timer.start()
+        else:
+            self._strip_timer.stop()
         self.strip.setVisible(self.single_view)
         self._refresh_strip()
         QTimer.singleShot(0, self._fit_rows)
+
+    @staticmethod
+    def _strip_image(fr) -> QImage:
+        h, w = fr.image.shape[:2]
+        return QImage(fr.image.data, w, h, fr.image.strides[0], QImage.Format_BGR888).scaledToHeight(
+            STRIP_THUMB_H, Qt.SmoothTransformation)
+
+    def _refresh_strip_frames(self) -> None:
+        """Только кадры камер в полоске, ~12 раз в секунду; кадр не новый — карточку не трогаем. Уменьшение 640×360
+        до 128×72 — доли миллисекунды: на слежение и камеру не влияет (кадры уже декодированы потоком видео)."""
+        if not self.single_view:
+            return
+        for card in self.strip.items:
+            if card.item.service:
+                continue
+            c = self.grid.cells[card.slot]
+            fr = c.session.frames.latest() if c is not None else None
+            if fr is None or fr.seq == card.seq:
+                continue
+            card.seq = fr.seq
+            card.item = dataclasses.replace(card.item, image=self._strip_image(fr))
+            card.update()
 
     def _refresh_strip(self) -> None:
         if not self.single_view:
@@ -862,11 +897,7 @@ class MainWindow(QMainWindow):
             if c is None or i == big:
                 continue
             fr = c.session.frames.latest()
-            img = None
-            if fr is not None:
-                h, w = fr.image.shape[:2]
-                img = QImage(fr.image.data, w, h, fr.image.strides[0], QImage.Format_BGR888).scaledToHeight(
-                    72, Qt.SmoothTransformation)
+            img = self._strip_image(fr) if fr is not None else None
             items.append(StripItem(i, c.cfg.name, self._tally_per[i][1], img))
         rows = self._service["summary"]._rows
         for kind in KINDS:  # служебные виды из свободных клеток — плитками после камер
@@ -947,7 +978,7 @@ class MainWindow(QMainWindow):
         hidden = m.isHidden()
         if self._menu_host is not None:
             self._menu_host.remove_overlay(m)
-        frame.add_overlay(m, "center")
+        frame.add_overlay(m, m.placement())
         m.setVisible(not hidden)
         self._menu_host = frame
 
@@ -1905,6 +1936,8 @@ class MainWindow(QMainWindow):
                 continue
             s = c.session
             cell.power_overlay.set_view(power_view(s.power, s.online), s.cfg.name, s.supports("power"))
+            if self.camera_menu.is_open and self._menu_host is cell.video_frame:
+                self.camera_menu.raise_()  # заставка «камера выключена» поднимается каждый тик — меню остаётся сверху
             self._remember_rtsp_url(s)
             self._remember_speed_scale(s, i)
             self._remember_camera_info(s)

@@ -79,3 +79,24 @@ def test_status_bar_says_full_auto(qtbot, tmp_path):
     w._update_status()
     assert "Full Auto" in w.statusBar().currentMessage()
     w.close()
+
+
+def test_menu_stays_above_standby_cover_and_powers_on(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w.show()
+    qtbot.waitUntil(lambda: w.session is not None, timeout=3000)
+    s = w.session
+    s._power = "standby"
+    calls = []
+    s.set_power = lambda on: calls.append(on)
+    w.camera_menu.open()
+    frame = w.cells[w.grid.selected].video_frame
+    w._menu_to(frame)
+    for _ in range(3):
+        w._update_status()
+    kids = frame.children()
+    assert w.camera_menu.isVisible() and kids.index(w.camera_menu) > kids.index(w.cells[w.grid.selected].power_overlay)
+    assert w.camera_menu.visible_keys() == ["power"]
+    w.camera_menu.accept()
+    assert calls == [True]
+    w.close()

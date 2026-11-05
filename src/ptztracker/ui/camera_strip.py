@@ -52,6 +52,7 @@ class StripCard(QWidget):
         super().__init__()
         self.item = item
         self.slot = item.slot
+        self.seq = -1  # номер последнего показанного кадра (окно обновляет снимок только по новому кадру)
         self.setFixedSize(SERVICE_W if item.service else CARD_W, STRIP_H)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip(f"{item.name} — показать крупно" if item.service

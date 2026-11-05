@@ -482,3 +482,43 @@ def test_image_refusal_detection():
     assert is_image_refusal("#AXI95B", "eR3:AXI") and is_image_refusal("#D30", "eR3:")  # ирис
     assert not is_image_refusal("OAW:1", "OAW:1") and not is_image_refusal("#PTS5050", "ER3:PTS")
     assert not is_image_refusal("OAW:1", "ER1:OAW")
+
+
+# --- камера в режиме ожидания: Options → «Включить камеру» (пользователь 2026-11-06) ----------------
+
+
+class StandbySession(FullSession):
+    def __init__(self):
+        super().__init__()
+        self.power = "standby"
+
+
+def test_standby_menu_has_only_power_on(qtbot):
+    s = StandbySession()
+    m, _ = build(qtbot, s)
+    asked = []
+    m.on_power_on = lambda: asked.append(1)
+    m.open()
+    assert m.visible_keys() == ["power"] and m._cursor == "power"
+    assert "Включить" in m._rows["power"].title.text()
+    m.accept()
+    assert asked == [1]
+    s.power = "switching"
+    m._render()
+    assert not m._enabled("power") and "включается" in m._rows["power"].value.text().lower()
+    s.power = "on"
+    m._render()
+    assert "power" not in m.visible_keys() and m._cursor == "focus"
+
+
+def test_osd_mode_is_compact_on_the_left(qtbot):
+    s = OsdSession()
+    s.image = dataclasses.replace(ImageState(), shutter=0, pedestal=0, detail=1)
+    m, _ = build(qtbot, s)
+    m.open()
+    m.click_item("osd")
+    assert m.osd_mode and m.placement() == "left"
+    assert m.width() <= cm.OSD_WIDTH and not m.hint.isVisible()
+    m._leave_osd()
+    m._render()
+    assert m.placement() == "center"
