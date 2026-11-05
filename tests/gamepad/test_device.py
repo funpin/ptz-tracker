@@ -298,3 +298,64 @@ def test_sdl_battery_non_dualsense_and_failures():
     sb = _backend(None)
     sb._hid_lib = lambda: (_ for _ in ()).throw(OSError("нет SDL"))
     assert sb.battery() == (None, None)
+
+
+class FakeSerialLib:
+    def __init__(self, serial):
+        self.serial = serial
+
+    def SDL_GameControllerFromInstanceID(self, iid):
+        return 99 if iid == 7 else None
+
+    def SDL_GameControllerGetSerial(self, ptr):
+        assert ptr == 99
+        return self.serial
+
+
+def _id_backend(serial, guid="030000004c050000e60c000000000000", name="DualSense Wireless Controller"):
+    from ptztracker.gamepad.device import SdlBackend
+
+    class Joy:
+        def get_instance_id(self):
+            return 7
+
+        def get_guid(self):
+            return guid
+
+        def get_power_level(self):
+            return "full"
+
+    class Ctl:
+        pass
+    sb = SdlBackend()
+    sb._ctl = Ctl()
+    sb._ctl.name = name
+    sb._ctl.as_joystick = lambda: Joy()
+    lib = FakeSerialLib(serial)
+    sb._sdl_lib = lambda: lib
+    return sb
+
+
+def test_pad_id_is_serial_when_sdl_has_it():
+    info = _id_backend(b"a0:b1:c2:d3:e4:f5").info()
+    assert info["id"] == "a0:b1:c2:d3:e4:f5" and info["has_serial"] is True
+
+
+def test_pad_id_falls_back_to_guid_and_name():
+    for serial in (None, b""):
+        info = _id_backend(serial).info()
+        assert info["id"] == "030000004c050000e60c000000000000:DualSense Wireless Controller"
+        assert info["has_serial"] is False
+
+
+def test_pad_id_survives_sdl_failure():
+    sb = _id_backend(None)
+    sb._sdl_lib = lambda: (_ for _ in ()).throw(OSError("нет SDL"))
+    info = sb.info()
+    assert info["id"].endswith(":DualSense Wireless Controller") and info["has_serial"] is False
+
+
+def test_no_controller_info_has_no_id():
+    from ptztracker.gamepad.device import SdlBackend
+    info = SdlBackend().info()
+    assert info["id"] is None and info["has_serial"] is False

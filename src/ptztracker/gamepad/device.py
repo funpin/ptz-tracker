@@ -227,7 +227,8 @@ class SdlBackend:
 
     def info(self) -> dict:
         if self._ctl is None:
-            return {"name": None, "type": None, "has_led": False, "has_rumble": False, "power": None}
+            return {"name": None, "type": None, "has_led": False, "has_rumble": False, "power": None,
+                    "id": None, "has_serial": False}
         name = self._ctl.name or ""
         low = name.lower()
         kind = "ps5" if "dualsense" in low else "ps4" if ("dualshock" in low or "ps4" in low) else "other"
@@ -238,7 +239,32 @@ class SdlBackend:
             pass
         # pygame-ce не сообщает о возможностях напрямую: LED и вибрацию умеют DualSense/DualShock
         ps = kind in ("ps5", "ps4")
-        return {"name": name, "type": kind, "has_led": ps, "has_rumble": True, "power": power}
+        serial = self._serial()
+        pad_id = serial or f"{self._guid()}:{name}"
+        return {"name": name, "type": kind, "has_led": ps, "has_rumble": True, "power": power,
+                "id": pad_id, "has_serial": bool(serial)}
+
+    def _serial(self) -> str | None:
+        """Серийный номер SDL (у DualSense — адрес Bluetooth); нет или сбой — None. Только для опознания настроек."""
+        try:
+            lib = self._sdl_lib()
+            fn = lib.SDL_GameControllerGetSerial
+            if isinstance(lib, ctypes.CDLL):
+                fn.restype, fn.argtypes = ctypes.c_char_p, [ctypes.c_void_p]
+            ptr = lib.SDL_GameControllerFromInstanceID(self._ctl.as_joystick().get_instance_id())
+            raw = fn(ptr) if ptr else None
+            return (raw.decode("utf-8", "replace").strip() or None) if raw else None
+        except Exception as e:
+            if "serial" not in self._warned:
+                self._warned.add("serial")
+                log.debug("Геймпад: серийный номер не прочитан: %s: %s", type(e).__name__, e)
+            return None
+
+    def _guid(self) -> str:
+        try:
+            return str(self._ctl.as_joystick().get_guid())
+        except Exception:
+            return "?"
 
     def _call(self, what: str, fn, *args) -> bool:
         """Вызов светодиода/вибрации: сбой или False не молчат (один раз в debug на каждый вид вызова)."""
