@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWi
 
 from ptztracker.camera.he42 import HFOV_TELE_DEG, HFOV_WIDE_DEG, PAN_LIMIT_DEG
 from ptztracker.camera.session import PtzPosition
+from ptztracker.multicam.timeline import Segment
 from ptztracker.ui.theme import FONT_FAMILY, FS_CAPTION, R_PANEL, R_TAG, SP, C, qcolor
 from ptztracker.ui.widgets import BrandMark, PadBadge, StateTag
 
@@ -21,10 +22,10 @@ Kind = Literal["position", "graphs", "summary"]
 KINDS: tuple[Kind, ...] = ("summary", "position", "graphs")  # порядок, в котором занимают пустые клетки
 GRAPH_SECONDS = 30.0
 TITLES = {"position": "Положение камер", "graphs": "Графики PTZ", "summary": "Сводка"}
-GRAPHS_NOTE = "Запись видео — в следующей версии"
 NEAR_LIMIT_DEG = 15.0  # ближе к пределу поворота — оранжевая подпись
 TILT_RANGE = (-30.0, 90.0)  # шкала наклона на карточке, °
 ZOOM_MAX_X = HFOV_WIDE_DEG / HFOV_TELE_DEG
+GAUGES_MIN_W = 260  # уже — карточка положения без шкал наклона и зума
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,13 @@ class ServiceRow:
     calibrated: bool = False
     video_fps: float | None = None
     preset_pans: list[float] = field(default_factory=list)
+    # «Сводка» v2: дорожка за 10 мин, черта эфира, часы, итоги сеанса (multicam/timeline.py)
+    timeline: tuple[Segment, ...] = ()
+    air: tuple[Segment, ...] = ()
+    clock: tuple[str, float | None] = ("off", None)
+    air_total: float = 0.0
+    losses: int = 0
+    span_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -64,16 +72,23 @@ def position_geometry(r: ServiceRow) -> PositionGeometry:
 
 
 def card_rects(n: int, rect: QRectF) -> list[QRectF]:
-    """1–2 камеры — карточки в ряд, 3–4 — сеткой 2×2."""
+    """Карточки в ряд, если так каждая не уже 0,75 высоты (широкая низкая клетка); иначе 3–4 — сеткой 2×2."""
     if n <= 0:
         return []
-    cols = n if n <= 2 else 2
-    rows = 1 if n <= 2 else 2
+    in_row = n <= 2 or (rect.width() - SP[2] * (n - 1)) / n >= 0.75 * rect.height()
+    cols = n if in_row else 2
+    rows = 1 if in_row else 2
     gap = SP[2]
     w = (rect.width() - gap * (cols - 1)) / cols
     h = (rect.height() - gap * (rows - 1)) / rows
     return [QRectF(rect.left() + (i % cols) * (w + gap), rect.top() + (i // cols) * (h + gap), w, h)
             for i in range(n)]
+
+
+def tile_colors(tally: str | None, selected: bool = False) -> tuple[str, str]:
+    """Плитка номера камеры — везде одинаково: цветом эфира; без эфира у выбранной — белая (брендбук)."""
+    return {"pgm": (C.PGM, C.TEXT), "pvw": (C.PVW, C.BG)}.get(
+        tally or "", (C.TEXT, C.BG) if selected else (C.RAISED_HI, C.TEXT))
 
 
 def ptz_text(ptz: PtzPosition | None) -> str:
@@ -160,11 +175,12 @@ class ServiceCell(QWidget):
         # шапка карточки: номер, имя, состояние
         hx, hy = card.left() + SP[1] + 2, card.top() + SP[1]
         num = QRectF(hx, hy, 18, 18)
+        bg, fg = tile_colors(r.tally, sel)
         p.setPen(Qt.NoPen)
-        p.setBrush(qcolor(C.TEXT if sel else C.RAISED_HI))
+        p.setBrush(qcolor(bg))
         p.drawRoundedRect(num, R_TAG, R_TAG)
         p.setFont(self._font(11, True))
-        p.setPen(qcolor(C.BG if sel else C.TEXT))
+        p.setPen(qcolor(fg))
         p.drawText(num, Qt.AlignCenter, str(r.slot + 1))
         p.setFont(self._font(FS_CAPTION, True))
         p.setPen(qcolor(C.TEXT))
@@ -188,7 +204,8 @@ class ServiceCell(QWidget):
             p.drawText(QRectF(card.left(), vy, card.width(), vals_h), Qt.AlignCenter, "нет данных")
         # середина: компас слева, шкалы наклона и зума справа
         mid = QRectF(card.left() + SP[1], hy + 18 + SP[0], card.width() - 2 * SP[1], vy - hy - 18 - 2 * SP[0])
-        gauges_w = 52.0
+        # шкалы наклона и зума — только в крупной карточке; в малой они нечитаемы, цифры есть внизу
+        gauges_w = 52.0 if card.width() >= GAUGES_MIN_W else 0.0
         side = min(mid.width() - gauges_w, mid.height())
         if side < 30:
             p.setOpacity(1.0)
@@ -196,6 +213,9 @@ class ServiceCell(QWidget):
         dial = QRectF(mid.left() + (mid.width() - gauges_w - side) / 2, mid.top() + (mid.height() - side) / 2,
                       side, side)
         self._paint_dial(p, r, g, dial, sel)
+        if not gauges_w:
+            p.setOpacity(1.0)
+            return
         gx = mid.right() - gauges_w + SP[1]
         tilt_k = (g.tilt - TILT_RANGE[0]) / (TILT_RANGE[1] - TILT_RANGE[0])
         zoom_k = math.log(g.zoom_x) / math.log(ZOOM_MAX_X)
@@ -267,129 +287,166 @@ class ServiceCell(QWidget):
     # --- графики ----------------------------------------------------------------
 
     def _paint_graphs(self, p: QPainter, body: QRectF) -> None:
-        row = next((r for r in self._rows if r.slot == self._selected), None)
-        note_h = 16.0
-        plot = QRectF(body.left(), body.top(), body.width(), body.height() - note_h - 4)
-        p.setPen(QPen(qcolor(C.LINE), 1))
-        p.setBrush(Qt.NoBrush)
-        p.drawRoundedRect(plot.adjusted(0.5, 0.5, -0.5, -0.5), R_PANEL - 2, R_PANEL - 2)
-        if row is not None and row.history and plot.height() > 20:
-            now = time.monotonic()
-            series = (
-                (C.TEXT, [h.pan_deg for h in row.history], "P"),
-                (C.LOST, [h.tilt_deg for h in row.history], "T"),
-                (C.LIME, [h.zoom_x if h.zoom_x is not None else math.nan for h in row.history], "Z"),
-            )
-            xs = [1.0 - (now - h.t) / GRAPH_SECONDS for h in row.history]
-            for color, ys, label in series:
-                good = [y for y in ys if not math.isnan(y)]
+        """Строка на камеру, столбцы «поворот / наклон / зум»: короткий график за GRAPH_SECONDS и значение в углу.
+        Лайм — камера ведёт цель, светло-серый — нет (тот же смысл, что у положения)."""
+        n = len(self._rows)
+        if not n:
+            return
+        head_h, name_w, gap = 14.0, min(96.0, body.width() * 0.18), SP[1] - 2
+        col_w = (body.width() - name_w - gap * 3) / 3
+        p.setFont(self._font(9.5, True))
+        p.setPen(qcolor(C.TEXT_FAINT))
+        for k, t in enumerate(("поворот", "наклон", "зум")):
+            p.drawText(QRectF(body.left() + name_w + gap + k * (col_w + gap), body.top(), col_w, head_h),
+                       Qt.AlignLeft | Qt.AlignVCenter, t.upper())
+        row_h = min(44.0, (body.height() - head_h - SP[0] - gap * (n - 1)) / n)
+        if row_h < 18:
+            return
+        now = time.monotonic()
+        for i, r in enumerate(self._rows):
+            y = body.top() + head_h + SP[0] + i * (row_h + gap)
+            tile = QRectF(body.left(), y + row_h / 2 - 9, 18, 18)
+            bg, fg = tile_colors(r.tally)
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(bg))
+            p.drawRoundedRect(tile, R_TAG, R_TAG)
+            p.setFont(self._font(11, True))
+            p.setPen(qcolor(fg))
+            p.drawText(tile, Qt.AlignCenter, str(r.slot + 1))
+            p.setFont(self._font(FS_CAPTION - 1, True))
+            p.setPen(qcolor(C.TEXT))
+            nw = name_w - 18 - SP[1]
+            p.drawText(QRectF(tile.right() + SP[1] - 2, y, nw, row_h), Qt.AlignLeft | Qt.AlignVCenter,
+                       p.fontMetrics().elidedText(r.name, Qt.ElideRight, int(nw)))
+            color = C.LIME if r.track == "on" else C.TEXT_DIM
+            xs = [1.0 - (now - h.t) / GRAPH_SECONDS for h in r.history]
+            series = ([h.pan_deg for h in r.history], [h.tilt_deg for h in r.history],
+                      [h.zoom_x if h.zoom_x is not None else math.nan for h in r.history])
+            for k, ys in enumerate(series):
+                box = QRectF(body.left() + name_w + gap + k * (col_w + gap), y, col_w, row_h)
+                p.setPen(QPen(qcolor(C.LINE), 1))
+                p.setBrush(qcolor(C.BG))
+                p.drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+                good = [v for v in ys if not math.isnan(v)]
                 if not good:
                     continue
                 lo, hi = min(good), max(good)
                 span = (hi - lo) or 1.0
-                pts = [
-                    QPointF(plot.left() + max(0.0, min(1.0, x)) * plot.width(),
-                            plot.bottom() - 4 - (y - lo) / span * (plot.height() - 8))
-                    for x, y in zip(xs, ys, strict=True) if not math.isnan(y)
-                ]
-                p.setPen(QPen(qcolor(color), 1.5))
+                pts = [QPointF(box.left() + 3 + max(0.0, min(1.0, x)) * (box.width() - 6),
+                               box.bottom() - 4 - (v - lo) / span * (box.height() - 8))
+                       for x, v in zip(xs, ys, strict=True) if not math.isnan(v)]
                 if len(pts) > 1:
+                    p.setPen(QPen(qcolor(color), 1.5))
                     p.drawPolyline(pts)
-                p.setFont(self._font(FS_CAPTION))
-                p.drawText(QRectF(plot.left() + SP[1], plot.top() + SP[0] + "PTZ".index(label) * 14, 80, 14),
-                           Qt.AlignLeft | Qt.AlignVCenter, f"{label} {good[-1]:.1f}")
-        p.setPen(qcolor(C.TEXT_FAINT))
-        p.setFont(self._font(FS_CAPTION))
-        p.drawText(QRectF(body.left(), body.bottom() - note_h, body.width(), note_h),
-                   Qt.AlignLeft | Qt.AlignVCenter, GRAPHS_NOTE)
+                text = f"{good[-1]:.1f}×" if k == 2 else f"{good[-1]:+.1f}°"
+                p.setFont(self._font(FS_CAPTION - 1.5))
+                p.setPen(qcolor(C.TEXT))
+                p.drawText(box.adjusted(0, 1, -5, 0), Qt.AlignRight | Qt.AlignTop, text)
 
-    # --- сводка -----------------------------------------------------------------
+    # «Сводка» v2 (пользователь 2026-11-05): строка на камеру — дорожка за 10 мин, под ней черта эфира,
+    # справа крупные часы. Ярлыки, к/с, геймпады и калибровка уже есть в шапках клеток — здесь не повторяем.
+    CLOCK_TEXT = {"air": "эфир", "on": "ведёт", "lost": "ищет", "off": "вручную", "standby": "ожидание",
+                  "no_analysis": "без анализа"}
+    TRACK_COLOR = {"on": C.LIME, "lost": C.LOST}  # остальное — серым: «вручную»
+
+    @staticmethod
+    def _mmss(sec: float | None) -> str:
+        if sec is None:
+            return "—"
+        sec = int(sec)
+        return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}" if sec >= 3600 else f"{sec // 60:02d}:{sec % 60:02d}"
 
     def summary_lines(self) -> list[str]:
         out = []
         for r in self._rows:
-            tags = " ".join(StateTag.TEXTS[k] for k in (r.tally, r.track) if k)
-            pads = ", ".join(f"геймпад {n} {self._pct_text(r, n)}" for n in r.pads) or "—"
-            fps = self._fps_text(r)
-            cal = "калибровка" if r.calibrated else "нет калибровки"
-            out.append(f"{r.slot + 1} · {r.name} | {tags} | {pads} | {fps} | {cal}")
+            kind, sec = r.clock
+            out.append(f"{r.slot + 1} · {r.name} | {self.CLOCK_TEXT.get(kind, kind)} {self._mmss(sec)}")
         return out
 
-    @staticmethod
-    def _pct_text(r: ServiceRow, pad: int) -> str:
-        pct = r.battery.get(pad, (None, False))[0]
-        return "—" if pct is None else f"{pct}%"
+    def day_text(self) -> str:
+        on_air = [f"{r.name} {round(r.air_total / 60)} мин" for r in self._rows if r.air_total >= 30]
+        n = sum(r.losses for r in self._rows)
+        times = "раза" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "раз"
+        parts = (["в эфире " + ", ".join(on_air)] if on_air else []) + [f"цель терялась {n} {times}"]
+        return "За сеанс: " + " · ".join(parts)
 
     def _paint_summary(self, p: QPainter, body: QRectF) -> None:
-        """Строка на камеру; колонки по ширине содержимого: имя | эфир | слежение | геймпады | к/с | калибровка.
-        Узко — сначала пропадают к/с, потом геймпады; имя сокращается «…»."""
-        row_h = 34.0
-        gap = SP[2]
-        p.setFont(self._font(FS_CAPTION + 0.5, True))
-        names = [f"{r.slot + 1} · {r.name}" for r in self._rows]
-        name_w = min(max((p.fontMetrics().horizontalAdvance(n) for n in names), default=0), body.width() * 0.3)
-        tally_w = max((self._tag(r.tally).width() for r in self._rows if r.tally), default=0)
-        track_w = max((self._tag(r.track).width() for r in self._rows), default=0)
-        pads_n = max((min(2, len(r.pads)) for r in self._rows), default=0)
-        pads_w = pads_n * PadBadge.W + max(0, pads_n - 1) * SP[0]
-        p.setFont(self._font(FS_CAPTION))
-        fm = p.fontMetrics()
-        fps_texts = [self._fps_text(r) for r in self._rows]
-        fps_w = max((fm.horizontalAdvance(t) for t in fps_texts), default=0)
-        cal_w = fm.horizontalAdvance("нет калибровки") + SP[1] + 8
-        fixed = name_w + (tally_w + gap if tally_w else 0) + track_w + gap + cal_w
-        show_pads = pads_w and fixed + pads_w + gap <= body.width()
-        show_fps = fixed + (pads_w + gap if show_pads else 0) + fps_w + gap <= body.width()
+        foot_h = 16.0
+        n = len(self._rows)
+        if not n:
+            return
+        gap = SP[1] - 2
+        row_h = min(52.0, (body.height() - foot_h - SP[1] - gap * (n - 1)) / n)
+        clock_w = 74.0
         for i, r in enumerate(self._rows):
-            y = body.top() + i * row_h
-            if y + row_h > body.bottom():
+            y = body.top() + i * (row_h + gap)
+            if row_h < 26:
                 break
-            cy = y + row_h / 2
-            x = body.left()
-            p.setFont(self._font(FS_CAPTION + 0.5, True))
-            p.setPen(qcolor(C.TEXT))
-            p.drawText(QRectF(x, y, name_w, row_h), Qt.AlignLeft | Qt.AlignVCenter,
-                       p.fontMetrics().elidedText(names[i], Qt.ElideRight, int(name_w)))
-            x += name_w + gap
-            if tally_w:
-                if r.tally:
-                    t = self._tag(r.tally)
-                    self._draw_widget(p, t, x, cy - t.height() / 2)
-                x += tally_w + gap
-            t = self._tag(r.track)
-            self._draw_widget(p, t, x, cy - t.height() / 2)
-            x += track_w + gap
-            if show_pads:
-                px = x
-                for n in r.pads[:2]:
-                    pct, chg = r.battery.get(n, (None, False))
-                    self._badge.set(n, pct, chg)
-                    px += self._draw_widget(p, self._badge, px, cy - PadBadge.H / 2) + SP[0]
-                x += pads_w + gap
-            p.setFont(self._font(FS_CAPTION))
-            p.setPen(qcolor(C.TEXT_DIM))
-            if show_fps:
-                p.drawText(QRectF(x, y, fps_w, row_h), Qt.AlignLeft | Qt.AlignVCenter, fps_texts[i])
-            cal_x = body.right() - cal_w
-            p.setPen(Qt.NoPen)
-            p.setBrush(qcolor(C.LIME if r.calibrated else C.LOST))
-            p.drawEllipse(QPointF(cal_x + 4, cy), 3.5, 3.5)
-            p.setPen(qcolor(C.TEXT_DIM))
-            p.drawText(QRectF(cal_x + 8 + SP[1], y, cal_w - 8 - SP[1], row_h), Qt.AlignLeft | Qt.AlignVCenter,
-                       "калибровка" if r.calibrated else "нет калибровки")
+            box = QRectF(body.left(), y, body.width(), row_h)
             p.setPen(QPen(qcolor(C.LINE), 1))
-            p.drawLine(QPointF(body.left(), y + row_h - 0.5), QPointF(body.right(), y + row_h - 0.5))
-        if self.footer:
-            y = body.top() + len(self._rows) * row_h + SP[2]
-            p.setFont(self._font(FS_CAPTION))
+            p.setBrush(qcolor(C.BG))
+            p.drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), R_PANEL - 2, R_PANEL - 2)
+            cy = box.center().y()
+            # номер — плитка цветом эфира, как в шапке клетки
+            tile = QRectF(box.left() + SP[1] + 2, cy - 9, 18, 18)
+            bg, fg = tile_colors(r.tally)
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(bg))
+            p.drawRoundedRect(tile, R_TAG, R_TAG)
+            p.setFont(self._font(11, True))
+            p.setPen(qcolor(fg))
+            p.drawText(tile, Qt.AlignCenter, str(r.slot + 1))
+            name_w = min(110.0, box.width() * 0.2)
+            p.setFont(self._font(FS_CAPTION, True))
+            p.setPen(qcolor(C.TEXT))
+            p.drawText(QRectF(tile.right() + SP[1], box.top(), name_w, row_h), Qt.AlignLeft | Qt.AlignVCenter,
+                       p.fontMetrics().elidedText(r.name, Qt.ElideRight, int(name_w)))
+            # дорожка и черта эфира
+            bar = QRectF(tile.right() + SP[1] + name_w + SP[1], cy - 6, 0, 9)
+            bar.setRight(box.right() - clock_w - SP[2])
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(C.RAISED))
+            p.drawRoundedRect(bar, 3, 3)
+            p.save()
+            clip = QPainterPath()
+            clip.addRoundedRect(bar, 3, 3)
+            p.setClipPath(clip)
+            for sg in r.timeline:
+                p.fillRect(QRectF(bar.left() + sg.f0 * bar.width(), bar.top(), (sg.f1 - sg.f0) * bar.width(),
+                                  bar.height()), qcolor(self.TRACK_COLOR.get(sg.state, C.GREY)))
+            p.restore()
+            for sg in r.air:
+                p.fillRect(QRectF(bar.left() + sg.f0 * bar.width(), bar.bottom() + 2, (sg.f1 - sg.f0) * bar.width(),
+                                  3), qcolor(C.PGM))
+            # часы
+            kind, sec = r.clock
+            col = {"air": C.PGM, "on": C.LIME, "lost": C.LOST}.get(kind, C.TEXT_FAINT)
+            cr = QRectF(box.right() - clock_w - SP[1], box.top() + 2, clock_w, row_h - 4)
+            p.setFont(self._font(9.5, True))
+            p.setPen(qcolor(col))
+            big = row_h >= 40
+            p.drawText(QRectF(cr.left(), cr.top() + (2 if big else 0), cr.width(), 12),
+                       Qt.AlignRight | Qt.AlignVCenter, self.CLOCK_TEXT.get(kind, kind).upper())
+            if big or sec is not None:
+                p.setFont(self._font(18 if big else 13, True))
+                p.setPen(qcolor(C.TEXT if sec is not None else C.TEXT_FAINT))
+                p.drawText(QRectF(cr.left() - 20, cr.top() + (14 if big else 10), cr.width() + 20, cr.height() - 14),
+                           Qt.AlignRight | Qt.AlignVCenter, self._mmss(sec))
+        # низ: легенда слева, итоги сеанса справа
+        fy = body.bottom() - foot_h
+        p.setFont(self._font(FS_CAPTION - 1.5))
+        x = body.left()
+        for text, col in (("ведёт", C.LIME), ("ищет", C.LOST), ("вручную", C.GREY), ("эфир", C.PGM)):
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(col))
+            p.drawRoundedRect(QRectF(x, fy + foot_h / 2 - 3.5, 7, 7), 2, 2)
             p.setPen(qcolor(C.TEXT_FAINT))
-            p.drawText(QRectF(body.left(), y, body.width(), 18), Qt.AlignLeft | Qt.AlignVCenter,
-                       p.fontMetrics().elidedText(self.footer, Qt.ElideRight, int(body.width())))
-
-    @staticmethod
-    def _fps_text(r: ServiceRow) -> str:
-        t = f"{r.video_fps:.0f} к/с" if r.video_fps is not None else "нет видео"
-        return t + (f" · анализ {r.analysis_fps:.0f}" if r.analysis_fps is not None else "")
+            w = p.fontMetrics().horizontalAdvance(text)
+            p.drawText(QRectF(x + 10, fy, w + 2, foot_h), Qt.AlignLeft | Qt.AlignVCenter, text)
+            x += 10 + w + SP[2]
+        right = self.day_text()
+        p.drawText(QRectF(x, fy, body.right() - x, foot_h), Qt.AlignRight | Qt.AlignVCenter,
+                   p.fontMetrics().elidedText(right, Qt.ElideLeft, int(body.right() - x)))
 
 
 class WelcomeView(QWidget):

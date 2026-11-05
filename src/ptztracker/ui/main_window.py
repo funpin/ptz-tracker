@@ -62,6 +62,7 @@ from ptztracker.gamepad.intents import (
 from ptztracker.multicam.analysis import CellState, allocate_analysis, tracking_refusal
 from ptztracker.multicam.grid import CameraGrid, Cell
 from ptztracker.multicam.pads import PadFeedback, PadMove, PadRouter
+from ptztracker.multicam.timeline import StateTimeline
 from ptztracker.multicam.velocity import MixerSource
 from ptztracker.tally import atem_input_of
 from ptztracker.tally.atem import AtemTally
@@ -432,12 +433,14 @@ class MainWindow(QMainWindow):
         ll.addWidget(grid_host, 1)
         # режим «1 камера»: остальные камеры — полоской под большой (клик — сделать большой)
         self.single_view = False
+        self._timelines: dict[str, StateTimeline] = {}  # камера → лента состояний для «Сводки»
         self._service_pref: dict[int, str] = {}  # клетка → что в ней показывать (выбор оператора в её списке)
         self._cycle_kind = CYCLE_KINDS[0]
         self._cycle_started = time.monotonic()
         self.strip = CameraStrip()
         self.strip.hide()
-        self.strip.slotClicked.connect(self.select_slot)
+        self._single_slot: int | None = None  # «1 камера»: крупно служебный вид из этой клетки (None — камера)
+        self.strip.slotClicked.connect(self._strip_clicked)
         ll.addWidget(self.strip)
         ll.addWidget(self.presets_drawer)
         central = QWidget()
@@ -792,12 +795,25 @@ class MainWindow(QMainWindow):
             return
         self.set_single_view(not self.single_view)
 
+    def _strip_clicked(self, slot: int) -> None:
+        if self.grid.cells[slot] is None:  # плитка служебного вида — крупно вместо камеры; управление не трогаем
+            self._single_slot = slot
+            self._apply_view()
+            return
+        self._single_slot = None
+        if slot == self.grid.selected:
+            self._apply_view()
+        else:
+            self.select_slot(slot)
+
     def _apply_view(self) -> None:
         """«1 камера»: выбранная клетка на всю сетку, остальные спрятаны (их сессии работают); «4» — как было."""
         if not hasattr(self, "strip"):
             return
         gl = self.grid_host.layout()
-        sel = self.grid.selected
+        if self._single_slot is not None and self.grid.cells[self._single_slot] is not None:
+            self._single_slot = None  # в клетку поставили камеру
+        sel = self._single_slot if self._single_slot is not None else self.grid.selected
         for i, c in enumerate(self.cells):
             gl.removeWidget(c)
             if self.single_view and i == sel:
@@ -812,9 +828,10 @@ class MainWindow(QMainWindow):
     def _refresh_strip(self) -> None:
         if not self.single_view:
             return
+        big = self._single_slot if self._single_slot is not None else self.grid.selected
         items = []
         for i, c in enumerate(self.grid.cells):
-            if c is None or i == self.grid.selected:
+            if c is None or i == big:
                 continue
             fr = c.session.frames.latest()
             img = None
@@ -823,6 +840,11 @@ class MainWindow(QMainWindow):
                 img = QImage(fr.image.data, w, h, fr.image.strides[0], QImage.Format_BGR888).scaledToHeight(
                     72, Qt.SmoothTransformation)
             items.append(StripItem(i, c.cfg.name, self._tally_per[i][1], img))
+        rows = self._service["summary"]._rows
+        for kind in KINDS:  # служебные виды из свободных клеток — плитками после камер
+            slot = self._service_slot.get(kind)
+            if slot is not None and slot != big:
+                items.append(StripItem(slot, TITLES[kind], None, None, service=kind, rows=rows))
         self.strip.set_items(items)
 
     def select_slot(self, slot: int) -> None:
@@ -836,6 +858,7 @@ class MainWindow(QMainWindow):
             old.mixer.release("keyboard")
             old.mixer.release("mouse")
         self.grid.selected = slot
+        self._single_slot = None
         self._select_effects()
         self._apply_view()
         self._reallocate_analysis()
@@ -1763,18 +1786,16 @@ class MainWindow(QMainWindow):
             else:
                 track = {"on": "on", "lost": "lost"}.get(self._current_view(c).kind, "off")
             pads = self._cell_pads(i)
+            tl = self._timelines.setdefault(c.cfg.id, StateTimeline())
+            now = time.monotonic()
+            tl.record(now, track, self._tally_per[i][1] == "pgm")
             rows.append(ServiceRow(
                 i, c.cfg.name, s.ptz, s.ptz_history(), r.fps if r else None, s.online, [n for n, _p, _c in pads],
                 tally=self._tally_per[i][1], track=track, battery={n: (p, ch) for n, p, ch in pads},
                 calibrated=c.cfg.calibration is not None, video_fps=st.fps if st.connected else None,
-                preset_pans=[t.pan for t in self._thumbs_of(c.cfg.id).values() if t.pan is not None]))
-        snap = self.atem.snapshot() if self.atem else None
-        atem = "ATEM не настроен" if self.atem is None else ("ATEM на связи" if snap and snap.online
-                                                              else "ATEM: нет связи")
-        mins = self.cfg.record_buffer_s // 60
-        allowed = [i + 1 for i, c in enumerate(self.grid.cells) if c is not None and c.gate.control_allowed]
-        agent = f"агент: разрешено камере {', '.join(map(str, allowed))}" if allowed else "агент выключен"
-        self._service["summary"].footer = f"{atem} · журнал помнит {mins} мин · {agent}"
+                preset_pans=[t.pan for t in self._thumbs_of(c.cfg.id).values() if t.pan is not None],
+                timeline=tuple(tl.segments(now)), air=tuple(tl.air(now)), clock=tl.clock(now),
+                air_total=tl.air_total(now), losses=tl.losses, span_s=tl.span(now)))
         for kind, widget in self._service.items():
             if want[kind] is not None:
                 widget.update_view(rows, self.grid.selected)

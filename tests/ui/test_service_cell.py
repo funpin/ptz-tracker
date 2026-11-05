@@ -119,16 +119,21 @@ def test_card_layout():
 
 
 def test_summary_lines(qtbot):
+    """«Сводка» v2: строка на камеру — дорожка за 10 мин и часы; то, что уже есть в окне, не повторяем."""
+    from ptztracker.multicam.timeline import Segment
+
     w = ServiceCell("summary")
     qtbot.addWidget(w)
-    w.resize(640, 300)
-    a = ServiceRow(0, "Сцена", None, [], 15.0, True, [0], tally="pgm", track="on", battery={0: (83, False)},
-                   calibrated=True, video_fps=25.0)
-    b = ServiceRow(1, "Зал", None, [], None, True, [1], tally="pvw", track="no_analysis", battery={1: (18, False)},
-                   calibrated=False, video_fps=12.0)
-    w.update_view([a, b], 0)
-    text = " | ".join(w.summary_lines())
-    assert "ВЕДУ" in text and "нет калибровки" in text and "1 · Сцена" in text and "PGM" in text
+    w.resize(630, 270)
+    a = ServiceRow(0, "Сцена", None, tally="pgm", track="on", timeline=(Segment("off", 0, .4), Segment("on", .4, 1)),
+                   air=(Segment("air", .5, 1),), clock=("air", 277.0), air_total=2280.0, losses=3)
+    b = ServiceRow(1, "Зал", None, tally="pvw", track="on", clock=("on", 238.0))
+    c = ServiceRow(2, "Общий", None, track="off", clock=("off", None))
+    w.update_view([a, b, c], 0)
+    lines = w.summary_lines()
+    assert lines[0] == "1 · Сцена | эфир 04:37" and lines[1] == "2 · Зал | ведёт 03:58"
+    assert lines[2] == "3 · Общий | вручную —"
+    assert "Сцена 38 мин" in w.day_text() and "3" in w.day_text()
     w.grab()
 
 
@@ -161,11 +166,12 @@ def test_summary_gets_window_data(qtbot, tmp_path):
     w.close()
 
 
-def test_summary_footer_line(qtbot, tmp_path):
+def test_summary_rows_carry_timeline(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     w._update_status()
-    foot = w._service["summary"].footer
-    assert "журнал" in foot and "агент" in foot and "ATEM" in foot
+    w._update_status()
+    rows = w._service["summary"]._rows
+    assert rows and rows[0].timeline and rows[0].clock[0] in ("off", "on", "lost", "air")
     w.close()
 
 
