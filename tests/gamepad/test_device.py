@@ -338,3 +338,46 @@ def test_no_controller_info_has_no_id():
     from ptztracker.gamepad.device import SdlBackend
     info = SdlBackend().info()
     assert info["id"] is None and info["has_serial"] is False
+
+
+class TouchLib:
+    """Подставная SDL: палец тачпада по сценарию; None — сбой вызова."""
+
+    def __init__(self, fingers):
+        self.fingers = list(fingers)
+
+    def SDL_GameControllerFromInstanceID(self, iid):  # noqa: N802
+        return 99
+
+    def SDL_GameControllerGetTouchpadFinger(self, ptr, pad, finger, st, x, y, p):  # noqa: N802
+        f = self.fingers.pop(0)
+        if f is None:
+            raise OSError("sdl")
+        st._obj.value, x._obj.value, y._obj.value = (1, f[0], f[1]) if f else (0, 0.0, 0.0)
+        return 0
+
+
+def _touch_backend(fingers):
+    from ptztracker.gamepad.device import SdlBackend
+
+    class Joy:
+        def get_instance_id(self):
+            return 5
+
+    class Ctl:
+        name = "DualSense Wireless Controller"
+
+        def as_joystick(self):
+            return Joy()
+
+    sb = SdlBackend()
+    sb._ctl, sb._sdl = Ctl(), TouchLib(fingers)
+    return sb
+
+
+def test_touchpad_finger_read_into_rawpad():
+    sb = _touch_backend([(0.25, 0.5), (), None, (0.75, 0.5)])
+    assert sb._touch() == (0.25, 0.5)
+    assert sb._touch() is None  # пальца нет
+    assert sb._touch() is None  # сбой SDL не бросает
+    assert sb._touch() == (0.75, 0.5)

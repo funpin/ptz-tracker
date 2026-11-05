@@ -14,6 +14,7 @@ from ptztracker.gamepad.intents import (
     Preset,
     PushFocus,
     SaveMoment,
+    SpeedStep,
     Stop,
     ToggleFollow,
     Zoom,
@@ -21,8 +22,8 @@ from ptztracker.gamepad.intents import (
 from ptztracker.gamepad.mapping import Mapper
 
 
-def pad(buttons=(), **axes):
-    return RawPad(axes=axes, buttons=frozenset(buttons))
+def pad(buttons=(), touch=None, **axes):
+    return RawPad(axes=axes, buttons=frozenset(buttons), touch=touch)
 
 
 def mk(menu=False):
@@ -104,7 +105,7 @@ def test_neighbor_needs_recenter():
 def test_buttons():
     m = mk()
     for b, want in [("r3", ToggleFollow()), ("touchpad", Stop()), ("l3", PushFocus()),
-                    ("l1", Composition(+1)), ("r1", Composition(-1)), ("options", MenuOpen())]:
+                    ("l1", SpeedStep(-1)), ("r1", SpeedStep(+1)), ("options", MenuOpen())]:
         assert m.update(pad({b}), 0.0) == [want]
         assert m.update(pad({b}), 0.1) == []
         m.update(pad(), 0.2)
@@ -243,3 +244,43 @@ def test_curve_does_not_touch_zoom():
     m = mk()
     m.sensitivity = 0
     assert m.update(pad(r2=0.12 + 0.88 * 0.5), 0.0) == [Zoom(0.5)]
+
+
+def swipe(m, x0, x1, t0=0.0, dur=0.2, y0=0.5, y1=0.5, buttons=(), steps=4):
+    """Палец от (x0, y0) до (x1, y1) за dur секунд, затем отпускание; намерения за всё касание."""
+    out = []
+    for i in range(steps + 1):
+        f = i / steps
+        out += m.update(pad(buttons, touch=(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f)), t0 + dur * f)
+    out += m.update(pad(), t0 + dur + 0.01)
+    return out
+
+
+def test_swipe_right_wider_left_closer():
+    m = mk()
+    assert swipe(m, 0.2, 0.8) == [Composition(-1)]
+    assert swipe(m, 0.8, 0.2, t0=1.0) == [Composition(+1)]
+
+
+def test_short_slow_vertical_or_pressed_touch_is_not_swipe():
+    m = mk()
+    assert swipe(m, 0.4, 0.6) == []                          # меньше трети ширины
+    assert swipe(m, 0.2, 0.8, t0=1.0, dur=1.0) == []         # дольше 0,8 с
+    assert swipe(m, 0.3, 0.7, t0=3.0, y0=0.0, y1=1.0) == []  # по вертикали больше
+    out = swipe(m, 0.2, 0.8, t0=5.0, buttons={"touchpad"})   # нажатие тачпада — это стоп, не свайп
+    assert out == [Stop()]
+
+
+def test_swipe_ignored_in_menu_and_after_reconnect_mid_touch():
+    assert swipe(mk(menu=True), 0.2, 0.8) == []
+    m = Mapper(lambda: False)
+    m.update(pad(touch=(0.2, 0.5)), 0.0)  # палец уже на тачпаде при подключении
+    m.update(pad(touch=(0.8, 0.5)), 0.1)
+    assert m.update(pad(), 0.15) == []
+
+
+def test_swipe_lost_on_poll_gap():
+    m = mk()
+    m.update(pad(touch=(0.2, 0.5)), 0.0)
+    assert m.update(pad(touch=(0.8, 0.5)), 0.5) == []  # пропуск опросов дольше STALL_S
+    assert m.update(pad(), 0.51) == []

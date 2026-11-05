@@ -83,6 +83,7 @@ class GamepadBridge(QObject):
         self.connected = False
         self.info: dict | None = None
         self._vel = (0.0, 0.0, 0.0)
+        self._limit_k = 1.0  # предел скорости поворота и наклона (L1/R1), доля 0…1
         self._led: tuple[int, int, int] | None = None
         self._player: int | None = None
         self.battery_percent: int | None = None
@@ -180,7 +181,18 @@ class GamepadBridge(QObject):
 
     # --- вызовы из потока Qt ---
     def velocity(self) -> tuple[float, float, float]:
-        return self._vel
+        """Поворот и наклон — с пределом скорости L1/R1; зум курками — как есть."""
+        vx, vy, vz = self._vel
+        k = self._limit_k
+        return (vx * k, vy * k, vz) if k != 1.0 else self._vel
+
+    def set_speed_limit(self, k: float) -> None:
+        """Предел скорости поворота и наклона этого геймпада: доля полной, 0…1."""
+        self._limit_k = max(0.0, min(1.0, float(k)))
+
+    @property
+    def speed_limit(self) -> float:
+        return self._limit_k
 
     def zero_velocity(self) -> None:
         """Обнулить запомненную скорость (геймпад отключился) без запирания автомата."""

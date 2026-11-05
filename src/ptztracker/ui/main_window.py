@@ -32,13 +32,29 @@ from PySide6.QtWidgets import (
 from ptztracker import __version__
 from ptztracker.api.backend import start_window_api
 from ptztracker.camera.session import CameraSession
-from ptztracker.config import GRID_SLOTS, AppConfig, CameraConfig, ConfigStore, get_password, set_password
+from ptztracker.config import (
+    GRID_SLOTS,
+    SPEED_GEARS,
+    AppConfig,
+    CameraConfig,
+    ConfigStore,
+    get_password,
+    set_password,
+)
 from ptztracker.control.camera_model import DEFAULT_TABLE_ID
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
 from ptztracker.control.manual_curve import DEFAULT_SENS, clamp_sens, shape, tele_scale
 from ptztracker.gamepad.device import GamepadThread, MultiPadThread, SdlBackend, SdlHub
-from ptztracker.gamepad.feedback import RUMBLE_NOWHERE, RUMBLE_PRESET_STORED, RUMBLE_TAKEN, PadStatus
+from ptztracker.gamepad.feedback import (
+    RUMBLE_EDGE,
+    RUMBLE_NOWHERE,
+    RUMBLE_PRESET_STORED,
+    RUMBLE_STEP,
+    RUMBLE_TAKEN,
+    PadStatus,
+    rumble_gear,
+)
 from ptztracker.gamepad.intents import (
     Composition,
     Disconnected,
@@ -54,6 +70,7 @@ from ptztracker.gamepad.intents import (
     Preset,
     PushFocus,
     SaveMoment,
+    SpeedStep,
     Stop,
     ToggleFollow,
     Zoom,
@@ -1670,14 +1687,15 @@ class MainWindow(QMainWindow):
             b = live.get(pid)
             name = self.cfg.pad_names.get(pid) or ((b.info or {}).get("name") if b else None) or "Геймпад"
             cell = self._pad_slot_number(self._pad_nums.get(b)) if b is not None else None
-            rows.append(PadRow(pid, name, self.pad_sensitivity({"id": pid}), b is not None, cell))
+            rows.append(PadRow(pid, name, self.pad_sensitivity({"id": pid}), b is not None, cell,
+                               self.pad_l1r1_mode(pid), self.pad_speed_gear(pid)))
         return rows
 
     def show_gamepads(self) -> None:
         if self.gamepads_dialog is None:
             self.gamepads_dialog = GamepadsDialog(
                 self.pad_rows(), self.cfg.slow_on_tele, self.set_pad_sensitivity,
-                self.controls.slow_tele_check.setChecked, parent=self)
+                self.controls.slow_tele_check.setChecked, parent=self, on_mode=self.set_pad_l1r1_mode)
         else:
             self.gamepads_dialog.set_rows(self.pad_rows())
             self.gamepads_dialog.set_slow_on_tele(self.cfg.slow_on_tele)
@@ -1711,10 +1729,61 @@ class MainWindow(QMainWindow):
             if (b.info or {}).get("id") == pad_id:
                 b.set_sensitivity(self.cfg.pad_sensitivity[pad_id])
 
+    def pad_l1r1_mode(self, pad_id: str | None) -> str:
+        """Что меняют L1/R1 у геймпада: "limit" — предел скорости (по умолчанию), "sens" — чувствительность."""
+        return self.cfg.pad_l1r1_mode.get(pad_id, "limit") if pad_id else "limit"
+
+    def pad_speed_gear(self, pad_id: str | None) -> int:
+        """Ступень предела скорости 1…SPEED_GEARS; незнакомый геймпад — последняя (100 %)."""
+        return self.cfg.pad_speed_gear.get(pad_id, SPEED_GEARS) if pad_id else SPEED_GEARS
+
+    def set_pad_l1r1_mode(self, pad_id: str, mode: str) -> None:
+        """Из окна «Геймпады…»: режим L1/R1; предел скорости действует только в режиме "limit"."""
+        self.cfg.pad_l1r1_mode[pad_id] = "sens" if mode == "sens" else "limit"
+        self._save()
+        for b in self._bridges:
+            if (b.info or {}).get("id") == pad_id:
+                self._apply_pad_speed(b)
+
+    def _apply_pad_speed(self, b: GamepadBridge) -> None:
+        pid = (b.info or {}).get("id")
+        if pid is None:
+            return  # без опознавателя ступень живёт только в мосте, до отключения
+        gear = self.pad_speed_gear(pid) if self.pad_l1r1_mode(pid) == "limit" else SPEED_GEARS
+        b.set_speed_limit(gear / SPEED_GEARS)
+
+    def _pad_speed_step(self, b: GamepadBridge, d: int) -> None:
+        """L1/R1: ступень предела скорости или чувствительность ±10; за краем — длинный толчок."""
+        pid = (b.info or {}).get("id")
+        if self.pad_l1r1_mode(pid) == "sens":
+            cur = b.sensitivity
+            new = clamp_sens(cur + 10 * d)
+            if new == cur:
+                b.rumble(RUMBLE_EDGE)
+                return
+            if pid:
+                self.set_pad_sensitivity(pid, new)
+            else:
+                b.set_sensitivity(new)
+            b.rumble(RUMBLE_STEP)
+        else:
+            cur = self.pad_speed_gear(pid) if pid else round(b.speed_limit * SPEED_GEARS)
+            new = max(1, min(SPEED_GEARS, cur + d))
+            if new == cur:
+                b.rumble(RUMBLE_EDGE)
+                return
+            if pid:
+                self.cfg.pad_speed_gear[pid] = new
+                self._save()
+            b.set_speed_limit(new / SPEED_GEARS)
+            b.rumble(rumble_gear(new))
+        self._refresh_gamepads_dialog()
+
     def _remember_pad(self, b: GamepadBridge, info: dict) -> None:
         pid, name = info.get("id"), info.get("name") or "Геймпад"
         if pid:
             b.set_sensitivity(self.pad_sensitivity(info))
+            self._apply_pad_speed(b)
             if self.cfg.pad_names.get(pid) != name:
                 self.cfg.pad_names[pid] = name
                 self._save()
@@ -1914,6 +1983,9 @@ class MainWindow(QMainWindow):
             elif isinstance(it, Composition):
                 if self._pad_on_selected(pad):
                     self._pad_composition(it.d, pad)
+            elif isinstance(it, SpeedStep):
+                self._pad_speed_step(b, it.d)  # настройка самого геймпада: выбор клетки не нужен
+                moved = moved or any(b.velocity()[:2])  # стик держат — новый предел сразу
             elif isinstance(it, NextCamera):
                 if pad is not None:
                     self.pad_create(pad)
@@ -1996,7 +2068,8 @@ class MainWindow(QMainWindow):
                 c.session.limit_watch.set_demand(0.0, 0.0, 0.0)
 
     def _pad_composition(self, d: int, pad: int | None) -> None:
-        """Только крупность: пояс ↔ рост ↔ общий. R1 (−1) — шире, к «Общему»; L1 (+1) — ближе; за краем — «некуда».
+        """Только крупность: пояс ↔ рост ↔ общий. Свайп вправо (−1) — шире, к «Общему»; влево (+1) — ближе;
+        за краем — «некуда».
         В пояс из роста — на последнюю сторону пояса (слева/центр/справа)."""
         cam = self._current_cfg()
         if cam is None:
