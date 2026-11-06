@@ -570,3 +570,28 @@ def test_scene_cycles_and_names_full_auto(qtbot):
     assert "Full Auto" in m.values()["scene"]
     m.click_item("scene")  # × или → — следующая сцена
     assert s.calls[-1] == ("scene", 2) and "Manual 1" in m.values()["scene"]
+
+
+def test_menu_window_keeps_cursor_in_middle():
+    assert cm.menu_window(12, 0, 7) == (0, 7)
+    assert cm.menu_window(12, 3, 7) == (0, 7)  # до середины окна двигается курсор
+    assert cm.menu_window(12, 4, 7) == (1, 8)  # дальше — сами пункты
+    assert cm.menu_window(12, 11, 7) == (5, 12)
+    assert cm.menu_window(5, 4, 7) == (0, 5)  # пунктов меньше окна — все
+
+
+def test_long_menu_scrolls_and_shows_more_marks(qtbot):
+    s = PowerSceneSession()
+    m, _ = build(qtbot, s)
+    m.open()
+    keys = m.visible_keys()
+    assert len(keys) > cm.MAX_ROWS
+    shown = [k for k, r in m._rows.items() if r.isVisibleTo(m)]
+    assert shown == keys[:cm.MAX_ROWS] and not m.more_up.isVisibleTo(m) and m.more_down.isVisibleTo(m)
+    assert m._rows[shown[-1]].faded  # крайняя строка тусклее: дальше ещё пункты
+    for _ in range(len(keys)):
+        m.nav(0, 1)
+    shown = [k for k, r in m._rows.items() if r.isVisibleTo(m)]
+    assert shown[-1] == "osd" and m._cursor == "osd"  # дошли до «Меню Panasonic»
+    assert m.more_up.isVisibleTo(m) and not m.more_down.isVisibleTo(m)
+    assert f"ещё {len(keys) - cm.MAX_ROWS}" in m.more_up.text()

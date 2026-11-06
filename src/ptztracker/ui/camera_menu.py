@@ -19,7 +19,16 @@ FOCUS_SPEED = 0.3  # ближе/дальше, пока держишь ←/→
 CTEMP_STEP = 2  # шаг цветовой температуры за нажатие (≈200 K)
 LOCAL_HOLD_S = 1.5  # столько держим только что выбранное значение, пока камера не ответила
 WB_CHOICES = (0, 1, 2, 4, 5, 9)  # ATW, AWB A, AWB B, 3200K, 5600K, VAR
-ROW_H = 26  # девять пунктов и пояснение помещаются в клетку 2×2 окна 1640×850
+ROW_H = 26
+MAX_ROWS = 7  # больше не помещается в клетку 2×2 окна 1640×850: дальше пункты прокручиваются (площадка 2026-11-06)
+
+
+def menu_window(n: int, i: int, size: int = MAX_ROWS) -> tuple[int, int]:
+    """Какие пункты видны [начало, конец): курсор идёт до середины окна, дальше едут сами пункты."""
+    if n <= size:
+        return 0, n
+    start = min(max(0, i - size // 2), n - size)
+    return start, start + size
 WIDTH = 380
 
 
@@ -29,6 +38,7 @@ class _Row(QWidget):
     def __init__(self, key: str, parent=None) -> None:
         super().__init__(parent)
         self.key = key
+        self.faded = False
         self.setAttribute(Qt.WA_StyledBackground, True)  # иначе рамка выбранного пункта из QSS не рисуется
         self.setFixedHeight(ROW_H)
         self.setFocusPolicy(Qt.NoFocus)
@@ -40,13 +50,17 @@ class _Row(QWidget):
         lay.addWidget(self.title, 1)
         lay.addWidget(self.value, 1)
 
-    def style(self, selected: bool, enabled: bool) -> None:
+    def style(self, selected: bool, enabled: bool, faded: bool = False) -> None:
+        """faded — крайняя строка окна, за ней ещё пункты: текст наполовину прозрачный."""
+        self.faded = faded
         bg = _rgba(C.TEXT, 0.06) if selected else "transparent"
         border = C.TEXT if selected else "transparent"
         self.setStyleSheet(f"_Row {{ background: {bg}; border: 1px solid {border}; border-radius: {R_BUTTON}px; }}")
         col = C.TEXT if enabled else C.TEXT_FAINT
+        if faded:
+            col = _rgba(col, 0.5)
         self.title.setStyleSheet(f"color: {col};")
-        self.value.setStyleSheet(f"color: {C.TEXT if enabled else C.TEXT_FAINT}; font-weight: 700;")
+        self.value.setStyleSheet(f"color: {col}; font-weight: 700;")
 
     def mousePressEvent(self, e):  # noqa: N802
         if e.button() == Qt.LeftButton:
@@ -132,11 +146,14 @@ class CameraMenu(QFrame):
         self._placement = "center"
         self._confirm_until = 0.0  # «Выключить камеру»: ждём второе нажатие до этого момента
         self._rows: dict[str, _Row] = {}
+        self.more_up, self.more_down = self._more(), self._more()  # «▲ ещё N» / «▼ ещё N»: пункты не все
+        lay.addWidget(self.more_up)
         for key in ORDER:
             r = _Row(key)
             r.clicked.connect(self.click_item)
             self._rows[key] = r
             lay.addWidget(r)
+        lay.addWidget(self.more_down)
         self.hint = QLabel("")
         self.hint.setWordWrap(True)
         self._hint_color = None
@@ -153,6 +170,20 @@ class CameraMenu(QFrame):
         self._tick.setInterval(250)
         self._tick.timeout.connect(self._render)
         self.hide()
+
+    @staticmethod
+    def _more() -> QLabel:
+        lab = QLabel("")
+        lab.setAlignment(Qt.AlignCenter)
+        lab.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION - 1}px;")
+        lab.hide()
+        return lab
+
+    def wheelEvent(self, e):  # noqa: N802
+        """Колесо мыши над меню — пункт выше / ниже, как ↑↓."""
+        if self.is_open and not self.osd_mode and e.angleDelta().y():
+            self.nav(0, -1 if e.angleDelta().y() > 0 else 1)
+        e.accept()
 
     # --- состояние пунктов -------------------------------------------------
 
@@ -314,12 +345,19 @@ class CameraMenu(QFrame):
         if placement != self._placement:
             self._placement = placement
             self.placementChanged.emit(placement)
+        start, end = menu_window(len(keys), keys.index(self._cursor))
+        shown = keys[start:end]
+        above, below = start, len(keys) - end
         for k, r in self._rows.items():
-            r.setVisible(k in keys and not self.osd_mode)
+            r.setVisible(k in shown and not self.osd_mode)
             r.title.setText(titles[k])
             r.value.setText(vals[k])
             r.setToolTip(WHY[k])
-            r.style(k == self._cursor, self._enabled(k))
+            faded = (k == shown[0] and above > 0) or (k == shown[-1] and below > 0)
+            r.style(k == self._cursor, self._enabled(k), faded and k != self._cursor)
+        for lab, n, arrow in ((self.more_up, above, "▲"), (self.more_down, below, "▼")):
+            lab.setText(f"{arrow} ещё {n}")
+            lab.setVisible(n > 0 and not self.osd_mode)
         refused = not self.osd_mode and self._cursor not in ("focus", "iris", "osd") and self._refused()
         self._set_hint_color(C.LOST if refused else C.TEXT_DIM)
         self.hint.setText(OSD_HINT if self.osd_mode else REFUSED_HINT if refused else WHY.get(self._cursor, ""))
