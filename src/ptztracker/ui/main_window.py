@@ -239,6 +239,7 @@ class MainWindow(QMainWindow):
         self._cell_dialogs: dict[int, QDialog] = {}
         self._held: set[int] = set()
         self._fast = False  # Shift зажат
+        self._analysis_pick: int | None = None  # клетка, выбранная оператором (главный геймпад её не меняет)
         # режим «камера как курсор»: клетка, колесо (zoom | iris), плашка сверху по центру видео
         self.mouse_slot: int | None = None
         self.mouse_wheel = "zoom"
@@ -871,6 +872,7 @@ class MainWindow(QMainWindow):
         self.view_one_btn.setChecked(on)
         self.view_grid_btn.setChecked(not on)
         self._apply_view()
+        self._refresh_drawer()  # одна камера — строка её пресетов; сетка — строки по кнопкам камер
 
     def _toggle_view_at(self, slot: int) -> None:
         if self.grid.cells[slot] is not None and slot != self.grid.selected:
@@ -953,10 +955,16 @@ class MainWindow(QMainWindow):
                 items.append(StripItem(slot, TITLES[kind], None, None, service=kind, rows=rows))
         self.strip.set_items(items)
 
-    def select_slot(self, slot: int) -> None:
-        """Выбрать клетку: клавиатура, мышь, геймпад и правая панель теперь относятся к ней."""
+    def select_slot(self, slot: int, keep_analysis: bool = False) -> None:
+        """Выбрать клетку: клавиатура, мышь, геймпад и правая панель теперь относятся к ней.
+        keep_analysis — переключил главный геймпад: анализ остаётся на камере, которую выбрал оператор."""
         if not 0 <= slot < GRID_SLOTS or slot == self.grid.selected:
             return
+        if keep_analysis:
+            if self._analysis_pick is None:
+                self._analysis_pick = self.grid.selected
+        else:
+            self._analysis_pick = slot
         self.camera_menu.close_menu()  # до переноса: ручной фокус получает ноль
         self.exit_mouse_mode()  # режим мыши — у выбранной клетки
         self.release_all_held()  # геймпад ведёт свою камеру и выбором клетки не трогается
@@ -1115,7 +1123,7 @@ class MainWindow(QMainWindow):
             if analysis is None:
                 states = self._states()
                 states[slot] = CellState(cam.name, cam.tracking, False)
-                analysis = slot in allocate_analysis(states, self.grid.selected, self.cfg.max_analyzed)
+                analysis = slot in allocate_analysis(states, self._analysis_slot(), self.cfg.max_analyzed)
             try:
                 opened = self.grid.open(slot, cam, analysis)
             except ValueError:
@@ -1157,11 +1165,18 @@ class MainWindow(QMainWindow):
             self.cfg.last_camera_id = c.cfg.id
         self._save()
 
+    def _analysis_slot(self) -> int | None:
+        """Клетка, которой анализ положен в первую очередь: выбранная оператором (не главным геймпадом)."""
+        p = self._analysis_pick
+        if p is not None and 0 <= p < len(self.grid.cells) and self.grid.cells[p] is not None:
+            return p
+        return self.grid.selected
+
     def _reallocate_analysis(self) -> None:
         """Нейросеть — слежущим, затем выбранной и остальным по порядку, пока не кончился лимит."""
         if self._loading:
             return
-        alloc = allocate_analysis(self._states(), self.grid.selected, self.cfg.max_analyzed)
+        alloc = allocate_analysis(self._states(), self._analysis_slot(), self.cfg.max_analyzed)
         for i, c in enumerate(self.grid.cells):
             if c is not None:
                 c.session.set_analysis(i in alloc)
@@ -1368,10 +1383,12 @@ class MainWindow(QMainWindow):
         """Строки панели пресетов сверху вниз: выбранные кнопками камер (config.preset_rows); пока не выбирали —
         только выбранная камера. Выбор другой камеры порядок не меняет."""
         cells = self.grid.cells
+        sel = self.grid.selected
+        if self.single_view and sel is not None and cells[sel] is not None:
+            return [sel]  # одна камера крупно — её пресеты (за ней переключается и главный геймпад)
         rows = [i for i in self.cfg.preset_rows if 0 <= i < len(cells) and cells[i] is not None]
         if rows:
             return rows
-        sel = self.grid.selected
         if sel is not None and cells[sel] is not None:
             return [sel]
         return [i for i, c in enumerate(cells) if c is not None][:1]
@@ -2705,7 +2722,7 @@ class MainWindow(QMainWindow):
         slot = self.pad_router.slot_of(pad)
         pid = self._pad_id(pad)
         if moves and self.single_view and pid and pid == self.cfg.main_pad and slot is not None:
-            self.select_slot(slot)
+            self.select_slot(slot, keep_analysis=True)
         self._refresh_service_cells()
 
     def _pad_id(self, pad: int) -> str | None:

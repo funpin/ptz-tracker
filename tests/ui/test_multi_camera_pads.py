@@ -358,3 +358,22 @@ def test_main_pad_create_switches_selected_camera_in_single_view(qtbot, tmp_path
     assert w.grid.selected == 1
     assert w.cfg.main_pad == "MAIN"
     w.close()
+
+
+def test_main_pad_switch_keeps_analysis_and_moves_preset_row(qtbot, tmp_path):
+    w, _ = make(qtbot, tmp_path)
+    w.cfg.max_analyzed = 1
+    w.pad_connected()
+    w._pad_id = lambda n: "MAIN"
+    w.set_main_pad("MAIN")
+    w.set_single_view(True)
+    w.select_slot(0)  # оператор выбрал камеру 1 — анализ на ней
+    w._reallocate_analysis()
+    assert w.grid.cells[0].session.analyzer is not None and w.grid.cells[1].session.analyzer is None
+    w.pad_create(1)  # главный геймпад — на камеру 2
+    assert w.grid.selected == 1
+    assert w.grid.cells[0].session.analyzer is not None and w.grid.cells[1].session.analyzer is None  # анализ остался
+    assert w._preset_rows() == [1]  # пресеты снизу — камеры 2
+    w.select_slot(0)  # выбор мышью — снова оператор
+    assert w._preset_rows() == [0]
+    w.close()
