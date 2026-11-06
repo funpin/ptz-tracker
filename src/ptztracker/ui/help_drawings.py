@@ -150,6 +150,7 @@ class PadDrawing(_Drawing):
             "dpad_left": _rr(86, 150, 30, 26, 5), "dpad_right": _rr(146, 150, 30, 26, 5),
             "triangle": _circle(420, 130, 15), "circle": _circle(452, 162, 15),
             "cross": _circle(420, 194, 15), "square": _circle(388, 162, 15),
+            "ps": _circle(280, 212, 11),
         }
         for key, (cx, cy) in self.STICKS.items():
             e[key] = _circle(cx, cy, 34)
@@ -229,6 +230,7 @@ class PadDrawing(_Drawing):
             (QRectF(40, 62, 54, 14), "L1", Qt.AlignRight), (QRectF(466, 62, 54, 14), "R1", Qt.AlignLeft),
             (QRectF(120, 82, 54, 12), "Create", Qt.AlignRight), (QRectF(386, 82, 60, 12), "Options", Qt.AlignLeft),
             (QRectF(206, 92, 148, 78), "тачпад", Qt.AlignCenter),
+            (QRectF(269, 204, 22, 16), "PS", Qt.AlignCenter),
             (QRectF(140, 272, 120, 14), "L-стик · L3", Qt.AlignCenter),
             (QRectF(300, 272, 120, 14), "R-стик · R3", Qt.AlignCenter),
         ):

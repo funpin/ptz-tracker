@@ -37,6 +37,7 @@ GAMEPAD_HELP: list[tuple[str, str]] = [
     ("Options", "быстрые настройки — меню поверх видео (крестовина — пункт и значение, ✕ принять, ○ или △ закрыть)"),
     ("Create (нажать)", "следующая камера"),
     ("Create (держать)", "сохранить момент (как F9)"),
+    ("PS", "эта справка — открыть / закрыть"),
 ]
 
 
@@ -61,7 +62,7 @@ def pad_elements(label: str) -> str | None:
                         ("l2", "l2,r2"), ("r1", "r1,l1"), ("l1", "l1,r1"), ("✕", "cross,circle,square,triangle"),
                         ("крестовина ← ", "dpad_lr"),
                         ("крестовина ↑", "dpad_ud"), ("крестовина", "dpad_lr"), ("тачпад", "touchpad"), ("свайп", "touchpad"),
-                        ("options", "options"), ("create", "create")):
+                        ("options", "options"), ("create", "create"), ("ps", "ps")):
         if low.startswith(prefix):
             return key
     return None

@@ -67,6 +67,7 @@ from ptztracker.gamepad.intents import (
     Composition,
     Disconnected,
     GainStep,
+    Help,
     IrisStep,
     MenuAccept,
     MenuClose,
@@ -2648,6 +2649,11 @@ class MainWindow(QMainWindow):
             elif isinstance(it, ToggleFollow):
                 if self._pad_on_selected(pad):
                     self.toggle_follow()
+            elif isinstance(it, Help):  # кнопка PS: справка — открыть или закрыть (любой геймпад)
+                if self.hotkeys_dialog is not None and self.hotkeys_dialog.isVisible():
+                    self.hotkeys_dialog.close()
+                else:
+                    self.show_hotkeys()
             elif isinstance(it, Composition):
                 if self._pad_on_selected(pad):
                     self._pad_composition(it.d, pad)

@@ -327,3 +327,15 @@ def test_speed_gear_shared_by_pads_with_same_id(qtbot, tmp_path):
     w._pad_speed_step(w.pads[1], -1)
     assert w.pads[1].speed_limit == w.pads[2].speed_limit == 21
     w.close()
+
+
+def test_ps_button_toggles_help(qtbot, tmp_path):
+    from ptztracker.gamepad.intents import Help
+
+    w, _ = make(qtbot, tmp_path)
+    assert w.pad_connected() == 1
+    w._on_pad_intents([Help()], 1)
+    qtbot.waitUntil(lambda: w.hotkeys_dialog is not None and w.hotkeys_dialog.isVisible(), timeout=2000)
+    w._on_pad_intents([Help()], 1)  # второе нажатие PS — закрыть
+    qtbot.waitUntil(lambda: not w.hotkeys_dialog.isVisible(), timeout=2000)
+    w.close()
