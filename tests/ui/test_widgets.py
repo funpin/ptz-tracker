@@ -274,3 +274,20 @@ def test_pad_badge_shows_level_not_numbers(qtbot):
     assert b.battery_text() == "заряжается"
     assert not b.grab().isNull()
 
+
+
+def test_pad_badge_gear_bars_widen_and_flash(qtbot):
+    b = PadBadge()
+    qtbot.addWidget(b)
+    b.set(1, 70, False)
+    w0 = b.width()
+    b.set(1, 70, False, gear=3, gears=8)
+    assert b.gear_text() == "скорость 3 из 8"
+    assert b.width() == w0 + PadBadge.gear_width(8)
+    assert not b.flashing()  # первое появление ступени — без вспышки
+    b.set(1, 70, False, gear=4, gears=8)
+    assert b.flashing()  # L1/R1 сменили ступень — значок на миг лаймовый
+    qtbot.waitUntil(lambda: not b.flashing(), timeout=2000)
+    b.set(1, 70, False)  # режим не «предел скорости» — столбиков нет
+    assert b.width() == w0 and b.gear_text() == ""
+    assert not b.grab().isNull()

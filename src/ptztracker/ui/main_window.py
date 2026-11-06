@@ -722,12 +722,20 @@ class MainWindow(QMainWindow):
         self.select_slot(slot)
         self._power_menu()
 
-    def _cell_pads(self, slot: int) -> list[tuple[int, int | None, bool]]:
+    def _cell_pads(self, slot: int) -> list[tuple]:
         out = []
         for n in self.pad_router.pads_on(slot):
             b = self.pads.get(n)
-            out.append((n, b.battery_percent if b else None, bool(b and b.battery_charging)))
+            out.append((n, b.battery_percent if b else None, bool(b and b.battery_charging), self._pad_gear(n)))
         return out
+
+    def _pad_gear(self, n: int) -> tuple[int, int] | None:
+        """(ступень, ступеней) для значка геймпада — только когда L1/R1 у него «предел скорости»."""
+        b = self.pads.get(n)
+        pid = (b.info or {}).get("id") if b else None
+        if pid is None or self.pad_l1r1_mode(pid) != "limit":
+            return None
+        return self.pad_speed_gear(pid), SPEED_GEARS
 
     def _update_side_head(self) -> None:
         sel, c = self.grid.selected, self.selected_cell
@@ -1916,8 +1924,8 @@ class MainWindow(QMainWindow):
             now = time.monotonic()
             tl.record(now, track, self._tally_per[i][1] == "pgm")
             rows.append(ServiceRow(
-                i, c.cfg.name, s.ptz, s.ptz_history(), r.fps if r else None, s.online, [n for n, _p, _c in pads],
-                tally=self._tally_per[i][1], track=track, battery={n: (p, ch) for n, p, ch in pads},
+                i, c.cfg.name, s.ptz, s.ptz_history(), r.fps if r else None, s.online, [n for n, *_ in pads],
+                tally=self._tally_per[i][1], track=track, battery={n: (p, ch) for n, p, ch, *_ in pads},
                 calibrated=c.cfg.calibration is not None, video_fps=st.fps if st.connected else None,
                 preset_pans=[t.pan for t in self._thumbs_of(c.cfg.id).values() if t.pan is not None],
                 timeline=tuple(tl.segments(now)), air=tuple(tl.air(now)), clock=tl.clock(now),
@@ -2757,7 +2765,8 @@ class MainWindow(QMainWindow):
                 continue
             n, b = live[i]
             pct, chg = b.battery_percent, bool(b.battery_charging)
-            badge.set(n, pct, chg)  # без цифр: SDL даёт заряд грубо (5/20/70/100 %)
+            g = self._pad_gear(n)
+            badge.set(n, pct, chg, gear=g[0] if g else None, gears=g[1] if g else 0)  # заряд без цифр: SDL даёт грубо
             slot = self._pad_slot_number(n)
             tip = f"{(b.info or {}).get('name') or 'Геймпад'} {n}"
             tip += f" — камера в клетке {slot} (огоньки на геймпаде)" if slot else " — без камеры"

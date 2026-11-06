@@ -1,6 +1,6 @@
 """Общие компоненты интерфейса: клавиша-подсказка, плитка состояния, чип, рамка видео."""
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -439,6 +439,8 @@ class PadBadge(QWidget):
 
     W, H = 72, 24
     BAT_W, BAT_H = 22, 11  # батарейка — как значки рядом, а не крупнее них (пользователь 2026-11-06)
+    BAR_W, BAR_GAP, BAR_SEP = 2.5, 1.5, 9  # ступень L1/R1 — столбиками, как уровень сигнала (макет pad-gear.html)
+    FLASH_MS = 900
 
     def __init__(self, framed: bool = True, parent: QWidget | None = None):
         super().__init__(parent)
@@ -447,16 +449,38 @@ class PadBadge(QWidget):
         self._pct: int | None = None
         self._charging = False
         self._time: str | None = None
+        self._gear: int | None = None
+        self._gears = 0
+        self._flash = QTimer(self)
+        self._flash.setSingleShot(True)
+        self._flash.timeout.connect(self.update)
         self.setFixedSize(self.W, self.H)
 
-    def sizeHint(self) -> QSize:
-        return QSize(self.W, self.H)
+    @classmethod
+    def gear_width(cls, gears: int) -> int:
+        return round(cls.BAR_SEP + gears * (cls.BAR_W + cls.BAR_GAP) + 2)
 
-    def set(self, number: int, percent: int | None, charging: bool, time_text: str | None = None) -> None:
-        """time_text — вместо процента время до разрядки (верхняя строка); при зарядке — всё равно процент."""
-        if (number, percent, charging, time_text) != (self._n, self._pct, self._charging, self._time):
+    def sizeHint(self) -> QSize:
+        return QSize(self.width(), self.H)
+
+    def set(self, number: int, percent: int | None, charging: bool, time_text: str | None = None,
+            gear: int | None = None, gears: int = 0) -> None:
+        """time_text — вместо процента время до разрядки (верхняя строка); при зарядке — всё равно процент.
+        gear — ступень предела скорости 1…gears (L1/R1 в режиме «предел»); None — столбиков нет."""
+        if gear is not None and self._gear is not None and gear != self._gear and number == self._n:
+            self._flash.start(self.FLASH_MS)
+        if (number, percent, charging, time_text, gear, gears) != (
+                self._n, self._pct, self._charging, self._time, self._gear, self._gears):
             self._n, self._pct, self._charging, self._time = number, percent, charging, time_text
+            self._gear, self._gears = gear, gears if gear is not None else 0
+            self.setFixedSize(self.W + (self.gear_width(self._gears) if gear is not None else 0), self.H)
             self.update()
+
+    def gear_text(self) -> str:
+        return f"скорость {self._gear} из {self._gears}" if self._gear is not None else ""
+
+    def flashing(self) -> bool:
+        return self._flash.isActive()
 
     def battery_text(self) -> str:
         """Уровень словом (для подсказки и тестов); на самой батарейке — только заливка."""
@@ -523,7 +547,23 @@ class PadBadge(QWidget):
             p.setPen(Qt.NoPen)
             p.setBrush(qcolor(C.BG))
             p.drawPath(bolt)
+        if self._gear is not None:
+            self._paint_gear(p, bat.right() + 3)
         p.end()
+
+    def _paint_gear(self, p: QPainter, x: float) -> None:
+        sep = x + self.BAR_SEP / 2
+        p.setPen(QPen(qcolor(C.LINE), 1))
+        p.drawLine(QPointF(sep, self.H / 2 - 7), QPointF(sep, self.H / 2 + 7))
+        x += self.BAR_SEP
+        on = qcolor(C.LIME if self._flash.isActive() else C.TEXT)
+        p.setPen(Qt.NoPen)
+        bottom, top = self.H / 2 + 6.5, 4.0  # столбики растут слева направо: низкий — медленно
+        for i in range(1, self._gears + 1):
+            h = top + 9 * i / self._gears
+            p.setBrush(on if i <= self._gear else qcolor(C.TEXT, 56))
+            p.drawRoundedRect(QRectF(x, bottom - h, self.BAR_W, h), 1, 1)
+            x += self.BAR_W + self.BAR_GAP
 
 
 class StateTag(QLabel):

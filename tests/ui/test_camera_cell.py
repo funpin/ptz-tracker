@@ -151,3 +151,11 @@ def test_number_tile_takes_tally_color(qtbot):
     assert f"background: {C.TEXT}" in c.number_label.styleSheet()  # без эфира — как раньше: выбранная белая
     c.set_selected(False)
     assert f"background: {C.RAISED_HI}" in c.number_label.styleSheet()
+
+
+def test_cell_pad_shows_speed_gear(qtbot):
+    c = CameraCell(0)
+    qtbot.addWidget(c)
+    c.set_pads([(1, 83, False, (3, 8)), (2, 50, False, None)])
+    assert c.pad_badges[0].gear_text() == "скорость 3 из 8"
+    assert c.pad_badges[1].gear_text() == ""

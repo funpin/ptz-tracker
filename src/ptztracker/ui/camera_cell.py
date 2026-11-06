@@ -215,12 +215,15 @@ class CameraCell(QFrame):
             f"background: {bg}; color: {fg};"
             f" border-radius: {R_TAG + 1}px; font-weight: 700; font-size: {FS_CAPTION}px;")
 
-    def set_pads(self, pads: list[tuple[int, int | None, bool]]) -> None:
-        """Геймпады клетки: (номер, заряд % или None, заряжается). До двух — значками, больше — первый и «+N»."""
+    def set_pads(self, pads: list[tuple]) -> None:
+        """Геймпады клетки: (номер, заряд % или None, заряжается[, (ступень, ступеней) или None]).
+        До двух — значками, больше — первый и «+N»."""
         shown = pads if len(pads) <= SHOWN_PADS else pads[:1]
         for i, b in enumerate(self.pad_badges):
             if i < len(shown):
-                b.set(*shown[i])
+                n, pct, chg, *g = shown[i]
+                gear = g[0] if g else None
+                b.set(n, pct, chg, gear=gear[0] if gear else None, gears=gear[1] if gear else 0)
             b.setVisible(i < len(shown))
         rest = pads[len(shown):]
         self.more_pads.setVisible(bool(rest))
@@ -229,7 +232,7 @@ class CameraCell(QFrame):
             self.more_pads.setToolTip("\n".join(
                 f"Геймпад {n}: " + ("заряжается" if chg else
                                     "заряд неизвестен" if (lvl := battery_level(pct)) is None else f"заряд {lvl[0]}")
-                for n, pct, chg in pads))
+                for n, pct, chg, *_ in pads))
 
     def set_header(self, tally: str | None, state: str | None, sim: bool, power: str | None) -> None:
         """tally: pgm|pvw|None; state: on|lost|off|standby|no_analysis|None; power: on|standby|None (нет кнопки)."""
