@@ -11,6 +11,10 @@ def switch(w, i):
     """Сменить камеру в выбранной клетке на i-ю из списка (в окне на одну камеру — выбор в списке камер)."""
     w.set_cell_camera(w.grid.selected, w._cameras()[i].id)
 
+def boom(*a, **k):
+    raise RuntimeError("boom")
+
+
 def make(qtbot, tmp_path):
     w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
     qtbot.addWidget(w)
@@ -726,4 +730,17 @@ def test_switch_camera_seeds_unsupported_from_stored(qtbot, tmp_path):
     w.show()
     switch(w, 1)
     assert w.controls.gain_slider.isHidden()  # без ожидания ответа камеры
+    w.close()
+
+
+def test_escape_stops_even_if_pre_step_fails(qtbot, tmp_path, monkeypatch):
+    """Сбой подготовительного шага Esc (выход из режима мыши) не отменяет стоп камер."""
+    w = make(qtbot, tmp_path)
+    sim = w.session.sim
+    w.session.set_pan_tilt_velocity(1, 0)
+    qtbot.wait(300)
+    monkeypatch.setattr(w, "exit_mouse_mode", boom)
+    w.emergency_stop()  # не бросает
+    qtbot.wait(400)
+    assert [c for c in sim.received if c.startswith("#PTS")][-1] == "#PTS5050"
     w.close()

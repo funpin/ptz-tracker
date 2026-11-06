@@ -11,6 +11,10 @@ def sim_cfg(i):
     return CameraConfig(id=f"s{i}", name=f"Сим {i}", ip="sim", kind="sim")
 
 
+def boom(*a, **k):
+    raise RuntimeError("boom")
+
+
 def make(cfg, analysis):
     return CameraSession(cfg, analysis=analysis)
 
@@ -210,3 +214,16 @@ def test_close_dead_camera_does_not_block():
     t = time.monotonic()
     g.close(0)
     assert time.monotonic() - t < 0.1
+
+
+def test_emergency_stop_all_survives_failing_gate(grid, monkeypatch):
+    """Сбой снятия разрешения у одной камеры не мешает стопам всех камер."""
+    a = grid.open(0, sim_cfg(0), False)
+    b = grid.open(1, sim_cfg(1), False)
+    for c in (a, b):
+        c.mixer.set("pad", pan=1.0)
+    assert wait_for(lambda: pts(a) and pts(b))
+    monkeypatch.setattr(a.gate, "revoke", boom)
+    grid.emergency_stop_all()
+    monkeypatch.undo()  # фикстура grid закрывается раньше monkeypatch: close_all вызвал бы boom
+    assert wait_for(lambda: pts(a)[-1] == "#PTS5050" and pts(b)[-1] == "#PTS5050")

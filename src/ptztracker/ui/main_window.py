@@ -2506,12 +2506,23 @@ class MainWindow(QMainWindow):
     def emergency_stop(self) -> None:
         """Общий аварийный стоп (Esc и кнопка «Стоп»): снять разрешение агенту, отпустить клавиши,
         выключить слежение и остановить все камеры."""
-        self.exit_mouse_mode()  # Esc выходит из режима мыши и останавливает все камеры
-        self.agent_panel.revoke_all()
-        self._pad_stop_motion()  # стоп обнуляет и геймпад: снова поедет после возврата стика в центр
-        self.release_all_held()
+        # каждый подготовительный шаг — отдельно: сбой одного не отменяет стоп
+        steps = (
+            ("выход из режима мыши", self.exit_mouse_mode),  # Esc выходит из режима мыши и останавливает камеры
+            ("снятие разрешений агента", self.agent_panel.revoke_all),
+            ("обнуление геймпадов", self._pad_stop_motion),  # снова поедет после возврата стика в центр
+            ("отпускание клавиш", self.release_all_held),
+        )
+        for what, step in steps:
+            try:
+                step()
+            except Exception:
+                log.exception("Аварийный стоп: сбой шага «%s»", what)
         self.grid.emergency_stop_all()
-        self.camera_menu.close_menu()  # сначала стоп, потом закрытие
+        try:
+            self.camera_menu.close_menu()  # сначала стоп, потом закрытие
+        except Exception:
+            log.exception("Аварийный стоп: не закрылось меню камеры")
 
     def _menu_key(self, key: int, press: bool) -> None:
         m = self.camera_menu

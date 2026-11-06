@@ -11,6 +11,10 @@ def sim_cfg():
     return CameraConfig(id="s", name="Сим", ip="sim", kind="sim")
 
 
+def boom(*a, **k):
+    raise RuntimeError("boom")
+
+
 def test_sim_session_manual_pan():
     s = CameraSession(sim_cfg())
     s.start()
@@ -762,4 +766,25 @@ def test_rare_image_settings_reach_camera_and_state():
                               s.image.preset_speed) == (0xB, 0x20, -3, 2, 30))
         assert s.follower is None or not s.follower.enabled  # картинка не двигает камеру
     finally:
+        s.stop()
+
+
+def test_emergency_stop_sent_even_if_follower_raises():
+    """Сбой подготовительного шага (слежение) не отменяет сам стоп."""
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        s.set_pan_tilt_velocity(1, 0)
+        assert _wait(lambda: any(c.startswith("#PTS") and c != "#PTS5050" for c in s.sim.received))
+
+        class Boom:
+            enabled = True
+            note_manual = boom
+            disable = boom
+
+        s.follower = Boom()
+        s.emergency_stop()
+        assert _wait(lambda: [c for c in s.sim.received if c.startswith("#PTS")][-1] == "#PTS5050")
+    finally:
+        s.follower = None
         s.stop()

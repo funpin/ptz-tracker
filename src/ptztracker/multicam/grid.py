@@ -106,9 +106,15 @@ class CameraGrid:
     def emergency_stop_all(self) -> None:
         """Все камеры: сначала снять разрешения и обнулить источники, затем стопы; сбой одной не мешает другим."""
         cells = [c for c in self.cells if c is not None]
-        for c in cells:
-            c.gate.revoke()
-            c.mixer.clear_all()
+        for c in cells:  # сбой подготовки одной камеры не отменяет стопы (ни её, ни чужие)
+            try:
+                c.gate.revoke()
+            except Exception:
+                log.exception("Аварийный стоп: не снято разрешение агента камеры %s", c.cfg.id)
+            try:
+                c.mixer.clear_all()
+            except Exception:
+                log.exception("Аварийный стоп: не обнулены источники камеры %s", c.cfg.id)
         for c in cells:
             self._emergency_one(c)
 

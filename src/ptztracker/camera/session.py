@@ -839,10 +839,17 @@ class CameraSession:
         self._submit("preset_store", P.preset_store(n), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
 
     def emergency_stop(self) -> None:
-        if self.follower:
-            self.follower.note_manual()
-        if self.follower and self.follower.enabled:
-            self.follower.disable("аварийный стоп")
+        # сбой подготовительного шага не отменяет сам стоп: каждый шаг — отдельно
+        try:
+            if self.follower:
+                self.follower.note_manual()
+        except Exception:
+            log.exception("Аварийный стоп: не удалось сообщить слежению о ручном действии")
+        try:
+            if self.follower and self.follower.enabled:
+                self.follower.disable("аварийный стоп")
+        except Exception:
+            log.exception("Аварийный стоп: не удалось выключить слежение")
         if self._power in ("standby", "switching"):
             # камера в ожидании не движется и стопы отвергает (ER2); повторы стопов вытеснили бы #O1
             self.scheduler.drop_pending(keep={"heartbeat", "power"})
