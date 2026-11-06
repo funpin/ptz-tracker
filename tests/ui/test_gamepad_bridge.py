@@ -605,3 +605,25 @@ def test_speed_step_applies_at_once_while_stick_held(qtbot, tmp_path):
     b.pad = stick(1.0, buttons={"l1"})  # стик не отпускали: новая ступень — сразу, без движения стика
     qtbot.waitUntil(lambda: w._pad_vel[1][0] == pad_velocity(1.0, 21), timeout=1000)
     w.close()
+
+
+def test_tilt_speed_is_a_share_of_pan_speed(qtbot, tmp_path):
+    w, b = make(qtbot, tmp_path)
+    b.pad = stick(1.0, lefty=-1.0)
+    qtbot.waitUntil(lambda: w.pad.velocity()[0] == 1.0, timeout=1000)
+    assert w.pad.velocity()[1] == pad_velocity(1.0, 90 * 0.6)  # по умолчанию вверх/вниз — 60 %
+    w.pad.set_tilt_speed(100)
+    assert w.pad.velocity()[1] == 1.0
+    w.close()
+
+
+def test_pad_tilt_settings_by_id_saved_and_applied(qtbot, tmp_path):
+    w, b = make(qtbot, tmp_path, backend=IdPad())
+    qtbot.waitUntil(lambda: w.pad.speed_limit == 34, timeout=1000)
+    assert w.pad.tilt_sensitivity == w.pad.sensitivity  # не задана — как у влево/вправо
+    w.set_pad_tilt_sensitivity("SN1", 10)
+    w.set_pad_tilt_speed("SN1", 40)
+    assert w.pad.tilt_sensitivity == 10 and w.pad.tilt_speed == 40
+    cfg = ConfigStore(tmp_path / "c.json").load()
+    assert cfg.pad_tilt_sensitivity == {"SN1": 10} and cfg.pad_tilt_speed == {"SN1": 40}
+    w.close()

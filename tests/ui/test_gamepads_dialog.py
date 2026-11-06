@@ -90,3 +90,19 @@ def test_dialog_l1r1_mode_per_pad(qtbot, tmp_path):
     d.mode_combos[pid].setCurrentIndex(d.mode_combos[pid].findData("limit"))
     assert w.pad.speed_limit == 5  # ступень запомнена
     w.close()
+
+
+def test_dialog_tilt_curve_and_speed_per_pad(qtbot, tmp_path):
+    w, b = make(qtbot, tmp_path)
+    pid = "A0:B1:C2:D3:E4:F5"
+    w.show_gamepads()
+    d = w.gamepads_dialog
+    assert d.tilt_sliders[pid].value() == d.sliders[pid].value()  # не задана — как влево/вправо
+    assert d.tilt_speed_sliders[pid].value() == 60
+    d.tilt_sliders[pid].setValue(10)
+    d.tilt_speed_sliders[pid].setValue(40)
+    assert w.pad.tilt_sensitivity == 10 and w.pad.tilt_speed == 40
+    assert "40 %" in d.tilt_speed_labels[pid].text()
+    cfg = ConfigStore(tmp_path / "c.json").load()
+    assert cfg.pad_tilt_sensitivity == {pid: 10} and cfg.pad_tilt_speed == {pid: 40}
+    w.close()

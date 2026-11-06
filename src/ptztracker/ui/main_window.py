@@ -34,8 +34,11 @@ from ptztracker.api.backend import start_window_api
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import (
     DEFAULT_GEAR,
+    DEFAULT_TILT_SPEED,
     GRID_SLOTS,
     SPEED_GEARS,
+    TILT_SPEED_MAX,
+    TILT_SPEED_MIN,
     AppConfig,
     CameraConfig,
     ConfigStore,
@@ -1695,14 +1698,16 @@ class MainWindow(QMainWindow):
             name = self.cfg.pad_names.get(pid) or ((b.info or {}).get("name") if b else None) or "Геймпад"
             cell = self._pad_slot_number(self._pad_nums.get(b)) if b is not None else None
             rows.append(PadRow(pid, name, self.pad_sensitivity({"id": pid}), b is not None, cell,
-                               self.pad_l1r1_mode(pid), self.pad_speed_gear(pid)))
+                               self.pad_l1r1_mode(pid), self.pad_speed_gear(pid),
+                               self.pad_tilt_sensitivity(pid), self.pad_tilt_speed(pid)))
         return rows
 
     def show_gamepads(self) -> None:
         if self.gamepads_dialog is None:
             self.gamepads_dialog = GamepadsDialog(
                 self.pad_rows(), self.cfg.slow_on_tele, self.set_pad_sensitivity,
-                self.controls.slow_tele_check.setChecked, parent=self, on_mode=self.set_pad_l1r1_mode)
+                self.controls.slow_tele_check.setChecked, parent=self, on_mode=self.set_pad_l1r1_mode,
+                on_tilt_sens=self.set_pad_tilt_sensitivity, on_tilt_speed=self.set_pad_tilt_speed)
         else:
             self.gamepads_dialog.set_rows(self.pad_rows())
             self.gamepads_dialog.set_slow_on_tele(self.cfg.slow_on_tele)
@@ -1735,6 +1740,35 @@ class MainWindow(QMainWindow):
         for b in self._bridges:
             if (b.info or {}).get("id") == pad_id:
                 b.set_sensitivity(self.cfg.pad_sensitivity[pad_id])
+                b.set_tilt_sensitivity(self.pad_tilt_sensitivity(pad_id))  # вверх/вниз не задан — следует за ним
+
+    def pad_tilt_sensitivity(self, pad_id: str | None) -> int:
+        """Кривая вверх/вниз геймпада; не задана — как влево/вправо."""
+        if not pad_id:
+            return DEFAULT_SENS
+        own = self.cfg.pad_tilt_sensitivity.get(pad_id)
+        return clamp_sens(own) if own is not None else self.pad_sensitivity({"id": pad_id})
+
+    def pad_tilt_speed(self, pad_id: str | None) -> int:
+        """Скорость вверх/вниз, % от влево/вправо; не задана — DEFAULT_TILT_SPEED."""
+        return self.cfg.pad_tilt_speed.get(pad_id, DEFAULT_TILT_SPEED) if pad_id else DEFAULT_TILT_SPEED
+
+    def set_pad_tilt_sensitivity(self, pad_id: str, sens: int) -> None:
+        """Из окна «Геймпады…»: кривая вверх/вниз, сохранить и сразу применить."""
+        self.cfg.pad_tilt_sensitivity[pad_id] = clamp_sens(sens)
+        self._save()
+        for b in self._bridges:
+            if (b.info or {}).get("id") == pad_id:
+                b.set_tilt_sensitivity(self.cfg.pad_tilt_sensitivity[pad_id])
+
+    def set_pad_tilt_speed(self, pad_id: str, pct: int) -> None:
+        """Из окна «Геймпады…»: скорость вверх/вниз в % от влево/вправо, сохранить и сразу применить."""
+        self.cfg.pad_tilt_speed[pad_id] = max(TILT_SPEED_MIN, min(TILT_SPEED_MAX, int(pct)))
+        self._save()
+        for b in self._bridges:
+            if (b.info or {}).get("id") == pad_id:
+                b.set_tilt_speed(self.cfg.pad_tilt_speed[pad_id])
+        self._apply_held()  # стик держат — новая скорость сразу
 
     def pad_l1r1_mode(self, pad_id: str | None) -> str:
         """Что меняют L1/R1 у геймпада: "limit" — предел скорости (по умолчанию), "sens" — чувствительность."""
@@ -1795,6 +1829,8 @@ class MainWindow(QMainWindow):
         pid, name = info.get("id"), info.get("name") or "Геймпад"
         if pid:
             b.set_sensitivity(self.pad_sensitivity(info))
+            b.set_tilt_sensitivity(self.pad_tilt_sensitivity(pid))
+            b.set_tilt_speed(self.pad_tilt_speed(pid))
             self._apply_pad_speed(b)
             if self.cfg.pad_names.get(pid) != name:
                 self.cfg.pad_names[pid] = name

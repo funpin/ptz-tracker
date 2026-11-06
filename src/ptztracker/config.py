@@ -88,6 +88,10 @@ class AppConfig:
     # L1/R1 у каждого геймпада: "limit" — ступени предела скорости (по умолчанию), "sens" — чувствительность ±10
     pad_l1r1_mode: dict = field(default_factory=dict)
     pad_gear: dict = field(default_factory=dict)  # ступень 1…8 (manual_curve.PAD_GEAR_DEG_S); нет записи — 6
+    # вверх/вниз левого стика у каждого геймпада: своя кривая (нет записи — как влево/вправо) и скорость,
+    # % от влево/вправо (нет записи — DEFAULT_TILT_SPEED)
+    pad_tilt_sensitivity: dict = field(default_factory=dict)
+    pad_tilt_speed: dict = field(default_factory=dict)
 
 
 PAD_L1R1_MODES = ("limit", "sens")
@@ -111,6 +115,8 @@ def _merge_pad_keys(d: dict) -> dict:
             out[n] = v
     return out
 SPEED_GEARS = len(PAD_GEAR_DEG_S)  # ступени скорости геймпада: 3 … 90 °/с на упоре стика
+TILT_SPEED_MIN, TILT_SPEED_MAX = 20, 100
+DEFAULT_TILT_SPEED = 60  # кадр 16:9 по высоте ≈ 56 % ширины: те же °/с по вертикали проносят кадр почти вдвое быстрее
 DEFAULT_GEAR = 6  # 34 °/с: середина хода — как у 1.1 на полной скорости, без рывка у упора
 
 RECORD_DIR_NAME = "Записи PTZ Tracker"
@@ -270,12 +276,16 @@ def _fix_control_settings(cfg: AppConfig) -> None:
     cfg.stick_sensitivity = d.stick_sensitivity if s is None else s
     if not isinstance(cfg.slow_on_tele, bool):
         cfg.slow_on_tele = d.slow_on_tele
-    for f in ("pad_sensitivity", "pad_names", "pad_l1r1_mode", "pad_gear"):
+    for f in ("pad_sensitivity", "pad_names", "pad_l1r1_mode", "pad_gear", "pad_tilt_sensitivity", "pad_tilt_speed"):
         v = getattr(cfg, f)
         setattr(cfg, f, _merge_pad_keys({k: x for k, x in v.items() if isinstance(k, str) and k})
                 if isinstance(v, dict) else {})
     ps = cfg.pad_sensitivity
     cfg.pad_sensitivity = {k: sens(v) for k, v in ps.items() if isinstance(k, str) and k and sens(v) is not None}
+    ts = cfg.pad_tilt_sensitivity
+    cfg.pad_tilt_sensitivity = {k: sens(v) for k, v in ts.items() if sens(v) is not None}
+    cfg.pad_tilt_speed = {k: max(TILT_SPEED_MIN, min(TILT_SPEED_MAX, v)) for k, v in cfg.pad_tilt_speed.items()
+                          if isinstance(v, int) and not isinstance(v, bool)}
     names = cfg.pad_names
     cfg.pad_names = {k: v for k, v in names.items() if isinstance(k, str) and k and isinstance(v, str)}
     modes = cfg.pad_l1r1_mode

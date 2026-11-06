@@ -445,3 +445,20 @@ def test_pad_settings_of_one_address_in_two_forms_merge(tmp_path):
     assert cfg.pad_sensitivity == {"48:18:8D:0F:68:98": 55, "GUID:Pad": 30}  # запись в новом виде важнее
     assert cfg.pad_names == {"48:18:8D:0F:68:98": "DualSense"}
     assert cfg.pad_l1r1_mode == {"48:18:8D:0F:68:98": "sens"}
+
+
+def test_pad_tilt_settings_roundtrip_and_bad_values(tmp_path):
+    from ptztracker.config import DEFAULT_TILT_SPEED, TILT_SPEED_MIN
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps({"cameras": []}), encoding="utf-8")
+    cfg = ConfigStore(p).load()
+    assert cfg.pad_tilt_sensitivity == {} and cfg.pad_tilt_speed == {} and DEFAULT_TILT_SPEED == 60
+    cfg.pad_tilt_sensitivity, cfg.pad_tilt_speed = {"SN1": 20}, {"SN1": 45}
+    ConfigStore(p).save(cfg)
+    back = ConfigStore(p).load()
+    assert back.pad_tilt_sensitivity == {"SN1": 20} and back.pad_tilt_speed == {"SN1": 45}
+    p.write_text(json.dumps({"cameras": [], "pad_tilt_sensitivity": {"a": 500, "b": "x"},
+                             "pad_tilt_speed": {"a": 5, "b": 300, "c": True, "d": 70}}), encoding="utf-8")
+    cfg = ConfigStore(p).load()
+    assert cfg.pad_tilt_sensitivity == {"a": 100}
+    assert cfg.pad_tilt_speed == {"a": TILT_SPEED_MIN, "b": 100, "d": 70}

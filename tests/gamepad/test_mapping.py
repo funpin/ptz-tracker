@@ -292,3 +292,11 @@ def test_swipe_rejected_when_lift_comes_after_poll_gap():
     m.update(pad(touch=(0.2, 0.5)), 0.0)
     m.update(pad(touch=(0.6, 0.5)), 0.1)
     assert m.update(pad(), 0.6) == []  # опрос стоял 0,5 с: где был палец при отпускании — неизвестно
+
+
+def test_tilt_has_its_own_curve():
+    """Пользователь, 2026-11-06: вверх/вниз ощущается грубее — у наклона своя чувствительность."""
+    m = mk()
+    m.sensitivity, m.tilt_sensitivity = 100, 0
+    out = m.update(pad(leftx=0.12 + 0.88 * 0.5, lefty=-(0.12 + 0.88 * 0.5)), 0.0)
+    assert out == [PanTilt(0.5, 0.13)]  # 0,5³

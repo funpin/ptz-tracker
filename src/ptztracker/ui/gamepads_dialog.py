@@ -17,14 +17,15 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QSlider,
     QVBoxLayout,
     QWidget,
 )
 
-from ptztracker.config import DEFAULT_GEAR, SPEED_GEARS
-from ptztracker.control.manual_curve import PAD_GEAR_DEG_S, SENS_MAX, SENS_MIN, clamp_sens
+from ptztracker.config import DEFAULT_GEAR, DEFAULT_TILT_SPEED, SPEED_GEARS, TILT_SPEED_MAX, TILT_SPEED_MIN
+from ptztracker.control.manual_curve import DEFAULT_SENS, PAD_GEAR_DEG_S, SENS_MAX, SENS_MIN, clamp_sens
 from ptztracker.ui.theme import FS_CAPTION, SP, C
 
 SHARED_NOTE = "одинаковые геймпады без серийного номера делят эту настройку"
@@ -46,16 +47,25 @@ class PadRow:
     cell: int | None = None  # номер клетки 1–4 (огоньки на геймпаде); None — без камеры или не подключён
     mode: str = "limit"  # что меняют L1/R1
     gear: int = DEFAULT_GEAR  # ступень скорости L1/R1
+    tilt_sens: int = DEFAULT_SENS  # вверх/вниз: своя кривая
+    tilt_speed: int = DEFAULT_TILT_SPEED  # вверх/вниз: % от скорости влево/вправо
 
 
 class GamepadsDialog(QDialog):
     def __init__(self, rows: list[PadRow], slow_on_tele: bool,
                  on_sensitivity: Callable[[str, int], None], on_slow_tele: Callable[[bool], None], parent=None,
-                 on_mode: Callable[[str, str], None] | None = None):
+                 on_mode: Callable[[str, str], None] | None = None,
+                 on_tilt_sens: Callable[[str, int], None] | None = None,
+                 on_tilt_speed: Callable[[str, int], None] | None = None):
         super().__init__(parent)
         self.setWindowTitle("Геймпады")
         self._on_sens = on_sensitivity
         self._on_mode = on_mode
+        self._on_tilt_sens = on_tilt_sens or (lambda *a: None)
+        self._on_tilt_speed = on_tilt_speed or (lambda *a: None)
+        self.tilt_sliders: dict[str, QSlider] = {}
+        self.tilt_speed_sliders: dict[str, QSlider] = {}
+        self.tilt_speed_labels: dict[str, QLabel] = {}
         self.sliders: dict[str, QSlider] = {}
         self.mode_combos: dict[str, QComboBox] = {}
         self._rows: dict[str, PadRow] = {}
@@ -72,7 +82,9 @@ class GamepadsDialog(QDialog):
                        " «Резко» — как раньше. Полный наклон всегда даёт полную скорость. Действует сразу.\n"
                        "L1/R1 на геймпаде: R1 — быстрее, L1 — медленнее. «Предел скорости» — упор стика даёт"
                        f" от {PAD_GEAR_DEG_S[0]} до {PAD_GEAR_DEG_S[-1]} °/с за {SPEED_GEARS} ступеней; «Чувствительность» — этот ползунок"
-                       " шагами по 10. Крупность — свайп по тачпаду: вправо шире, влево ближе.")
+                       " шагами по 10. Крупность — свайп по тачпаду: вправо шире, влево ближе.\n"
+                       "Вверх/вниз — своя кривая и скорость в % от влево/вправо: кадр по высоте почти вдвое уже,"
+                       " и те же градусы в секунду по вертикали выглядят резче.")
         intro.setWordWrap(True)
         self.slow_tele_check = QCheckBox("Медленнее на крупном плане (мышь, стрелки и все геймпады)")
         self.slow_tele_check.setChecked(bool(slow_on_tele))
@@ -117,6 +129,9 @@ class GamepadsDialog(QDialog):
         self.sliders.clear()
         self.status_labels.clear()
         self.mode_combos.clear()
+        self.tilt_sliders.clear()
+        self.tilt_speed_sliders.clear()
+        self.tilt_speed_labels.clear()
         self._rows = {r.pad_id: r for r in rows}
         for i, r in enumerate(rows):
             # два одинаковых геймпада различаются по хвосту серийного номера
@@ -130,7 +145,7 @@ class GamepadsDialog(QDialog):
             sl.setMinimumWidth(160)
             sl.setTracking(False)  # значение — по отпусканию: config.json не пишется на каждый шаг
             sl.valueChanged.connect(lambda v, pid=r.pad_id: self._on_sens(pid, v))
-            row = 2 * i
+            row = 3 * i
             self._grid.addWidget(name, row, 0)
             self._grid.addWidget(self._caption("Плавно"), row, 1)
             self._grid.addWidget(sl, row, 2)
@@ -145,11 +160,41 @@ class GamepadsDialog(QDialog):
             mode.currentIndexChanged.connect(lambda _i, pid=r.pad_id, c=mode: self._mode_changed(pid, c.currentData()))
             self._grid.addWidget(mode, row + 1, 2, 1, 2)
             self.mode_combos[r.pad_id] = mode
+            self._add_tilt_row(r, row + 2)
             self.sliders[r.pad_id] = sl
             self.status_labels[r.pad_id] = status
         self._grid.setColumnStretch(2, 1)
         self.empty_label.setVisible(not rows)
         self._grid_host.setVisible(bool(rows))
+
+    def _add_tilt_row(self, r: PadRow, row: int) -> None:
+        """Вверх/вниз: своя кривая «Плавно ↔ Резко» и скорость в % от влево/вправо."""
+        tl = QSlider(Qt.Horizontal)
+        tl.setRange(SENS_MIN, SENS_MAX)
+        tl.setPageStep(10)
+        tl.setValue(clamp_sens(r.tilt_sens))
+        tl.setTracking(False)
+        tl.valueChanged.connect(lambda v, pid=r.pad_id: self._on_tilt_sens(pid, v))
+        sp = QSlider(Qt.Horizontal)
+        sp.setRange(TILT_SPEED_MIN, TILT_SPEED_MAX)
+        sp.setSingleStep(5)
+        sp.setPageStep(10)
+        sp.setValue(r.tilt_speed)
+        sp.setTracking(False)
+        lab = self._caption(f"{r.tilt_speed} %")
+        sp.sliderMoved.connect(lambda v, lb=lab: lb.setText(f"{v} %"))
+        sp.valueChanged.connect(lambda v, pid=r.pad_id, lb=lab: (lb.setText(f"{v} %"), self._on_tilt_speed(pid, v)))
+        box = QHBoxLayout()
+        box.setContentsMargins(0, 0, 0, 0)
+        for wd, k in ((self._caption("Вверх/вниз: Плавно"), 0), (tl, 1), (self._caption("Резко · скорость"), 0),
+                      (sp, 1), (lab, 0)):
+            box.addWidget(wd, k)
+        host = QWidget()
+        host.setLayout(box)
+        self._grid.addWidget(host, row, 0, 1, 4)
+        self.tilt_sliders[r.pad_id] = tl
+        self.tilt_speed_sliders[r.pad_id] = sp
+        self.tilt_speed_labels[r.pad_id] = lab
 
     def _mode_changed(self, pad_id: str, mode: str) -> None:
         if self._on_mode is not None:
