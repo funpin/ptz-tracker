@@ -180,11 +180,19 @@ class Follower:
             self.controller.set_effort(e)
         self._record_settings()
 
+    def set_framing(self, c: Composition, e: EffortProfile) -> None:
+        """Композиция и характер разом (своя зона меняет оба) — одной записью в чёрный ящик."""
+        with self._lock:
+            self.controller.set_composition(c)
+            self.controller.set_effort(e)
+        self._record_settings()
+
     def _record_settings(self) -> None:
         with self._lock:
             comp, effort = self.controller.composition, self.controller.effort
         try:
-            safe_event(self.recorder, "follow", composition=comp.key, effort=dataclasses.asdict(effort))
+            safe_event(self.recorder, "follow", composition=comp.key, anchor=list(comp.anchor),
+                       effort=dataclasses.asdict(effort))
         except Exception as e:
             safe_event(self.recorder, "note", error=f"настройки слежения не записаны: {e}")
 

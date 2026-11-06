@@ -21,6 +21,7 @@ from typing import Literal
 import platformdirs
 
 from ptztracker.control.manual_curve import clamp_sens
+from ptztracker.control.zones import zone_of
 from ptztracker.video.rtsp import with_mjpeg_framerate
 
 log = logging.getLogger(__name__)
@@ -50,6 +51,8 @@ class CameraConfig:
     speed_scale: dict | None = None
     composition: str = "waist_center"  # control.composition.COMPOSITIONS
     effort: float = 0.5  # 0 — мягко, 1 — резко
+    # своя зона кадра для каждой крупности: {ключ композиции: [x, y, масштаб]} (control.zones)
+    zones: dict = field(default_factory=dict)
     atem_input: int = 0  # вход ATEM (1…), 0 — не задан
     pad_number: int | None = None  # устарело: точки на геймпаде = номер клетки; читается из старых конфигов
     tracking: bool = True  # камеру можно вести слежением (иначе только ручное управление)
@@ -171,6 +174,7 @@ def _camera_from(d) -> CameraConfig | None:
         c.composition = "waist_center"
     if not isinstance(c.effort, (int, float)):
         c.effort = 0.5
+    c.zones = {k: z.to_json() for k in COMPOSITION_KEYS if (z := zone_of(c.zones, k)) is not None}
     if not isinstance(c.tracking, bool):
         c.tracking = True
     c.effort = min(1.0, max(0.0, float(c.effort)))

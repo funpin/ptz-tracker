@@ -296,11 +296,13 @@ class KeyboardDrawing(_Drawing):
 
 
 class MouseDrawing(_Drawing):
-    """Кусок видео с человеком: клик выбирает цель (рамка-скобки), клик по другой клетке выбирает камеру."""
+    """Кусок видео с человеком: клик выбирает цель (рамка-скобки), зону слежения тянут мышью,
+    клик по другой клетке выбирает камеру."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._elements = {"m_target": _rr(250, 90, 60, 150, 10), "m_cell": _rr(400, 60, 120, 68, 8)}
+        self._elements = {"m_target": _rr(250, 90, 60, 150, 10), "m_zone": _rr(90, 74, 150, 80, 2),
+                          "m_cell": _rr(400, 60, 120, 68, 8)}
 
     def elements(self) -> dict[str, QPainterPath]:
         return self._elements
@@ -323,6 +325,15 @@ class MouseDrawing(_Drawing):
         lit = self.highlighted
         if lit == "m_target":
             paint_brackets(p, QRectF(254, 92, 52, 146), qcolor(C.LIME), 3)
+        if lit == "m_zone":
+            pen = QPen(qcolor(C.LOST), 1.5, Qt.DashLine)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(QRectF(90, 74, 150, 80))
+            p.setPen(QPen(qcolor(C.LOST), 1.5))
+            p.setBrush(qcolor(C.BG))
+            for x, y in ((90, 74), (240, 154)):
+                p.drawRoundedRect(QRectF(x - 5, y - 5, 10, 10), 2, 2)
         if lit == "m_cell":
             p.setPen(QPen(qcolor(C.LIME), 2))
             p.setBrush(Qt.NoBrush)

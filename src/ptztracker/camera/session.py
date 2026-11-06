@@ -377,9 +377,8 @@ class CameraSession:
         return "mjpeg_2" if "1280x720" in url else "mjpeg"  # «mjpeg» — 640×360; под этим видом сохранены калибровки
 
     def _start_follower(self) -> None:
-        from ptztracker.control.composition import COMPOSITIONS, DEFAULT_COMPOSITION
-        from ptztracker.control.effort import EffortProfile
         from ptztracker.control.follower import Follower
+        from ptztracker.control.zones import framing
 
         calib = self.calibration()
 
@@ -392,13 +391,14 @@ class CameraSession:
         def query_pan_tilt():
             return P.parse_pan_tilt(self.scheduler.query(P.Q_PAN_TILT, timeout=1.0))
 
+        comp, effort = framing(self.cfg.composition, self.cfg.effort, self.cfg.zones)
         self.follower = Follower(
             self.analyzer,
             self.scheduler,
             calib,
             latency,
-            COMPOSITIONS.get(self.cfg.composition, COMPOSITIONS[DEFAULT_COMPOSITION]),
-            EffortProfile.at(self.cfg.effort),
+            comp,
+            effort,
             query_zoom,
             recorder=self.recorder,
             query_pan_tilt=query_pan_tilt,

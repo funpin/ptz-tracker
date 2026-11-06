@@ -173,8 +173,12 @@ def _count_losses(states: list[str]) -> int:
     return sum(1 for a, b in zip(states, states[1:]) if a == "tracking" and b == "lost")
 
 
-def _composition(key, fallback: Composition) -> Composition:
-    return COMPOSITIONS.get(key, fallback) if key else fallback
+def _composition(key, fallback: Composition, anchor=None) -> Composition:
+    c = COMPOSITIONS.get(key, fallback) if key else fallback
+    try:  # своя зона оператора (control.zones): точка лица записана рядом с ключом
+        return dataclasses.replace(c, anchor=(float(anchor[0]), float(anchor[1]))) if anchor else c
+    except (TypeError, ValueError, IndexError):
+        return c
 
 
 def _effort(d, fallback: EffortProfile) -> EffortProfile:
@@ -306,7 +310,7 @@ def replay_controller(
                     implicit_t = t
                     if len(bounds) == 1 and first is None:
                         res.partial_start = True  # запись началась посреди слежения
-                ctrl.set_composition(composition or _composition(e.get("composition"), ctrl.composition))
+                ctrl.set_composition(composition or _composition(e.get("composition"), ctrl.composition, e.get("anchor")))
                 ctrl.set_effort(effort or _effort(e.get("effort"), ctrl.effort))
                 if recorded_calib:
                     calib.set_speed_scale(e.get("speed_scale"))

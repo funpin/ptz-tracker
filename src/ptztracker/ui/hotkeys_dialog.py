@@ -49,6 +49,7 @@ def fmt_remaining(seconds: float) -> str:
 
 MOUSE_HELP: list[tuple[str, str]] = [
     ("Клик по человеку", "выбрать цель: рамка «ВЕДУ», затем Пробел — слежение"),
+    ("Перетащить зону", "при слежении: где держать лицо; за уголок — размер зон; двойной клик — сброс"),
     ("Клик по другой клетке", "выбрать камеру: ей управляют стик, клавиши и правая колонка"),
 ]
 
@@ -135,7 +136,7 @@ class HotkeysDialog(QDialog):
         self._data = (
             [(k, v, pad_elements(k)) for k, v in self.pad_rows],
             [(k, v, keyboard_keys(k)) for k, v in self.keys_rows],
-            [(k, v, e) for (k, v), e in zip(self.mouse_rows, ("m_target", "m_cell"), strict=True)],
+            [(k, v, e) for (k, v), e in zip(self.mouse_rows, ("m_target", "m_zone", "m_cell"), strict=True)],
         )
         self.pad = PadDrawing()
         self.keyboard = KeyboardDrawing({x for _k, _v, keys in self._data[1] if keys for x in keys.split(",")})

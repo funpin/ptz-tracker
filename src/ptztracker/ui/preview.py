@@ -6,6 +6,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from ptztracker.control.zones import Zone
 from ptztracker.ui.state import no_video_text
 from ptztracker.ui.theme import FONT_FAMILY, C, qcolor
 from ptztracker.ui.widgets import paint_brackets
@@ -42,8 +43,15 @@ class PreviewWidget(QWidget):
     """Превью последнего кадра камеры с рамками людей; клик по человеку выбирает цель."""
 
     targetClicked = Signal(int)
+    # своя зона (control.zones): оператор тянет её мышью — точка лица (доли кадра) и масштаб зон
+    zoneChanged = Signal(float, float, float)
+    zoneCommitted = Signal()  # отпустил кнопку — можно сохранять
+    zoneReset = Signal()  # двойной клик по зоне
 
     click_guard: Callable[[], bool] | None = None  # False — клик не выбирает человека
+    zone_scale_of: Callable[[], float] | None = None  # масштаб сохранённой зоны этой камеры (по умолчанию 1)
+    DRAG_PX = 6  # меньше — это клик (выбор человека), больше — перенос зоны
+    HANDLE_PX = 9  # уголок мягкой зоны ловится в этом радиусе
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -58,6 +66,9 @@ class PreviewWidget(QWidget):
         self._seq = -1
         self._an_seq = None
         self.show_skeleton = False
+        self._press = None  # (точка нажатия, что под мышью, точка лица, мягкая зона, масштаб) — пока кнопка нажата
+        self._drag: str | None = None  # "move" | "nw" | "se"
+        self._hover: str | None = None
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(33)
@@ -109,7 +120,7 @@ class PreviewWidget(QWidget):
             self._seq = fr.seq
             changed = True
         r = self._result()
-        key = None if r is None else (r.seq, r.target_id, r.target_state, self.follow_zones() is not None)
+        key = (None if r is None else (r.seq, r.target_id, r.target_state), self.follow_zones())
         if key != self._an_seq:
             self._an_seq = key
             changed = True
@@ -154,15 +165,105 @@ class PreviewWidget(QWidget):
         hits = [t for t in r.tracks if t.last_seen == r.t_capture and self._box_rect(t.box, r.frame_size[0]).contains(pt)]
         return min(hits, key=lambda t: (t.box[2] - t.box[0]) * (t.box[3] - t.box[1])) if hits else None
 
+    def _zone_rects(self):
+        """(мягкая, мёртвая, точка лица) в координатах виджета — или None, если зоны не видны."""
+        z = self.follow_zones()
+        r = self._image_rect()
+        if z is None or r is None:
+            return None
+        cx, cy, dead, soft = z
+
+        def rect(hw, hh):
+            return QRectF(r.x() + (cx - hw) * r.width(), r.y() + (cy - hh) * r.height(),
+                          2 * hw * r.width(), 2 * hh * r.height())
+
+        return rect(*soft), rect(*dead), QPointF(r.x() + cx * r.width(), r.y() + cy * r.height())
+
+    def _zone_hit(self, pt: QPointF) -> str | None:
+        z = self._zone_rects()
+        if z is None:
+            return None
+        soft = z[0]
+        for name, c in (("nw", soft.topLeft()), ("se", soft.bottomRight())):
+            if abs(pt.x() - c.x()) <= self.HANDLE_PX and abs(pt.y() - c.y()) <= self.HANDLE_PX:
+                return name
+        return "move" if soft.contains(pt) else None
+
     def mousePressEvent(self, e):  # noqa: N802
         if e.button() != Qt.LeftButton:
             return
         if self.click_guard is not None and not self.click_guard():
             return
+        pos = e.position()
+        hit = self._zone_hit(pos)
+        if hit is None:
+            self._select_at(pos)  # вне зоны — выбор человека сразу, как раньше
+            return
+        f = self._follower.controller
+        scale = self.zone_scale_of() if self.zone_scale_of is not None else 1.0
+        self._press = (pos, hit, f.composition.anchor, self._zone_rects()[0], scale)
+        if hit != "move":
+            self._drag = hit  # за уголок тянут сразу
+
+    def mouseMoveEvent(self, e):  # noqa: N802
+        pos = e.position()
+        if self._press is not None:
+            p0, hit, (ax, ay), soft0, scale0 = self._press
+            if self._drag is None and (pos - p0).manhattanLength() > self.DRAG_PX:
+                self._drag = hit
+            if self._drag is not None:
+                r = self._image_rect()
+                if self._drag == "move":
+                    x, y, s = ax + (pos.x() - p0.x()) / r.width(), ay + (pos.y() - p0.y()) / r.height(), scale0
+                else:  # уголок: зона растёт от своего центра одинаково по обеим осям
+                    c = soft0.center()
+                    k = (abs(pos.x() - c.x()) / (soft0.width() / 2) + abs(pos.y() - c.y()) / (soft0.height() / 2)) / 2
+                    x, y, s = ax, ay, scale0 * k
+                z = Zone.clamped(x, y, s)
+                self.zoneChanged.emit(z.x, z.y, z.scale)
+                self.update()
+                return
+        hover = self._zone_hit(pos)
+        if hover != self._hover:
+            self._hover = hover
+            self.update()
+        if hover in ("nw", "se"):
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif self._seen_track_at(pos):
+            self.setCursor(Qt.PointingHandCursor)
+        else:
+            self.setCursor(Qt.SizeAllCursor if hover else Qt.ArrowCursor)
+
+    def mouseReleaseEvent(self, e):  # noqa: N802
+        if e.button() != Qt.LeftButton or self._press is None:
+            return
+        p0 = self._press[0]
+        dragged, self._press, self._drag = self._drag is not None, None, None
+        if dragged:
+            self.zoneCommitted.emit()
+        else:
+            self._select_at(p0)  # внутри зоны без переноса — обычный клик по человеку
+        self.update()
+
+    def mouseDoubleClickEvent(self, e):  # noqa: N802
+        if e.button() == Qt.LeftButton and self._zone_hit(e.position()) is not None:
+            if self.click_guard is None or self.click_guard():
+                self.zoneReset.emit()
+                e.accept()
+                return
+        super().mouseDoubleClickEvent(e)
+
+    def leaveEvent(self, e):  # noqa: N802
+        if self._hover is not None:
+            self._hover = None
+            self.update()
+        super().leaveEvent(e)
+
+    def _select_at(self, pos: QPointF) -> None:
         if self._analyzer is None:
             return
         r = self._result()
-        fp = self.widget_to_frame(e.position())
+        fp = self.widget_to_frame(pos)
         if fp is None or r is None:
             return
         # кадр анализа может отличаться размером от показанного — пересчитать
@@ -171,9 +272,6 @@ class PreviewWidget(QWidget):
         if tid is not None:
             self.targetClicked.emit(tid)
             self.update()
-
-    def mouseMoveEvent(self, e):  # noqa: N802
-        self.setCursor(Qt.PointingHandCursor if self._seen_track_at(e.position()) else Qt.ArrowCursor)
 
     # --- отрисовка ------------------------------------------------------
 
@@ -196,21 +294,44 @@ class PreviewWidget(QWidget):
         p.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, text)
 
     def _paint_zones(self, p: QPainter) -> None:
-        z = self.follow_zones()
+        z = self._zone_rects()
         if z is None:
             return
-        cx, cy, dead, soft = z
-        rect = self._image_rect()
-        for (hw, hh), color in ((soft, qcolor(C.LOST, 200)), (dead, qcolor(C.ON, 220))):
+        soft, dead, pt = z
+        for rect, color in ((soft, qcolor(C.LOST, 200)), (dead, qcolor(C.ON, 220))):
             pen = QPen(color, 1.5)
             pen.setStyle(Qt.DashLine)
             p.setPen(pen)
             p.setBrush(Qt.NoBrush)
-            p.drawRect(QRectF(rect.x() + (cx - hw) * rect.width(), rect.y() + (cy - hh) * rect.height(),
-                              2 * hw * rect.width(), 2 * hh * rect.height()))
+            p.drawRect(rect)
         p.setBrush(qcolor(C.ON))
         p.setPen(Qt.NoPen)
-        p.drawEllipse(QPointF(rect.x() + cx * rect.width(), rect.y() + cy * rect.height()), 3, 3)
+        p.drawEllipse(pt, 3, 3)
+        if self._hover is None and self._drag is None:
+            return
+        # мышь над зоной: ручки в уголках и ярлык над рамкой (набросок drawer-and-frame.html)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(qcolor(C.LOST), 1.5))
+        p.setBrush(qcolor(C.BG))
+        for c in (soft.topLeft(), soft.bottomRight()):
+            p.drawRoundedRect(QRectF(c.x() - 5, c.y() - 5, 10, 10), 2, 2)
+        if self._drag is not None:
+            a = self._follower.controller.composition.anchor
+            text = f"Лицо {round(a[0] * 100)} % · {round(a[1] * 100)} %"
+        else:
+            text = "Зона кадра · тяните · двойной клик — сброс"
+        f = QFont(FONT_FAMILY)
+        f.setPointSize(10)
+        p.setFont(f)
+        tw = p.fontMetrics().horizontalAdvance(text) + 12
+        th = p.fontMetrics().height() + 4
+        y = soft.top() - th if soft.top() - th >= 0 else soft.top() + 2
+        plate = QRectF(soft.left() + 8, y, tw, th)
+        p.setPen(Qt.NoPen)
+        p.setBrush(qcolor(C.SURFACE, 230))
+        p.drawRoundedRect(plate, 4, 4)
+        p.setPen(qcolor(C.TEXT_DIM))
+        p.drawText(plate, Qt.AlignCenter, text)
 
     def _paint_overlay(self, p: QPainter) -> None:
         self._paint_zones(p)

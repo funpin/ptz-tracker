@@ -120,3 +120,23 @@ def test_recalibration_note_shown_only_for_calibrated_camera(qtbot, tmp_path):
     fp.set_calibration_note(None)
     assert fp.calib_label.isHidden()
     w.close()
+
+
+def test_zone_drag_moves_point_keeps_following_and_is_per_size(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    select(w)
+    w.follow_panel.follow_btn.click()
+    qtbot.waitUntil(lambda: w.session.follower.enabled, timeout=2000)
+    w.preview.zoneChanged.emit(0.38, 0.3, 1.2)
+    w.preview.zoneCommitted.emit()
+    ctrl = w.session.follower.controller
+    assert ctrl.composition.anchor == (0.38, 0.3)
+    assert w.session.follower.enabled  # перенос зоны — не ручное управление
+    assert w.preview.zone_scale_of() == 1.2
+    w.follow_panel.comp_buttons["wide"].click()  # у «Общего» своя зона — по умолчанию
+    assert ctrl.composition.anchor == (0.5, 0.4)
+    w.follow_panel.comp_buttons["waist_center"].click()
+    assert ctrl.composition.anchor == (0.38, 0.3)
+    w.preview.zoneReset.emit()
+    assert ctrl.composition.anchor == (0.5, 0.25)
+    w.close()

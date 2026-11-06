@@ -44,8 +44,8 @@ from ptztracker.config import (
 )
 from ptztracker.control.camera_model import DEFAULT_TABLE_ID
 from ptztracker.control.composition import COMPOSITIONS
-from ptztracker.control.effort import EffortProfile
 from ptztracker.control.manual_curve import DEFAULT_SENS, clamp_sens, shape, tele_scale
+from ptztracker.control.zones import Zone, framing, zone_of
 from ptztracker.gamepad.device import GamepadThread, MultiPadThread, SdlBackend, SdlHub
 from ptztracker.gamepad.feedback import (
     RUMBLE_EDGE,
@@ -427,6 +427,10 @@ class MainWindow(QMainWindow):
             c.reset_target_btn.clicked.connect(lambda _=False, s=i: self._reset_target(s))
             c.skeleton_check.toggled.connect(lambda on, cell=c: self._on_skeleton(on, cell))
             c.preview.targetClicked.connect(lambda _id: self._update_status())
+            c.preview.zoneChanged.connect(lambda x, y, k, s=i: self._on_zone(s, Zone(x, y, k)))
+            c.preview.zoneCommitted.connect(lambda s=i: self._save_zone(s))
+            c.preview.zoneReset.connect(lambda s=i: self._on_zone(s, None, save=True))
+            c.preview.zone_scale_of = lambda s=i: self._zone_scale(s)
             c.powerClicked.connect(self._cell_power)
             c.viewToggleRequested.connect(self._toggle_view_at)
         # пресеты — выдвижная панель под сеткой камер (кнопка «Пресеты» внизу или P); правая колонка не двигается
@@ -1221,8 +1225,7 @@ class MainWindow(QMainWindow):
         c.cfg.composition = key
         if c.cfg.kind != "sim":
             self._save()
-        if c.session.follower:
-            c.session.follower.set_composition(COMPOSITIONS[key])
+        self._apply_framing(c.cfg, c.session.follower)
 
     def apply_effort(self, x: float, slot: int | None = None) -> None:
         if slot is None or slot == self.grid.selected:
@@ -1235,8 +1238,7 @@ class MainWindow(QMainWindow):
         c.cfg.effort = x
         if c.cfg.kind != "sim":
             self._save()
-        if c.session.follower:
-            c.session.follower.set_effort(EffortProfile.at(x))
+        self._apply_framing(c.cfg, c.session.follower)
 
     def refresh_status(self) -> None:
         self._update_status()
@@ -1564,8 +1566,7 @@ class MainWindow(QMainWindow):
         cam.composition = key
         if self._is_stored(cam):
             self._save()
-        if f := self._follower():
-            f.set_composition(COMPOSITIONS[key])
+        self._apply_framing(cam, self._follower())
 
     def _on_effort(self, x: float) -> None:
         cam = self._current_cfg()
@@ -1574,8 +1575,37 @@ class MainWindow(QMainWindow):
         cam.effort = x
         if self._is_stored(cam):
             self._save()
-        if f := self._follower():
-            f.set_effort(EffortProfile.at(x))
+        self._apply_framing(cam, self._follower())
+
+    def _zone_scale(self, slot: int) -> float:
+        g = self.grid.cells[slot]
+        z = zone_of(g.cfg.zones, g.cfg.composition) if g else None
+        return z.scale if z else 1.0
+
+    def _on_zone(self, slot: int, zone: Zone | None, save: bool = False) -> None:
+        """Оператор тянет зону на видео (None — двойной клик, сброс). Слежение не выключается:
+        регулятор доводит камеру до новой точки плавно, как при смене крупности."""
+        g = self.grid.cells[slot]
+        if g is None:
+            return
+        if zone is None:
+            g.cfg.zones.pop(g.cfg.composition, None)
+        else:
+            g.cfg.zones[g.cfg.composition] = zone.to_json()
+        self._apply_framing(g.cfg, g.session.follower)
+        if save:
+            self._save_zone(slot)
+
+    def _save_zone(self, slot: int) -> None:
+        g = self.grid.cells[slot]
+        if g is not None and self._is_stored(g.cfg):
+            self._save()
+
+    @staticmethod
+    def _apply_framing(cam, follower) -> None:
+        """Крупность, характер и своя зона этой крупности — в слежение камеры."""
+        if follower is not None:
+            follower.set_framing(*framing(cam.composition, cam.effort, cam.zones))
 
     def _reset_target(self, slot: int | None = None) -> None:
         c = self.grid.cells[self.grid.selected if slot is None else slot]

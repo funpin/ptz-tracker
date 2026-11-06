@@ -444,3 +444,19 @@ def test_tele_strength_default_and_clamped(tmp_path):
     cfg.tele_strength = 250
     store.save(cfg)
     assert ConfigStore(tmp_path / "c.json").load().tele_strength == 100
+
+
+def test_zones_roundtrip_and_bad_entries_dropped(tmp_path):
+    store = ConfigStore(tmp_path / "config.json")
+    cfg = default_config()
+    cfg.cameras[0].zones = {"waist_center": [0.38, 0.3, 1.2]}
+    store.save(cfg)
+    assert store.load().cameras[0].zones == {"waist_center": [0.38, 0.3, 1.2]}
+    p = tmp_path / "bad.json"
+    bad = {"id": "a", "name": "А", "ip": "10.0.0.5",
+           "zones": {"waist_center": [5, 0.3, 1], "full": "x", "nope": [0.5, 0.5, 1]}}
+    p.write_text(json.dumps({"cameras": [bad, {"id": "b", "name": "Б", "ip": "10.0.0.6", "zones": 3}]}),
+                 encoding="utf-8")
+    a, b = ConfigStore(p).load().cameras
+    assert a.zones == {"waist_center": [0.9, 0.3, 1.0]}  # в пределах, испорченные и чужие ключи убраны
+    assert b.zones == {}
