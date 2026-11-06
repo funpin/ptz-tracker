@@ -76,17 +76,17 @@ def test_empty_dialog(qtbot):
 def test_dialog_l1r1_mode_per_pad(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)
     pid = "a0:b1:c2:d3:e4:f5"
-    w.cfg.pad_speed_gear[pid] = 2
+    w.cfg.pad_gear[pid] = 2
     w._apply_pad_speed(w.pad)
-    assert w.pad.speed_limit == 0.5
+    assert w.pad.speed_limit == 5
     w.show_gamepads()
     d = w.gamepads_dialog
     assert d.mode_combos[pid].currentData() == "limit"  # по умолчанию — предел скорости
-    assert "скорость 2 из 4" in d.status_labels[pid].text()
+    assert "ступень 2 из 8 · до 5 °/с" in d.status_labels[pid].text()
     d.mode_combos[pid].setCurrentIndex(d.mode_combos[pid].findData("sens"))
-    assert w.pad.speed_limit == 1.0  # в режиме чувствительности предел не действует
+    assert w.pad.speed_limit == 34  # в режиме чувствительности — ступень по умолчанию
     assert ConfigStore(tmp_path / "c.json").load().pad_l1r1_mode == {pid: "sens"}
-    assert "скорость" not in d.status_labels[pid].text()
+    assert "ступень" not in d.status_labels[pid].text()
     d.mode_combos[pid].setCurrentIndex(d.mode_combos[pid].findData("limit"))
-    assert w.pad.speed_limit == 0.5  # ступень запомнена
+    assert w.pad.speed_limit == 5  # ступень запомнена
     w.close()

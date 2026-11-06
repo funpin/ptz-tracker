@@ -23,8 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ptztracker.config import SPEED_GEARS
-from ptztracker.control.manual_curve import SENS_MAX, SENS_MIN, clamp_sens
+from ptztracker.config import DEFAULT_GEAR, SPEED_GEARS
+from ptztracker.control.manual_curve import PAD_GEAR_DEG_S, SENS_MAX, SENS_MIN, clamp_sens
 from ptztracker.ui.theme import FS_CAPTION, SP, C
 
 SHARED_NOTE = "одинаковые геймпады без серийного номера делят эту настройку"
@@ -45,7 +45,7 @@ class PadRow:
     connected: bool = False
     cell: int | None = None  # номер клетки 1–4 (огоньки на геймпаде); None — без камеры или не подключён
     mode: str = "limit"  # что меняют L1/R1
-    gear: int = SPEED_GEARS  # ступень предела скорости
+    gear: int = DEFAULT_GEAR  # ступень скорости L1/R1
 
 
 class GamepadsDialog(QDialog):
@@ -70,8 +70,8 @@ class GamepadsDialog(QDialog):
 
         intro = QLabel("Чувствительность стика: «Плавно» — мягче у центра, легче сделать маленький поворот;"
                        " «Резко» — как раньше. Полный наклон всегда даёт полную скорость. Действует сразу.\n"
-                       "L1/R1 на геймпаде: R1 — быстрее, L1 — медленнее. «Предел скорости» — полный наклон даёт"
-                       " 25 / 50 / 75 / 100 % (толчков столько, какая ступень); «Чувствительность» — этот ползунок"
+                       "L1/R1 на геймпаде: R1 — быстрее, L1 — медленнее. «Предел скорости» — упор стика даёт"
+                       f" от {PAD_GEAR_DEG_S[0]} до {PAD_GEAR_DEG_S[-1]} °/с за {SPEED_GEARS} ступеней; «Чувствительность» — этот ползунок"
                        " шагами по 10. Крупность — свайп по тачпаду: вправо шире, влево ближе.")
         intro.setWordWrap(True)
         self.slow_tele_check = QCheckBox("Медленнее на крупном плане (мышь, стрелки и все геймпады)")
@@ -99,7 +99,8 @@ class GamepadsDialog(QDialog):
 
     @staticmethod
     def _status(r: PadRow) -> str:
-        speed = f" · скорость {r.gear} из {SPEED_GEARS}" if r.mode == "limit" else ""
+        speed = (f" · ступень {r.gear} из {SPEED_GEARS} · до {PAD_GEAR_DEG_S[r.gear - 1]} °/с"
+                 if r.mode == "limit" else "")
         if not r.connected:
             return "не подключён" + speed
         return (f"подключён · камера {r.cell}" if r.cell is not None else "подключён · без камеры") + speed
@@ -154,7 +155,7 @@ class GamepadsDialog(QDialog):
         if self._on_mode is not None:
             self._on_mode(pad_id, mode)
         r = self._rows.get(pad_id)
-        if r is not None:  # «скорость N из 4» видна только в режиме предела
+        if r is not None:  # ступень видна только в режиме предела
             self._rows[pad_id] = r = replace(r, mode=mode)
             self.status_labels[pad_id].setText(self._note(r))
 

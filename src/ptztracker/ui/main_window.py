@@ -33,6 +33,7 @@ from ptztracker import __version__
 from ptztracker.api.backend import start_window_api
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import (
+    DEFAULT_GEAR,
     GRID_SLOTS,
     SPEED_GEARS,
     AppConfig,
@@ -44,7 +45,14 @@ from ptztracker.config import (
 from ptztracker.control.camera_model import DEFAULT_TABLE_ID
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
-from ptztracker.control.manual_curve import DEFAULT_SENS, clamp_sens, shape, tele_scale
+from ptztracker.control.manual_curve import (
+    DEFAULT_SENS,
+    PAD_GEAR_DEG_S,
+    clamp_sens,
+    gear_of,
+    shape,
+    tele_scale,
+)
 from ptztracker.gamepad.device import GamepadThread, MultiPadThread, SdlBackend, SdlHub
 from ptztracker.gamepad.feedback import (
     RUMBLE_EDGE,
@@ -53,7 +61,6 @@ from ptztracker.gamepad.feedback import (
     RUMBLE_STEP,
     RUMBLE_TAKEN,
     PadStatus,
-    rumble_gear,
 )
 from ptztracker.gamepad.intents import (
     Composition,
@@ -1734,8 +1741,8 @@ class MainWindow(QMainWindow):
         return self.cfg.pad_l1r1_mode.get(pad_id, "limit") if pad_id else "limit"
 
     def pad_speed_gear(self, pad_id: str | None) -> int:
-        """Ступень предела скорости 1…SPEED_GEARS; незнакомый геймпад — последняя (100 %)."""
-        return self.cfg.pad_speed_gear.get(pad_id, SPEED_GEARS) if pad_id else SPEED_GEARS
+        """Ступень скорости 1…SPEED_GEARS; незнакомый геймпад — DEFAULT_GEAR."""
+        return self.cfg.pad_gear.get(pad_id, DEFAULT_GEAR) if pad_id else DEFAULT_GEAR
 
     def set_pad_l1r1_mode(self, pad_id: str, mode: str) -> None:
         """Из окна «Геймпады…»: режим L1/R1; предел скорости действует только в режиме "limit"."""
@@ -1750,8 +1757,8 @@ class MainWindow(QMainWindow):
         pid = (b.info or {}).get("id")
         if pid is None:
             return  # без опознавателя ступень живёт только в мосте, до отключения
-        gear = self.pad_speed_gear(pid) if self.pad_l1r1_mode(pid) == "limit" else SPEED_GEARS
-        b.set_speed_limit(gear / SPEED_GEARS)
+        gear = self.pad_speed_gear(pid) if self.pad_l1r1_mode(pid) == "limit" else DEFAULT_GEAR
+        b.set_speed_limit(PAD_GEAR_DEG_S[gear - 1])
 
     def _pad_speed_step(self, b: GamepadBridge, d: int) -> None:
         """L1/R1: ступень предела скорости или чувствительность ±10; за краем — длинный толчок."""
@@ -1768,20 +1775,20 @@ class MainWindow(QMainWindow):
                 b.set_sensitivity(new)
             b.rumble(RUMBLE_STEP)
         else:
-            cur = self.pad_speed_gear(pid) if pid else round(b.speed_limit * SPEED_GEARS)
+            cur = self.pad_speed_gear(pid) if pid else gear_of(b.speed_limit)
             new = max(1, min(SPEED_GEARS, cur + d))
             if new == cur:
                 b.rumble(RUMBLE_EDGE)
                 return
             if pid:
-                self.cfg.pad_speed_gear[pid] = new
+                self.cfg.pad_gear[pid] = new
                 self._save()
                 for x in self._bridges:  # одинаковые геймпады без серийного номера делят ступень
                     if (x.info or {}).get("id") == pid:
                         self._apply_pad_speed(x)
             else:
-                b.set_speed_limit(new / SPEED_GEARS)
-            b.rumble(rumble_gear(new))
+                b.set_speed_limit(PAD_GEAR_DEG_S[new - 1])
+            b.rumble(RUMBLE_STEP)
         self._refresh_gamepads_dialog()
 
     def _remember_pad(self, b: GamepadBridge, info: dict) -> None:

@@ -418,18 +418,18 @@ def test_pad_l1r1_mode_and_speed_gear_roundtrip_and_bad_values(tmp_path):
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"cameras": []}), encoding="utf-8")  # config.json версии 1.1
     cfg = ConfigStore(p).load()
-    assert cfg.pad_l1r1_mode == {} and cfg.pad_speed_gear == {}
-    cfg.pad_l1r1_mode, cfg.pad_speed_gear = {"SN1": "sens"}, {"SN1": 2}
+    assert cfg.pad_l1r1_mode == {} and cfg.pad_gear == {}
+    cfg.pad_l1r1_mode, cfg.pad_gear = {"SN1": "sens"}, {"SN1": 2}
     ConfigStore(p).save(cfg)
     back = ConfigStore(p).load()
-    assert back.pad_l1r1_mode == {"SN1": "sens"} and back.pad_speed_gear == {"SN1": 2}
+    assert back.pad_l1r1_mode == {"SN1": "sens"} and back.pad_gear == {"SN1": 2}
     p.write_text(json.dumps({"cameras": [],
                              "pad_l1r1_mode": {"a": "limit", "b": "turbo", "": "sens", "c": 1},
-                             "pad_speed_gear": {"a": 0, "b": 9, "c": 3, "d": True, "e": "2", "f": 2.5}}),
+                             "pad_gear": {"a": 0, "b": 99, "c": 3, "d": True, "e": "2", "f": 2.5}}),
                  encoding="utf-8")
     cfg = ConfigStore(p).load()
     assert cfg.pad_l1r1_mode == {"a": "limit"}
-    assert cfg.pad_speed_gear == {"a": 1, "b": 4, "c": 3}
-    p.write_text(json.dumps({"cameras": [], "pad_l1r1_mode": [1], "pad_speed_gear": "x"}), encoding="utf-8")
+    assert cfg.pad_gear == {"a": 1, "b": 8, "c": 3}
+    p.write_text(json.dumps({"cameras": [], "pad_l1r1_mode": [1], "pad_gear": "x"}), encoding="utf-8")
     cfg = ConfigStore(p).load()
-    assert cfg.pad_l1r1_mode == {} and cfg.pad_speed_gear == {}
+    assert cfg.pad_l1r1_mode == {} and cfg.pad_gear == {}

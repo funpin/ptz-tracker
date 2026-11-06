@@ -60,3 +60,40 @@ def test_tele_scale_by_field_of_view():
     assert tele_scale(0.5) == pytest.approx(1.0)  # мусор — без замедления
     vals = [tele_scale(1.0 + i * 0.2) for i in range(96)]
     assert all(a >= b for a, b in zip(vals, vals[1:]))
+
+
+def test_gear_speeds_are_even_steps_up_to_full():
+    from ptztracker.control.manual_curve import PAD_GEAR_DEG_S
+    assert len(PAD_GEAR_DEG_S) == 8 and PAD_GEAR_DEG_S[-1] == 90
+    ratios = [b / a for a, b in zip(PAD_GEAR_DEG_S, PAD_GEAR_DEG_S[1:])]
+    assert all(1.4 < r < 1.9 for r in ratios)  # каждая ступень примерно в 1,6 раза быстрее
+
+
+def test_pad_velocity_reaches_gear_speed_at_full_tilt():
+    from ptztracker.camera.he42 import pan_base_deg_s
+    from ptztracker.camera.speed import velocity_to_code
+    from ptztracker.control.manual_curve import PAD_GEAR_DEG_S, pad_velocity
+    for g in PAD_GEAR_DEG_S:
+        deg = pan_base_deg_s(velocity_to_code(pad_velocity(1.0, g)))
+        assert deg == pytest.approx(g, rel=0.15)  # код камеры целый: точнее не выйдет
+        assert pad_velocity(-1.0, g) == -pad_velocity(1.0, g)
+    assert pad_velocity(0.0, 21) == 0.0
+
+
+def test_pad_velocity_never_stops_a_moving_stick_and_grows():
+    from ptztracker.camera.speed import velocity_to_code
+    from ptztracker.control.manual_curve import MIN_OUT, pad_velocity
+    assert velocity_to_code(pad_velocity(MIN_OUT, 3)) > 50  # самая малая скорость стика двигает камеру
+    vs = [pad_velocity(i / 50, 90) for i in range(51)]
+    assert vs == sorted(vs)
+
+
+def test_no_burst_at_the_edge_of_the_stick():
+    """Жалоба 2026-11-06: у упора камера резко прибавляет. Последняя пятая часть хода — меньше половины скорости."""
+    from ptztracker.camera.he42 import pan_base_deg_s
+    from ptztracker.camera.speed import velocity_to_code
+    from ptztracker.control.manual_curve import pad_velocity
+
+    def deg(a):
+        return pan_base_deg_s(velocity_to_code(pad_velocity(shape(a, DEFAULT_SENS), 90)))
+    assert deg(1.0) - deg(0.8) < 0.5 * deg(1.0)

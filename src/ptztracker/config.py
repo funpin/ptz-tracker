@@ -20,7 +20,7 @@ from typing import Literal
 
 import platformdirs
 
-from ptztracker.control.manual_curve import clamp_sens
+from ptztracker.control.manual_curve import PAD_GEAR_DEG_S, clamp_sens
 from ptztracker.video.rtsp import with_mjpeg_framerate
 
 log = logging.getLogger(__name__)
@@ -87,11 +87,12 @@ class AppConfig:
     pad_names: dict = field(default_factory=dict)
     # L1/R1 у каждого геймпада: "limit" — ступени предела скорости (по умолчанию), "sens" — чувствительность ±10
     pad_l1r1_mode: dict = field(default_factory=dict)
-    pad_speed_gear: dict = field(default_factory=dict)  # ступень 1…4 = 25/50/75/100 %; нет записи — 4
+    pad_gear: dict = field(default_factory=dict)  # ступень 1…8 (manual_curve.PAD_GEAR_DEG_S); нет записи — 6
 
 
 PAD_L1R1_MODES = ("limit", "sens")
-SPEED_GEARS = 4  # ступени предела скорости геймпада: 25, 50, 75, 100 %
+SPEED_GEARS = len(PAD_GEAR_DEG_S)  # ступени скорости геймпада: 3 … 90 °/с на упоре стика
+DEFAULT_GEAR = 6  # 34 °/с: середина хода — как у 1.1 на полной скорости, без рывка у упора
 
 RECORD_DIR_NAME = "Записи PTZ Tracker"
 RECORD_BUFFER_MIN_S, RECORD_BUFFER_MAX_S = 60, 900  # в окне настроек — от 1 до 15 минут
@@ -256,8 +257,8 @@ def _fix_control_settings(cfg: AppConfig) -> None:
     cfg.pad_names = {k: v for k, v in names.items() if isinstance(k, str) and k and isinstance(v, str)}
     modes = cfg.pad_l1r1_mode if isinstance(cfg.pad_l1r1_mode, dict) else {}
     cfg.pad_l1r1_mode = {k: v for k, v in modes.items() if isinstance(k, str) and k and v in PAD_L1R1_MODES}
-    gears = cfg.pad_speed_gear if isinstance(cfg.pad_speed_gear, dict) else {}
-    cfg.pad_speed_gear = {k: max(1, min(SPEED_GEARS, v)) for k, v in gears.items()
+    gears = cfg.pad_gear if isinstance(cfg.pad_gear, dict) else {}
+    cfg.pad_gear = {k: max(1, min(SPEED_GEARS, v)) for k, v in gears.items()
                           if isinstance(k, str) and k and isinstance(v, int) and not isinstance(v, bool)}
 
 

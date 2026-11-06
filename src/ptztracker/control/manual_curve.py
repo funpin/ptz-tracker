@@ -41,6 +41,40 @@ def shape(v: float, sens: float) -> float:
     return math.copysign(out, v)
 
 
+# Ступени L1/R1 геймпада: скорость поворота на упоре стика, °/с; каждая примерно в 1,6 раза быстрее предыдущей.
+# Внутри ступени кривая shape раскладывается по °/с, а не по кодам камеры: таблица камеры крутая к краю
+# (код 80 — 33 °/с, 99 — 90 °/с), и при раскладке по кодам последняя пятая часть хода давала больше половины скорости.
+PAD_GEAR_DEG_S = (3, 5, 8, 13, 21, 34, 55, 90)
+
+
+def gear_of(max_deg_s: float) -> int:
+    """Номер ступени 1…len(PAD_GEAR_DEG_S), ближайшей к скорости на упоре max_deg_s."""
+    return 1 + min(range(len(PAD_GEAR_DEG_S)), key=lambda i: abs(PAD_GEAR_DEG_S[i] - max_deg_s))
+
+
+def deg_s_to_velocity(deg_s: float) -> float:
+    """Нормированная скорость 0…1 (camera.speed.velocity_to_code), при которой камера даёт deg_s °/с
+    (he42.PAN_DEG_S, линейно между точками); больше последней точки — 1."""
+    if deg_s <= 0.0:
+        return 0.0
+    pts = [(50, 0.0), *sorted(he42.PAN_DEG_S.items())]
+    code = float(pts[-1][0])
+    for (c0, d0), (c1, d1) in zip(pts, pts[1:]):
+        if deg_s <= d1:
+            code = c0 + (c1 - c0) * (deg_s - d0) / (d1 - d0)
+            break
+    return min(1.0, (code - 51) / 48)
+
+
+def pad_velocity(s: float, max_deg_s: float) -> float:
+    """Стик после кривой shape (-1…1) → нормированная скорость: |s| — доля max_deg_s в °/с. Ненулевой наклон
+    не меньше MIN_OUT (код 52): камера не стоит, пока стик отклонён."""
+    a = min(1.0, abs(float(s)))
+    if a == 0.0:
+        return 0.0
+    return math.copysign(max(MIN_OUT, deg_s_to_velocity(a * max_deg_s)), s)
+
+
 TELE_SCALE_MIN = 0.15  # на теле не медленнее этой доли: иначе стик на полном наклоне почти не двигает камеру
 
 

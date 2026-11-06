@@ -14,6 +14,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Qt, Signal
 
+from ptztracker.control.manual_curve import PAD_GEAR_DEG_S, pad_velocity
 from ptztracker.gamepad.battery import BatteryEstimator
 from ptztracker.gamepad.device import GamepadThread, SdlBackend
 from ptztracker.gamepad.feedback import (
@@ -83,7 +84,7 @@ class GamepadBridge(QObject):
         self.connected = False
         self.info: dict | None = None
         self._vel = (0.0, 0.0, 0.0)
-        self._limit_k = 1.0  # предел скорости поворота и наклона (L1/R1), доля 0…1
+        self._max_deg = float(PAD_GEAR_DEG_S[-1])  # ступень L1/R1: поворот и наклон на упоре стика, °/с
         self._led: tuple[int, int, int] | None = None
         self._player: int | None = None
         self.battery_percent: int | None = None
@@ -181,18 +182,17 @@ class GamepadBridge(QObject):
 
     # --- вызовы из потока Qt ---
     def velocity(self) -> tuple[float, float, float]:
-        """Поворот и наклон — с пределом скорости L1/R1; зум курками — как есть."""
+        """Поворот и наклон — по °/с ступени L1/R1 (manual_curve.pad_velocity); зум курками — как есть."""
         vx, vy, vz = self._vel
-        k = self._limit_k
-        return (vx * k, vy * k, vz) if k != 1.0 else self._vel
+        return pad_velocity(vx, self._max_deg), pad_velocity(vy, self._max_deg), vz
 
-    def set_speed_limit(self, k: float) -> None:
-        """Предел скорости поворота и наклона этого геймпада: доля полной, 0…1."""
-        self._limit_k = max(0.0, min(1.0, float(k)))
+    def set_speed_limit(self, max_deg_s: float) -> None:
+        """Ступень этого геймпада: скорость поворота и наклона на упоре стика, °/с (не больше полной)."""
+        self._max_deg = max(0.0, min(float(PAD_GEAR_DEG_S[-1]), float(max_deg_s)))
 
     @property
     def speed_limit(self) -> float:
-        return self._limit_k
+        return self._max_deg
 
     def zero_velocity(self) -> None:
         """Обнулить запомненную скорость (геймпад отключился) без запирания автомата."""
