@@ -230,7 +230,7 @@ def test_stick_curve_after_deadzone():
     half = 0.12 + 0.88 * 0.5  # половина хода после мёртвой зоны
     for sens, want in ((100, 0.5), (50, 0.25), (0, 0.13)):
         m = mk()
-        m.sensitivity = sens
+        m.sensitivity = m.tilt_sensitivity = sens
         assert m.update(pad(leftx=half, lefty=-half), 0.0) == [PanTilt(want, want)]
         assert m.update(pad(leftx=-1.0), 0.1) == [PanTilt(-1.0, 0.0)]  # полный наклон — полная скорость
 
