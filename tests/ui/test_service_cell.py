@@ -14,7 +14,7 @@ def row(ptz=None, history=()):
 
 def test_position_text():
     t = ptz_text(PtzPosition(0.0, 12.4, -8.1, 2.3))
-    assert "+012.4°" in t and "-008.1°" in t and "2.3×" in t
+    assert "+012,4°" in t and "−008,1°" in t and "2,3×" in t  # десятичная запятая, как в остальном окне
 
 
 def test_no_ptz_shows_dash():

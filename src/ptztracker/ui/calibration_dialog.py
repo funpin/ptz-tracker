@@ -124,8 +124,8 @@ def result_rows(snap: dict, running: bool) -> list[Row]:
         elif running:
             rows.append(Row("wait", text, "ждёт"))
 
-    single("dead_time", "Мёртвое время", lambda r: f"{fmt(r['value'])} с")
-    single("tau", "Разгон τ", lambda r: f"{fmt(r['value'])} с")
+    single("dead_time", "Задержка команды", lambda r: f"{fmt(r['value'])} с")
+    single("tau", "Время разгона", lambda r: f"{fmt(r['value'])} с")
     single("video_latency", "Задержка видео",
            lambda r: f"{fmt(r['value'])} с" + (f" · {r['stream']}" if r.get("stream") else ""))
     for zoom in sorted(snap["pan"]):
@@ -321,17 +321,18 @@ class CalibrationGraph(QWidget):
         zoom_h = max(30, int((bottom - top) * 0.14))
         plot = QRectF(left, top, strip.width(), bottom - top - zoom_h - gap)
         zplot = QRectF(left, plot.bottom() + gap, plot.width(), zoom_h)
+        apc, cmds = self._apc, self._cmds
+        if len(apc) < 2:  # до начала — только пояснение: пустые полосы кодов и зума выглядели как ошибка
+            p.setPen(qcolor(C.TEXT_FAINT))
+            p.drawText(QRectF(0, strip.top(), w, bottom - strip.top()), Qt.AlignCenter,
+                       "График появится, когда камера начнёт двигаться")
+            return
         p.setPen(Qt.NoPen)
         p.setBrush(qcolor(C.RAISED))
         p.drawRoundedRect(strip, 4, 4)
         p.setPen(QPen(qcolor(C.LINE), 1))
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(zplot, 4, 4)
-        apc, cmds = self._apc, self._cmds
-        if len(apc) < 2:
-            p.setPen(qcolor(C.TEXT_FAINT))
-            p.drawText(plot, Qt.AlignCenter, "График появится, когда камера начнёт двигаться")
-            return
         t_end = apc[-1][0]
         t_start = max(apc[0][0], t_end - GRAPH_WINDOW_S)
         span = max(t_end - t_start, 1.0)

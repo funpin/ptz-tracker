@@ -170,8 +170,8 @@ def test_numbers_appear_from_result_events(qtbot):
     d, runner, cancel, _ = make_dialog(qtbot, script)
     qtbot.waitUntil(lambda: "0,14" in d.numbers_view.toPlainText(), timeout=3000)
     text = d.numbers_view.toPlainText()
-    assert "Мёртвое время" in text and "0,10 с" in text
-    assert "Разгон τ" in text and "0,30 с" in text
+    assert "Задержка команды" in text and "0,10 с" in text
+    assert "Время разгона" in text and "0,30 с" in text
     assert "Задержка видео" in text and "0,14 с" in text
     assert "555" in text and "24,0" in text and "21,5" in text  # измерено и по модели
     assert "Наклон" in text and "9,8" in text
@@ -280,7 +280,7 @@ def test_result_rows_zebra_now_and_pending():
             "step": {"index": 2, "total": 9, "title": "Поворот на зуме 555"}}
     rows = result_rows(snap, running=True)
     kinds = {r.text: r.kind for r in rows}
-    assert kinds["Разгон τ"] == "row" and kinds["Мёртвое время"] == "wait"
+    assert kinds["Время разгона"] == "row" and kinds["Задержка команды"] == "wait"
     assert kinds["код 70"] == "row"
     assert any(r.kind == "now" and "Поворот на зуме 555" in r.text for r in rows)
     assert kinds["Скорость зума"] == "wait" and kinds["Наклон"] == "wait"

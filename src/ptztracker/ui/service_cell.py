@@ -91,11 +91,16 @@ def tile_colors(tally: str | None, selected: bool = False) -> tuple[str, str]:
         tally or "", (C.TEXT, C.BG) if selected else (C.RAISED_HI, C.TEXT))
 
 
+def ru(text: str) -> str:
+    """Числа по-русски, как в остальном окне: «+12,4°», «−8,0°», «1,5×»."""
+    return text.replace(".", ",").replace("-", "−")
+
+
 def ptz_text(ptz: PtzPosition | None) -> str:
     if ptz is None:
         return "P —  T —  Z —"
     zoom = f"{ptz.zoom_x:.1f}×" if ptz.zoom_x is not None else "—"
-    return f"P {ptz.pan_deg:+06.1f}°  T {ptz.tilt_deg:+06.1f}°  Z {zoom}"
+    return ru(f"P {ptz.pan_deg:+06.1f}°  T {ptz.tilt_deg:+06.1f}°  Z {zoom}")
 
 
 class ServiceCell(QWidget):
@@ -158,8 +163,8 @@ class ServiceCell(QWidget):
         if not g.has_data:
             return f"{r.slot + 1} · {r.name} · нет данных"
         tail = " · у предела поворота" if g.near_limit else ""
-        return (f"{r.slot + 1} · {r.name} · P {g.pan:+.1f}°  T {g.tilt:+.1f}°  "
-                f"{g.zoom_x:.1f}× · {2 * g.half_fov:.0f}°{tail}")
+        return (f"{r.slot + 1} · {r.name} · " + ru(f"P {g.pan:+.1f}°  T {g.tilt:+.1f}°  "
+                f"{g.zoom_x:.1f}× · {2 * g.half_fov:.0f}°") + tail)
 
     def _paint_position(self, p: QPainter, body: QRectF) -> None:
         for r, card in zip(self._rows, card_rects(len(self._rows), body), strict=False):
@@ -196,7 +201,8 @@ class ServiceCell(QWidget):
         p.setPen(qcolor(C.TEXT_DIM))
         if g.has_data:
             # порядок — как шкалы справа (зум, затем наклон у края): цифра наклона — под своей шкалой
-            vals = (f"P {g.pan:+.1f}°", f"{g.zoom_x:.1f}× · {2 * g.half_fov:.0f}°", f"T {g.tilt:+.1f}°")
+            vals = tuple(ru(v) for v in (f"P {g.pan:+.1f}°", f"{g.zoom_x:.1f}× · {2 * g.half_fov:.0f}°",
+                                         f"T {g.tilt:+.1f}°"))
             third = (card.width() - 2 * SP[1]) / 3
             for k, v in enumerate(vals):
                 align = (Qt.AlignLeft, Qt.AlignHCenter, Qt.AlignRight)[k] | Qt.AlignVCenter
@@ -278,11 +284,11 @@ class ServiceCell(QWidget):
             p.setBrush(qcolor(C.TEXT))
             p.drawRoundedRect(QRectF(rail.left() - 4, y - 1.5, 12, 3), 1.5, 1.5)
         p.save()
-        p.translate(box.left() + 6, box.center().y())
+        p.translate(box.left() + 4, box.center().y())
         p.rotate(-90)
-        p.setFont(self._font(9.5))
-        p.setPen(qcolor(C.TEXT_FAINT))
-        p.drawText(QRectF(-box.height() / 2, -6, box.height(), 12), Qt.AlignCenter, label)
+        p.setFont(self._font(FS_CAPTION - 1))  # было 9,5 px — не читалось
+        p.setPen(qcolor(C.TEXT_DIM))
+        p.drawText(QRectF(-box.height() / 2, -7, box.height(), 14), Qt.AlignCenter, label)
         p.restore()
 
     # --- графики ----------------------------------------------------------------
@@ -339,7 +345,7 @@ class ServiceCell(QWidget):
                 if len(pts) > 1:
                     p.setPen(QPen(qcolor(color), 1.5))
                     p.drawPolyline(pts)
-                text = f"{good[-1]:.1f}×" if k == 2 else f"{good[-1]:+.1f}°"
+                text = ru(f"{good[-1]:.1f}×" if k == 2 else f"{good[-1]:+.1f}°")
                 p.setFont(self._font(FS_CAPTION - 1.5))
                 p.setPen(qcolor(C.TEXT))
                 p.drawText(box.adjusted(0, 1, -5, 0), Qt.AlignRight | Qt.AlignTop, text)
@@ -377,10 +383,13 @@ class ServiceCell(QWidget):
         if not n:
             return
         gap = SP[1] - 2
-        row_h = min(52.0, (body.height() - foot_h - SP[1] - gap * (n - 1)) / n)
+        room = body.height() - foot_h - SP[1]
+        row_h = min(64.0, (room - gap * (n - 1)) / n)
+        # мало камер — строки посередине свободного места, а не прижаты к шапке над пустотой
+        top = body.top() + max(0.0, (room - n * row_h - gap * (n - 1)) / 2)
         clock_w = 74.0
         for i, r in enumerate(self._rows):
-            y = body.top() + i * (row_h + gap)
+            y = top + i * (row_h + gap)
             if row_h < 26:
                 break
             box = QRectF(body.left(), y, body.width(), row_h)

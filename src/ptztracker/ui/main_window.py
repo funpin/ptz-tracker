@@ -105,6 +105,7 @@ from ptztracker.ui.gamepad_bridge import GamepadBridge
 from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow, time_left_text
 from ptztracker.ui.hints import HintBar
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
+from ptztracker.ui.icons import icon
 from ptztracker.ui.keys import digit_of, logical_key
 from ptztracker.ui.main_menu import MainMenu
 from ptztracker.ui.manual_controls import STICK_MIN, ManualControls
@@ -748,18 +749,27 @@ class MainWindow(QMainWindow):
     def _build_cell_menu(self, slot: int, menu: QMenu, stream_menu: QMenu) -> None:
         """⋯ в шапке клетки: всё про эту камеру. Перед показом клетка выбирается — действия идут на неё."""
         menu.aboutToShow.connect(lambda: self.select_slot(slot))
+
+        def ic(name: str):  # значки — как в меню ☰, серым
+            return icon(name, C.TEXT_DIM, 16)
+
         menu.addAction(self.osd_action)
-        streams = menu.addMenu("Видеопоток")
+        self.osd_action.setIcon(ic("adjustments"))
+        streams = menu.addMenu(ic("video"), "Видеопоток")
         for act in self.stream_actions.actions():
             streams.addAction(act)
         menu.addSeparator()
         menu.addAction(self.calib_action)
+        self.calib_action.setIcon(ic("track"))
         menu.addAction(self.diag_action)
+        self.diag_action.setIcon(ic("chip"))
         menu.addSeparator()
         menu.addAction(self.edit_action)
-        menu.addAction("Убрать из клетки", lambda: self.set_cell_camera(slot, None))
+        self.edit_action.setIcon(ic("camera"))
+        menu.addAction(ic("user-x"), "Убрать из клетки", lambda: self.set_cell_camera(slot, None))
         menu.addSeparator()
         menu.addAction(self.power_action)
+        self.power_action.setIcon(ic("power"))
 
     def _open_osd_menu(self) -> None:
         if not self.camera_menu.is_open:
@@ -2195,6 +2205,7 @@ class MainWindow(QMainWindow):
             self._update_status()
 
     def _show_agent_window(self) -> None:
+        self.agent_window.resize(560, max(320, self.agent_window.sizeHint().height()))  # по карточкам, без пустоты
         self.agent_window.show()
         self.agent_window.raise_()
 

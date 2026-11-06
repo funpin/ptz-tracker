@@ -29,6 +29,8 @@ def test_no_service_menu(qtbot, tmp_path):
     cell = [a.text() for a in w.cells[0].more_btn.menu().actions()]
     assert any("Калибровка" in t for t in cell) and any("Диагностика" in t for t in cell)
     assert any("ожидания" in t or "Включить" in t for t in cell) and "Видеопоток" in cell
+    # значки, как в меню ☰ (ревью 2026-11-06)
+    assert all(not a.icon().isNull() for a in w.cells[0].more_btn.menu().actions() if not a.isSeparator())
     w.close()
 
 
