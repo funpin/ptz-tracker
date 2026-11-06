@@ -38,6 +38,8 @@ ZOOM_WINDOW_AFTER_S = 0.3
 # не больше одного окна.
 QUERY_MAX_WAIT_S = 0.4
 PT_SMALL_CHANGE = 2
+# Стопы поворота и зума не отбрасываются по счётчику ошибок: потерянный стоп оставляет камеру ехать.
+_NEVER_DROP = frozenset({STOP_PT, STOP_ZOOM})
 _PT_RE = re.compile(r"#PTS(\d\d)(\d\d)")
 _ZOOM_RE = re.compile(r"#Z(\d\d)")
 
@@ -369,9 +371,16 @@ class CommandScheduler:
         log.warning("Команда %s не прошла: %s", item.cmd, err)
         _settle(item.future, exc=err)
         with self._cond:
+            if item.key is not None:
+                # исход неизвестен (таймаут: камера могла выполнить, а ответ потерялся): забыть «последнюю отправленную»,
+                # иначе повтор той же команды (например стоп) счёл бы себя дублем. Лишний повтор безвреден, потерянный стоп — нет
+                self._st.last_sent.pop(item.key, None)
             if unreachable:
                 self._unreachable_streak += 1
-                if self._unreachable_streak >= UNREACHABLE_BACKOFF_AFTER:
+                # пауза не держит аварийный стоп: Esc уходит сразу, а частоту всё равно держит min_interval
+                if (self._unreachable_streak >= UNREACHABLE_BACKOFF_AFTER
+                        and item.priority != Priority.EMERGENCY
+                        and not any(i.priority == Priority.EMERGENCY for i in self._st.slots.values())):
                     self._backoff_until = self._clock() + UNREACHABLE_BACKOFF_S
             elif item.cmd == STOP_FOCUS and isinstance(err, CameraError) and err.code == "er3":
                 # автофокус включён: камера отвергает #F50 всегда (2026-10-29: ~23 повтора за 3 с), стоп фокуса не нужен
@@ -381,8 +390,8 @@ class CommandScheduler:
                 # er2 «занята» (работает пульт) или «в ожидании» — повторять, пока команду не заменит новая;
                 # но следующим пусть уйдёт пульс: по нему видно, что камера спит
                 self._probe_next = item.key != self.probe_key
-            elif item.priority != Priority.EMERGENCY:
-                # аварийный стоп не отбрасывается никогда
+            elif item.priority != Priority.EMERGENCY and item.cmd not in _NEVER_DROP:
+                # аварийный стоп и стопы поворота/зума не отбрасываются никогда
                 item.errors += 1
             if item.key is not None and item.key not in self._st.slots:
                 if item.errors < MAX_CAMERA_ERROR_RETRIES:

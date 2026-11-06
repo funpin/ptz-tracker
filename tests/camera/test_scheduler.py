@@ -110,6 +110,65 @@ def test_same_cmd_as_inflight_not_resent(env):
     assert send.calls == ["#PTS6050"]
 
 
+def test_esc_keeps_emergency_priority_when_release_repeats_stop(env):
+    s, clock, send = env
+    infos: list[dict] = []
+    s.add_sent_listener(infos.append)
+    s.submit("pt", "#PTS5050", Priority.MANUAL); s.pump(); clock.t += 1
+
+    def esc_then_release():
+        s.emergency_stop()
+        s.submit("pt", "#PTS5050", Priority.MANUAL)
+
+    send.during["#PTS6050"] = esc_then_release
+    s.submit("pt", "#PTS6050", Priority.MANUAL); s.pump()
+    for _ in range(4):
+        clock.t += 0.131
+        s.pump()
+    move_i = next(i for i, x in enumerate(infos) if x["cmd"] == "#PTS6050")
+    stop = next(x for x in infos[move_i + 1:] if x["cmd"] == "#PTS5050")
+    assert stop["priority"] == "EMERGENCY"
+
+
+def test_inflight_move_failure_keeps_deduped_repeat(env):
+    s, clock, send = env
+    send.during["#PTS6050"] = lambda: s.submit("pt", "#PTS6050", Priority.TRACKING)
+    send.fail_next = [CameraError("er2", "eR2:PTS")]
+    s.submit("pt", "#PTS6050", Priority.TRACKING); s.pump()
+    clock.t += 0.131
+    assert s.pump() == "#PTS6050"
+    assert send.ok == ["#PTS6050"]
+
+
+def test_timeout_forgets_last_sent_so_stop_goes_out(env):
+    s, clock, send = env
+    s.submit("pt", "#PTS5050", Priority.MANUAL); s.pump(); clock.t += 1
+    send.fail_next = [CameraUnreachable("timeout")]          # камера могла выполнить, ответ потерян
+    s.submit("pt", "#PTS6050", Priority.MANUAL); s.pump(); clock.t += 1
+    s.submit("pt", "#PTS5050", Priority.MANUAL)
+    assert s.pump() == "#PTS5050"
+
+
+@pytest.mark.parametrize("stop", ["#PTS5050", "#Z50"])
+def test_manual_stop_never_dropped_on_errors(env, stop):
+    s, clock, send = env
+    send.fail_next = [CameraError("er1", "eR1:X")] * 5
+    s.submit("pt" if stop.startswith("#PTS") else "zoom", stop, Priority.MANUAL, only_if_changed=False)
+    for _ in range(8):
+        s.pump(); clock.t += 0.131
+    assert stop in send.ok
+
+
+def test_esc_during_outage_not_delayed_by_backoff(env):
+    s, clock, send = env
+    send.fail_next = [CameraUnreachable("x")] * 3
+    send.during["#PTS6050"] = lambda: s.emergency_stop() if len(send.calls) == 3 else None
+    s.submit("pt", "#PTS6050", Priority.MANUAL)
+    for _ in range(3):
+        s.pump(); clock.t += 0.131
+    assert s.pump() == "#PTS5050"                            # без паузы 1 с
+
+
 def test_return_to_last_sent_cancels_pending(env):
     s, clock, send = env
     s.submit("pt", "#PTS5050", Priority.MANUAL)
