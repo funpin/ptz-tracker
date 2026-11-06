@@ -22,6 +22,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from ptztracker.config import normalize_pad_id
+
 from .intents import Disconnected
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
@@ -267,7 +269,7 @@ class SdlBackend:
         # pygame-ce не сообщает о возможностях напрямую: LED и вибрацию умеют DualSense/DualShock
         ps = kind in ("ps5", "ps4")
         serial = self._serial()
-        pad_id = serial or f"{self._guid()}:{name}"
+        pad_id = normalize_pad_id(serial) if serial else f"{self._guid()}:{name}"
         return {"name": name, "type": kind, "has_led": ps, "has_rumble": True, "power": power,
                 "id": pad_id, "has_serial": bool(serial)}
 

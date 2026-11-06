@@ -317,7 +317,7 @@ def _id_backend(serial, guid="030000004c050000e60c000000000000", name="DualSense
 
 def test_pad_id_is_serial_when_sdl_has_it():
     info = _id_backend(b"a0:b1:c2:d3:e4:f5").info()
-    assert info["id"] == "a0:b1:c2:d3:e4:f5" and info["has_serial"] is True
+    assert info["id"] == "A0:B1:C2:D3:E4:F5" and info["has_serial"] is True
 
 
 def test_pad_id_falls_back_to_guid_and_name():
@@ -390,3 +390,10 @@ def test_sdl_mfi_driver_disabled_before_sdl_starts():
 
     import ptztracker.gamepad.device  # noqa: F401
     assert os.environ.get("SDL_JOYSTICK_MFI") == "0"
+
+
+def test_pad_id_bluetooth_address_has_one_form():
+    """На Mac SDL отдавал адрес DualSense то «48-18-8d-…», то «48:18:8D:…» — один геймпад стал двумя в «Геймпадах…»."""
+    for serial in (b"48-18-8d-0f-68-98", b"48:18:8D:0F:68:98"):
+        info = _id_backend(serial).info()
+        assert info["id"] == "48:18:8D:0F:68:98"

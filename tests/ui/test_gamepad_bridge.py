@@ -2,10 +2,14 @@
 
 import threading
 
+import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QApplication
 
+from ptztracker.camera.he42 import pan_base_deg_s
+from ptztracker.camera.speed import velocity_to_code
 from ptztracker.config import ConfigStore
+from ptztracker.control.manual_curve import pad_velocity
 from ptztracker.gamepad.device import RawPad
 from ptztracker.gamepad.feedback import (
     RUMBLE_EDGE,
@@ -14,6 +18,7 @@ from ptztracker.gamepad.feedback import (
     RUMBLE_LIMIT,
     RUMBLE_NOWHERE,
     RUMBLE_PRESET_STORED,
+    RUMBLE_STEP,
     PadStatus,
 )
 from ptztracker.ui.main_window import MainWindow
@@ -332,30 +337,33 @@ class IdPad(PadBackend):
 
 def test_l1_r1_speed_gears_with_pulses_and_saved(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path, backend=IdPad())
-    assert w.pad.speed_limit == 1.0  # по умолчанию ступень 4 — 100 %
+    qtbot.waitUntil(lambda: w.pad.speed_limit == 34, timeout=1000)  # по умолчанию ступень 6 — 34 °/с
+    press(qtbot, b, "r1")
+    press(qtbot, b, "r1")
+    qtbot.waitUntil(lambda: w.pad.speed_limit == 90, timeout=1000)
+    qtbot.waitUntil(lambda: len(b.of("rumble")) == 2, timeout=1000)  # шаг — один короткий толчок
+    assert set(b.of("rumble")) == {RUMBLE_STEP[0]}
+    b.calls.clear()
     press(qtbot, b, "r1")  # быстрее некуда
     qtbot.waitUntil(lambda: b.of("rumble") == [RUMBLE_EDGE[0]], timeout=1000)
-    b.calls.clear()
-    press(qtbot, b, "l1")
-    qtbot.waitUntil(lambda: w.pad.speed_limit == 0.75, timeout=1000)
-    qtbot.waitUntil(lambda: len([r for r in b.of("rumble") if r[0]]) == 3, timeout=2000)  # ступень 3 — три толчка
-    press(qtbot, b, "l1")
-    press(qtbot, b, "l1")
-    qtbot.waitUntil(lambda: w.pad.speed_limit == 0.25, timeout=1000)
-    assert ConfigStore(tmp_path / "c.json").load().pad_speed_gear == {"SN1": 1}
+    for _ in range(7):
+        press(qtbot, b, "l1")
+    qtbot.waitUntil(lambda: w.pad.speed_limit == 3, timeout=2000)
+    assert ConfigStore(tmp_path / "c.json").load().pad_gear == {"SN1": 1}
     b.pad = stick(1.0)
-    qtbot.waitUntil(lambda: w.pad.velocity()[0] == 0.25, timeout=1000)
+    qtbot.waitUntil(lambda: w.pad.velocity()[0] > 0, timeout=1000)
+    assert pan_base_deg_s(velocity_to_code(w.pad.velocity()[0])) == pytest.approx(3, rel=0.15)
     w.close()
 
 
 def test_l1_r1_sensitivity_mode(qtbot, tmp_path):
     store = ConfigStore(tmp_path / "c.json")
     cfg = store.load()
-    cfg.pad_l1r1_mode, cfg.pad_speed_gear, cfg.pad_sensitivity = {"SN1": "sens"}, {"SN1": 1}, {"SN1": 95}
+    cfg.pad_l1r1_mode, cfg.pad_gear, cfg.pad_sensitivity = {"SN1": "sens"}, {"SN1": 1}, {"SN1": 95}
     store.save(cfg)
     w, b = make(qtbot, tmp_path, backend=IdPad())
     qtbot.waitUntil(lambda: w.pad.sensitivity == 95, timeout=1000)
-    assert w.pad.speed_limit == 1.0  # в режиме чувствительности предел скорости не действует
+    assert w.pad.speed_limit == 34  # в режиме чувствительности — ступень по умолчанию, сохранённая не действует
     press(qtbot, b, "r1")
     qtbot.waitUntil(lambda: w.pad.sensitivity == 100, timeout=1000)
     press(qtbot, b, "r1")  # резче некуда
@@ -565,13 +573,13 @@ def test_pad_sensitivity_by_id_applied_on_connect_and_live(qtbot, tmp_path):
     assert w.cfg.pad_names == {"SN-1": "DualSense"}  # окно «Геймпады…» покажет имя
     sim = w.session.sim
     b.pad = stick(0.12 + 0.88 * 0.5)
-    qtbot.waitUntil(lambda: bool(pts(sim)) and pts(sim)[-1] == "#PTS7550", timeout=2000)  # 0,5 — как в 1.0.1
+    qtbot.waitUntil(lambda: bool(pts(sim)) and pts(sim)[-1] == "#PTS7250", timeout=2000)  # 0,5 от 34 °/с ступени 6 — 17 °/с
     b.pad = stick(0.0)
     qtbot.waitUntil(lambda: pts(sim)[-1] == "#PTS5050", timeout=2000)
     w.set_pad_sensitivity("SN-1", 50)
     assert w.pad.sensitivity == 50 and ConfigStore(tmp_path / "c.json").load().pad_sensitivity == {"SN-1": 50}
     b.pad = stick(0.12 + 0.88 * 0.5)
-    qtbot.waitUntil(lambda: pts(sim)[-1] == "#PTS6350", timeout=2000)  # 0,25
+    qtbot.waitUntil(lambda: pts(sim)[-1] == "#PTS6650", timeout=2000)  # 0,25 — 8,5 °/с
     b.pad = stick(0.0)
     qtbot.waitUntil(lambda: pts(sim)[-1] == "#PTS5050", timeout=2000)
     w.close()
@@ -581,11 +589,11 @@ def test_speed_limit_scales_pan_tilt_not_zoom(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)
     b.pad = RawPad(axes={"leftx": 1.0, "r2": 1.0})
     qtbot.waitUntil(lambda: w.pad.velocity()[0] == 1.0, timeout=1000)
-    w.pad.set_speed_limit(0.25)
+    w.pad.set_speed_limit(21)
     vx, vy, vz = w.pad.velocity()
-    assert (vx, vz) == (0.25, 1.0)
-    assert w.pad.speed_limit == 0.25
-    w.pad.set_speed_limit(7.0)  # вне 0…1 — зажимается
+    assert vx == pad_velocity(1.0, 21) < 1.0 and vz == 1.0
+    assert w.pad.speed_limit == 21
+    w.pad.set_speed_limit(700)  # быстрее полной — зажимается
     assert w.pad.velocity()[0] == 1.0
     w.close()
 
@@ -593,7 +601,7 @@ def test_speed_limit_scales_pan_tilt_not_zoom(qtbot, tmp_path):
 def test_speed_step_applies_at_once_while_stick_held(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path, backend=IdPad())
     b.pad = stick(1.0)
-    qtbot.waitUntil(lambda: w._pad_vel.get(1, (0,))[0] == 1.0, timeout=1000)
-    b.pad = stick(1.0, buttons={"l1"})  # стик не отпускали: новый предел — сразу, без движения стика
-    qtbot.waitUntil(lambda: w._pad_vel[1][0] == 0.75, timeout=1000)
+    qtbot.waitUntil(lambda: w._pad_vel.get(1, (0,))[0] == pad_velocity(1.0, 34), timeout=1000)
+    b.pad = stick(1.0, buttons={"l1"})  # стик не отпускали: новая ступень — сразу, без движения стика
+    qtbot.waitUntil(lambda: w._pad_vel[1][0] == pad_velocity(1.0, 21), timeout=1000)
     w.close()

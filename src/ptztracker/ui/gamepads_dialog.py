@@ -25,8 +25,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ptztracker.config import SPEED_GEARS
-from ptztracker.control.manual_curve import SENS_MAX, SENS_MIN, TELE_STRENGTH_MAX, clamp_sens, shape, tele_scale
+from ptztracker.config import DEFAULT_GEAR, SPEED_GEARS
+from ptztracker.control.manual_curve import (
+    PAD_GEAR_DEG_S,
+    SENS_MAX,
+    SENS_MIN,
+    TELE_STRENGTH_MAX,
+    clamp_sens,
+    shape,
+    tele_scale,
+)
 from ptztracker.ui.icons import icon
 from ptztracker.ui.theme import FS_CAPTION, R_PANEL, SP, C, qcolor
 from ptztracker.ui.widgets import battery_level
@@ -53,7 +61,7 @@ class PadRow:
     battery_time: str | None = None  # «~5 ч» — сколько ещё проработает
     tally: str | None = None  # эфир камеры, которой управляет: pgm | pvw | None — цвет плитки номера
     mode: str = "limit"  # что меняют L1/R1: limit — предел скорости, sens — чувствительность
-    gear: int = SPEED_GEARS  # ступень предела скорости
+    gear: int = DEFAULT_GEAR  # ступень скорости L1/R1
 
 
 def time_left_text(seconds: float | None) -> str | None:
@@ -82,7 +90,7 @@ def status_text(r: PadRow) -> str:
         if r.battery_time:
             text += f" · {r.battery_time}"
     if r.mode == "limit":  # ступень видна только в режиме предела скорости
-        text += f" · скорость {r.gear} из {SPEED_GEARS}"
+        text += f" · ступень {r.gear} из {SPEED_GEARS} · до {PAD_GEAR_DEG_S[r.gear - 1]} °/с"
     return text + ("" if has_serial(r.pad_id) else f" · {SHARED_NOTE}")
 
 
@@ -332,12 +340,13 @@ class GamepadsDialog(QDialog):
         extra = QHBoxLayout()
         extra.setSpacing(SP[1])
         text.addLayout(extra)
-        # что меняют L1/R1 у этого геймпада: предел скорости (ступени 1–4) или чувствительность
+        # что меняют L1/R1 у этого геймпада: предел скорости (ступени) или чувствительность
         mode = QComboBox()
         for key, label in L1R1_MODES:
             mode.addItem(label, key)
         mode.setCurrentIndex(max(0, mode.findData(r.mode)))
-        mode.setToolTip("R1 — быстрее, L1 — медленнее. «Предел скорости» — полный наклон даёт 25 / 50 / 75 / 100 %;"
+        mode.setToolTip(f"R1 — быстрее, L1 — медленнее. «Предел скорости» — полный наклон даёт от {PAD_GEAR_DEG_S[0]}"
+                        f" до {PAD_GEAR_DEG_S[-1]} °/с за {SPEED_GEARS} ступеней;"
                         " «Чувствительность» — ползунок справа шагами по 10. Крупность — свайп по тачпаду.")
         mode.currentIndexChanged.connect(lambda _i, pid=r.pad_id, c=mode: self._mode_changed(pid, c.currentData()))
         extra.addWidget(mode)
@@ -388,7 +397,7 @@ class GamepadsDialog(QDialog):
         if self._on_mode is not None:
             self._on_mode(pad_id, mode)
         r = self._rows.get(pad_id)
-        if r is not None:  # «скорость N из 4» видна только в режиме предела
+        if r is not None:  # ступень видна только в режиме предела
             self._rows[pad_id] = r = replace(r, mode=mode)
             self.status_labels[pad_id].setText(status_text(r))
 

@@ -418,21 +418,21 @@ def test_pad_l1r1_mode_and_speed_gear_roundtrip_and_bad_values(tmp_path):
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"cameras": []}), encoding="utf-8")  # config.json версии 1.1
     cfg = ConfigStore(p).load()
-    assert cfg.pad_l1r1_mode == {} and cfg.pad_speed_gear == {}
-    cfg.pad_l1r1_mode, cfg.pad_speed_gear = {"SN1": "sens"}, {"SN1": 2}
+    assert cfg.pad_l1r1_mode == {} and cfg.pad_gear == {}
+    cfg.pad_l1r1_mode, cfg.pad_gear = {"SN1": "sens"}, {"SN1": 2}
     ConfigStore(p).save(cfg)
     back = ConfigStore(p).load()
-    assert back.pad_l1r1_mode == {"SN1": "sens"} and back.pad_speed_gear == {"SN1": 2}
+    assert back.pad_l1r1_mode == {"SN1": "sens"} and back.pad_gear == {"SN1": 2}
     p.write_text(json.dumps({"cameras": [],
                              "pad_l1r1_mode": {"a": "limit", "b": "turbo", "": "sens", "c": 1},
-                             "pad_speed_gear": {"a": 0, "b": 9, "c": 3, "d": True, "e": "2", "f": 2.5}}),
+                             "pad_gear": {"a": 0, "b": 99, "c": 3, "d": True, "e": "2", "f": 2.5}}),
                  encoding="utf-8")
     cfg = ConfigStore(p).load()
     assert cfg.pad_l1r1_mode == {"a": "limit"}
-    assert cfg.pad_speed_gear == {"a": 1, "b": 4, "c": 3}
-    p.write_text(json.dumps({"cameras": [], "pad_l1r1_mode": [1], "pad_speed_gear": "x"}), encoding="utf-8")
+    assert cfg.pad_gear == {"a": 1, "b": 8, "c": 3}
+    p.write_text(json.dumps({"cameras": [], "pad_l1r1_mode": [1], "pad_gear": "x"}), encoding="utf-8")
     cfg = ConfigStore(p).load()
-    assert cfg.pad_l1r1_mode == {} and cfg.pad_speed_gear == {}
+    assert cfg.pad_l1r1_mode == {} and cfg.pad_gear == {}
 
 
 def test_tele_strength_default_and_clamped(tmp_path):
@@ -460,3 +460,15 @@ def test_zones_roundtrip_and_bad_entries_dropped(tmp_path):
     a, b = ConfigStore(p).load().cameras
     assert a.zones == {"waist_center": [0.9, 0.3, 1.0]}  # в пределах, испорченные и чужие ключи убраны
     assert b.zones == {}
+
+
+def test_pad_settings_of_one_address_in_two_forms_merge(tmp_path):
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps({"cameras": [],
+                             "pad_sensitivity": {"48-18-8d-0f-68-98": 0, "48:18:8D:0F:68:98": 55, "GUID:Pad": 30},
+                             "pad_names": {"48-18-8d-0f-68-98": "DualSense"},
+                             "pad_l1r1_mode": {"48-18-8d-0f-68-98": "sens"}}), encoding="utf-8")
+    cfg = ConfigStore(p).load()
+    assert cfg.pad_sensitivity == {"48:18:8D:0F:68:98": 55, "GUID:Pad": 30}  # запись в новом виде важнее
+    assert cfg.pad_names == {"48:18:8D:0F:68:98": "DualSense"}
+    assert cfg.pad_l1r1_mode == {"48:18:8D:0F:68:98": "sens"}

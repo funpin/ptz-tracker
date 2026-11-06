@@ -325,5 +325,5 @@ def test_speed_gear_shared_by_pads_with_same_id(qtbot, tmp_path):
         fb.pad = RawPad()
     qtbot.waitUntil(lambda: len(w.pads) == 2, timeout=3000)
     w._pad_speed_step(w.pads[1], -1)
-    assert w.pads[1].speed_limit == w.pads[2].speed_limit == 0.75
+    assert w.pads[1].speed_limit == w.pads[2].speed_limit == 21
     w.close()
