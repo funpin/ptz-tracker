@@ -203,3 +203,9 @@ def test_swipe_row_shows_finger_and_stick_alternates(qtbot):
     d.row_hovered(row_of("Свайп"))
     assert d.pad.highlighted == "touchpad" and d.pad._anim == "swipe"
     assert PadDrawing.stick_mode(500) == "move" and PadDrawing.stick_mode(2100) == "press"
+
+
+def test_top_pad_badge_has_no_speed_gear(qtbot, tmp_path):
+    w, _b = make(qtbot, tmp_path)
+    assert w.top_pad_badges[0].gear_text() == ""  # ступень — только в шапке клетки
+    w.close()

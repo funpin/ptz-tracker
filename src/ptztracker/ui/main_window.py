@@ -2778,8 +2778,7 @@ class MainWindow(QMainWindow):
                 continue
             n, b = live[i]
             pct, chg = b.battery_percent, bool(b.battery_charging)
-            g = self._pad_gear(n)
-            badge.set(n, pct, chg, gear=g[0] if g else None, gears=g[1] if g else 0)  # заряд без цифр: SDL даёт грубо
+            badge.set(n, pct, chg)  # без цифр: SDL даёт заряд грубо; ступень L1/R1 — только в шапке клетки
             slot = self._pad_slot_number(n)
             tip = f"{(b.info or {}).get('name') or 'Геймпад'} {n}"
             tip += f" — камера в клетке {slot} (огоньки на геймпаде)" if slot else " — без камеры"
