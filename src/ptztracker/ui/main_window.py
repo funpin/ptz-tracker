@@ -233,9 +233,13 @@ class MainWindow(QMainWindow):
         self.grid = CameraGrid(self._make_session)
         self.cells: list[CameraCell] = [CameraCell(i) for i in range(GRID_SLOTS)]
         self.grid.selected = 0
-        self._service = {k: ServiceCell(k) for k in KINDS}  # окно владеет, клетки только показывают
+        # окно владеет (Qt-родитель — окно, иначе их связи держали бы окно в памяти и после закрытия),
+        # клетки только показывают
+        self._service = {k: ServiceCell(k, self) for k in KINDS}
         self._service_slot: dict[str, int | None] = dict.fromkeys(KINDS)
-        self.welcome = WelcomeView()  # ни одной камеры в сетке — в первой клетке
+        self.welcome = WelcomeView(self)  # ни одной камеры в сетке — в первой клетке
+        for wd in (self.welcome, *self._service.values()):
+            wd.hide()
         self.welcome.addRequested.connect(lambda: self._add_camera())
         self.welcome.simRequested.connect(lambda: self._open_sim_camera())
         self._welcome_on = False
@@ -939,7 +943,7 @@ class MainWindow(QMainWindow):
             self._strip_timer.stop()
         self.strip.setVisible(self.single_view)
         self._refresh_strip()
-        QTimer.singleShot(0, self._fit_rows)
+        self._fit_later()
 
     @staticmethod
     def _strip_image(fr) -> QImage:
@@ -2000,7 +2004,7 @@ class MainWindow(QMainWindow):
         if no_cams and not self._welcome_on:
             self.cells[0].set_service(self.welcome)
             self._welcome_on = True
-        QTimer.singleShot(0, self._fit_rows)
+        self._fit_later()
         where = {slot: TITLES[k] for k, slot in want.items() if slot is not None}
         for i, cell in enumerate(self.cells):
             cell.set_empty_title(where.get(i, "нет камеры"))
@@ -2209,6 +2213,18 @@ class MainWindow(QMainWindow):
         self.agent_window.show()
         self.agent_window.raise_()
 
+    def _fit_later(self) -> None:
+        """Подогнать правую колонку и ряды сетки на следующем витке событий. Таймер — ребёнок окна: QTimer.singleShot
+        с методом окна держал бы окно в памяти и после закрытия (так тесты копили по ~300 МБ на окно)."""
+        t = getattr(self, "_fit_timer", None)
+        if t is None:
+            t = self._fit_timer = QTimer(self)
+            t.setSingleShot(True)
+            t.setInterval(0)
+            t.timeout.connect(self._fit_side)
+            t.timeout.connect(self._fit_rows)
+        t.start()
+
     def _fit_side(self) -> None:
         """Свободную высоту правой колонки (высокий экран) — стику: он растёт, пока колонка без прокрутки."""
         joy = self.controls.joystick.width()
@@ -2237,8 +2253,7 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, e):  # noqa: N802
         super().resizeEvent(e)
-        QTimer.singleShot(0, self._fit_side)
-        QTimer.singleShot(0, self._fit_rows)
+        self._fit_later()
         self._fit_top_bar()
 
     def _remember_rtsp_url(self, s: CameraSession) -> None:

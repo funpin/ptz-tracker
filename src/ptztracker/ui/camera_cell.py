@@ -297,7 +297,10 @@ class CameraCell(QFrame):
         if self._service is not None:
             self._stack.removeWidget(self._service)
             self._service.hide()
-            self._service.setParent(None)  # служебным виджетом владеет окно: может отдать его другой клетке
+            # служебным виджетом владеет окно: может отдать его другой клетке; вне окна — без родителя
+            win = self.window()
+            self._service.setParent(win if win is not self else None)
+            self._service.hide()
             self._service = None
         if widget is None:
             self._stack.setCurrentWidget(self.video_frame)

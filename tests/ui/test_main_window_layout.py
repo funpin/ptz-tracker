@@ -150,3 +150,25 @@ def test_version_shown_and_credit_not_at_edge(qtbot, tmp_path):
     right = w.credit_label.mapTo(sb, w.credit_label.contentsRect().topRight()).x()  # где кончается текст
     assert right <= sb.width() - 12
     w.close()
+
+
+def test_closed_window_is_freed(qtbot, tmp_path):
+    """Окно после закрытия освобождается: приветствие и служебные клетки без родителя держали его связями Qt,
+    ~300 МБ на окно, и полный набор тестов на Mac снимала система (код 137)."""
+    import gc
+    import weakref
+
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
+    w.show()
+    qtbot.waitExposed(w)
+    ref = weakref.ref(w)
+    w.close()
+    w.deleteLater()
+    del w
+    for _ in range(3):
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        qtbot.wait(20)
+        gc.collect()
+    assert ref() is None
