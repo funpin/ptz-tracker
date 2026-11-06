@@ -11,6 +11,7 @@ from .intents import (
     Composition,
     Disconnected,
     GainStep,
+    Help,
     Intent,
     IrisStep,
     MenuAccept,
@@ -43,7 +44,7 @@ _HOLD_BUTTONS = ("cross", "circle", "square", "triangle", "create")  # коро�
 _REPEAT_BUTTONS = {"dpad_right": IrisStep(+1), "dpad_left": IrisStep(-1),
                    "dpad_up": GainStep(+1), "dpad_down": GainStep(-1)}
 _PLAIN_BUTTONS = {"r3": ToggleFollow(), "touchpad": Stop(), "l3": PushFocus(),
-                  "l1": SpeedStep(-1), "r1": SpeedStep(+1), "options": MenuOpen()}
+                  "l1": SpeedStep(-1), "r1": SpeedStep(+1), "options": MenuOpen(), "ps": Help()}
 _MENU_BUTTONS = {"dpad_up": MenuNav(0, -1), "dpad_down": MenuNav(0, +1), "dpad_left": MenuNav(-1, 0),
                  "dpad_right": MenuNav(+1, 0), "cross": MenuAccept(), "circle": MenuClose(),
                  "triangle": MenuClose(), "options": MenuClose()}
@@ -135,8 +136,8 @@ class Mapper:
             if menu:
                 if b in _MENU_BUTTONS:
                     out.append(_MENU_BUTTONS[b])
-                elif b in ("touchpad", "r3"):
-                    out.append(Stop() if b == "touchpad" else ToggleFollow())
+                elif b in ("touchpad", "r3", "ps"):
+                    out.append({"touchpad": Stop(), "r3": ToggleFollow(), "ps": Help()}[b])
                 continue
             if b in _HOLD_BUTTONS:
                 self._holds[b] = [t, False]

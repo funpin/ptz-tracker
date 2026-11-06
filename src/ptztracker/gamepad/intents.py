@@ -68,6 +68,11 @@ class MenuOpen:
 
 
 @dataclass(frozen=True)
+class Help:
+    """Кнопка PS: справка по клавишам и геймпаду (как F1)."""
+
+
+@dataclass(frozen=True)
 class MenuNav:
     dx: int
     dy: int
@@ -99,4 +104,4 @@ class Disconnected:
 
 
 Intent = (PanTilt | Zoom | Preset | IrisStep | GainStep | Neighbor | ToggleFollow | Stop | PushFocus
-          | Composition | MenuOpen | MenuNav | MenuAccept | MenuClose | NextCamera | SaveMoment | Disconnected)
+          | Composition | MenuOpen | Help | MenuNav | MenuAccept | MenuClose | NextCamera | SaveMoment | Disconnected)

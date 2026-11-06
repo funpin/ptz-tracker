@@ -34,7 +34,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")  # без видеосисте
 os.environ.setdefault("SDL_JOYSTICK_MFI", "0")
 
 BUTTONS = ("cross", "circle", "square", "triangle", "l1", "r1", "l3", "r3",
-           "dpad_up", "dpad_down", "dpad_left", "dpad_right", "touchpad", "options", "create")
+           "dpad_up", "dpad_down", "dpad_left", "dpad_right", "touchpad", "options", "create", "ps")
 STICK_AXES = ("leftx", "lefty", "rightx", "righty")  # −1…1, вниз = + (как в SDL)
 TRIGGER_AXES = ("l2", "r2")  # 0…1
 
@@ -97,6 +97,7 @@ class SdlHub:
                 "dpad_down": p.CONTROLLER_BUTTON_DPAD_DOWN, "dpad_left": p.CONTROLLER_BUTTON_DPAD_LEFT,
                 "dpad_right": p.CONTROLLER_BUTTON_DPAD_RIGHT, "touchpad": TOUCHPAD_BUTTON,
                 "options": p.CONTROLLER_BUTTON_START, "create": p.CONTROLLER_BUTTON_BACK,
+                "ps": p.CONTROLLER_BUTTON_GUIDE,
             }
             self.pg, self._controller = pygame, controller
             return True
