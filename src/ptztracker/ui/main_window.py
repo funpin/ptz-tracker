@@ -1832,7 +1832,8 @@ class MainWindow(QMainWindow):
 
         try:
             # отдельное окно: клавиши в нём не управляют камерой (фильтр главного окна его не считает своим)
-            w = ReplayWindow(Episode.open(path), parent=self, on_escape=self.emergency_stop)
+            w = ReplayWindow(Episode.open(path), parent=self, on_escape=self.emergency_stop,
+                             on_open_other=self._choose_replay)
         except Exception as e:
             QMessageBox.warning(self, "Запись", f"Не удалось открыть запись {path.name}: {e}")
             return None

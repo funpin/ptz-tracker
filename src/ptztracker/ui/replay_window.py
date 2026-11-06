@@ -14,12 +14,26 @@ from collections import OrderedDict
 from collections.abc import Callable
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
+from PySide6.QtCore import QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QPainter, QPainterPath
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QComboBox,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ptztracker.recorder.reader import Episode, _num, read_frame
 from ptztracker.recorder.replay import seen_in_frame
 from ptztracker.ui.preview import PreviewWidget
+from ptztracker.ui.theme import FS_BUTTON, FS_CAPTION, R_PANEL, SP, C, qcolor
+from ptztracker.ui.widgets import BrandMark, SectionHeader
 from ptztracker.video.frames import Frame, SourceStats
 from ptztracker.vision.analyzer import AnalysisResult
 from ptztracker.vision.tracker import Track
@@ -168,35 +182,143 @@ class ControlTimeline:
 
 def target_text(r: AnalysisResult | None) -> str:
     if r is None or r.target_id is None:
-        return "цель: нет"
-    return f"цель: №{r.target_id} ({TARGET_STATES.get(r.target_state, r.target_state)})"
+        return "нет"
+    return f"№{r.target_id} · {TARGET_STATES.get(r.target_state, r.target_state)}"
 
 
-def control_text(e: dict | None) -> str:
-    if e is None:
-        return "регулятор: тактов нет (слежение выключено)"
+def _codes(e: dict | None) -> tuple[str, str, str]:
     try:
         p, t, z = (int(c) for c in e["codes"][:3])
-        codes = f"{p}/{t}/{z}"
+        return str(p), str(t), str(z)
     except (KeyError, TypeError, ValueError):
-        codes = "—"
+        return "—", "—", "—"
+
+
+def state_text(e: dict | None) -> str:
+    """Что делал регулятор — словом; тактов нет — слежение было выключено."""
+    if e is None:
+        return "выключен"
     out = e.get("out")
     state = out.get("state") if isinstance(out, dict) else None
-    name = STATE_NAMES.get(state, "")
-    state_text = f"{state} ({name})" if name else (state or "—")
-    return f"коды pan/tilt/zoom: {codes} · регулятор: {state_text}"
+    return STATE_NAMES.get(state, state or "—")
+
+
+def fmt_clock(s: float) -> str:
+    """75,25 → «1:15,2» — минуты и секунды с десятыми."""
+    s = max(0.0, s)
+    m, sec = divmod(int(s * 10) / 10, 60)
+    return f"{int(m)}:{sec:04.1f}".replace(".", ",")
+
+
+def _duration_text(s: float) -> str:
+    return f"{int(s // 60)} мин {int(s % 60)} с" if s >= 60 else f"{round(s)} с"
+
+
+def header_meta(ep: Episode) -> str:
+    """Чья запись: камера, когда, сколько длится, версия программы."""
+    meta = ep.meta if isinstance(ep.meta, dict) else {}
+    parts = []
+    cam = meta.get("camera")
+    if isinstance(cam, dict) and cam.get("name"):
+        parts.append(str(cam["name"]))
+    local = (meta.get("saved") or meta.get("clock") or {}).get("local") if isinstance(
+        meta.get("saved") or meta.get("clock"), dict) else None
+    if isinstance(local, str) and len(local) >= 16:  # «2026-10-29 21:14:05» → «29.10.2026 21:14»
+        parts.append(f"{local[8:10]}.{local[5:7]}.{local[:4]} {local[11:16]}")
+    parts.append(_duration_text(ep.duration))
+    if meta.get("version"):
+        parts.append(f"версия {meta['version']}")
+    return " · ".join(parts)
+
+
+TIMELINE_COLORS = {"on": C.ON, "lost": C.LOST, "idle": C.GREY, "off": C.RAISED_HI}
+TIMELINE_LEGEND = (("on", "ведёт"), ("lost", "ищет цель"), ("idle", "стоит / держит"), ("off", "слежение выключено"))
+
+
+def timeline_segments(ep: Episode) -> list[tuple[float, float, str]]:
+    """Дорожка всей записи по кадрам: ведёт / ищет цель / стоит / слежение выключено — отрезками."""
+    times = [float(f["t"]) for f in ep.frame_index]
+    if not times:
+        return []
+    analysis, controls = RecordedAnalysis(ep), ControlTimeline(ep)
+    kinds = []
+    for t in times:
+        e = controls.near(t)
+        analysis.show(t)
+        r = analysis.latest()
+        if e is None:
+            kinds.append("off")
+        elif r is not None and r.target_state == "lost":
+            kinds.append("lost")
+        elif state_text(e) in ("стоит", "держит"):
+            kinds.append("idle")
+        else:
+            kinds.append("on")
+    segs: list[tuple[float, float, str]] = []
+    for i, k in enumerate(kinds):
+        t1 = times[i + 1] if i + 1 < len(times) else times[i]
+        if segs and segs[-1][2] == k:
+            segs[-1] = (segs[-1][0], t1, k)
+        else:
+            segs.append((times[i], t1, k))
+    return segs
+
+
+class TimelineStrip(QWidget):
+    """Дорожка над ползунком: цветом — что делало слежение; белая черта — где сейчас; клик — перемотка."""
+
+    seek = Signal(float)
+
+    def __init__(self, segs: list[tuple[float, float, str]], t0: float, t1: float, parent=None):
+        super().__init__(parent)
+        self._segs, self._t0, self._t1 = segs, t0, max(t1, t0 + 1e-6)
+        self._now = t0
+        self.setFixedHeight(14)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_now(self, t: float) -> None:
+        self._now = t
+        self.update()
+
+    def _x(self, t: float) -> float:
+        return (t - self._t0) / (self._t1 - self._t0) * self.width()
+
+    def mousePressEvent(self, e):  # noqa: N802
+        if e.button() == Qt.LeftButton and self.width() > 0:
+            self.seek.emit(self._t0 + e.position().x() / self.width() * (self._t1 - self._t0))
+
+    def paintEvent(self, _e):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        h = self.height()
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(0, 2, self.width(), h - 4), 3, 3)
+        p.setClipPath(clip)
+        p.fillRect(QRectF(0, 2, self.width(), h - 4), qcolor(C.RAISED))
+        for a, b, k in self._segs:
+            p.fillRect(QRectF(self._x(a), 2, max(1.0, self._x(b) - self._x(a)), h - 4), qcolor(TIMELINE_COLORS[k]))
+        p.setClipping(False)
+        x = self._x(self._now)
+        p.fillRect(QRectF(x - 1, 0, 2, h), qcolor(C.TEXT))
+        p.end()
 
 
 class ReplayWindow(QWidget):
-    """Просмотр записи: превью с рамками, ползунок времени, ▶/⏸, скорость, коды и состояние регулятора."""
+    """Просмотр записи (макет docs/design/mockups/journal-replay.html, раздел 2): сверху — чья запись,
+    справа — «В этот момент», над ползунком — дорожка всей записи, внизу — ▶, время и скорость кнопками."""
 
-    def __init__(self, episode: Episode, parent=None, on_escape: Callable[[], None] | None = None):
-        """on_escape — аварийный стоп камеры главного окна (Esc и здесь означает «стоп»)."""
+    MOMENT_ROWS = (("target", "Цель"), ("state", "Регулятор"), ("pan", "Поворот, код"), ("tilt", "Наклон, код"),
+                   ("zoom", "Зум, код"))
+
+    def __init__(self, episode: Episode, parent=None, on_escape: Callable[[], None] | None = None,
+                 on_open_other: Callable[[], None] | None = None):
+        """on_escape — аварийный стоп камеры главного окна (Esc и здесь означает «стоп»);
+        on_open_other — «Открыть другую…» (выбор файла в главном окне)."""
         super().__init__(parent, Qt.Window)
         self.episode = episode
         self._on_escape = on_escape
         self.setWindowTitle(f"Запись — {episode.path.name}")
-        self.resize(1000, 680)
+        self.resize(1100, 700)
         self.source = EpisodeFrames(episode)
         self.analysis = RecordedAnalysis(episode)
         self.controls = ControlTimeline(episode)
@@ -206,28 +328,121 @@ class ReplayWindow(QWidget):
         self._wall: float | None = None
         self._ticking = False  # ползунок двигает воспроизведение, а не оператор
 
+        # --- шапка: чья запись ---
+        self.title_label = QLabel(f"Запись — {episode.path.name}")
+        self.title_label.setStyleSheet(f"font-size: {FS_BUTTON}px; font-weight: 700;")
+        self.meta_label = QLabel(header_meta(episode))
+        self.meta_label.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
+        self.reveal_button = QPushButton("Показать файл")
+        self.reveal_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(episode.path.parent))))
+        self.other_button = QPushButton("Открыть другую…")
+        self.other_button.setVisible(on_open_other is not None)
+        if on_open_other is not None:
+            self.other_button.clicked.connect(on_open_other)
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
+        titles.addWidget(self.title_label)
+        titles.addWidget(self.meta_label)
+        head = QHBoxLayout()
+        head.setSpacing(SP[2])
+        head.addWidget(BrandMark(22))
+        head.addLayout(titles, 1)
+        head.addWidget(self.reveal_button)
+        head.addWidget(self.other_button)
+
+        # --- превью и «В этот момент» ---
         self.preview = PreviewWidget()
         self.preview.set_source(self.source)
         self.preview.set_analyzer(self.analysis)
+        self.moment: dict[str, QLabel] = {}
+        side = QFrame()
+        side.setObjectName("moment")
+        side.setFixedWidth(230)
+        side.setStyleSheet(f"QFrame#moment {{ background: {C.SURFACE}; border: 1px solid {C.LINE};"
+                           f" border-radius: {R_PANEL}px; }}")
+        sl = QVBoxLayout(side)
+        sl.setContentsMargins(SP[2], SP[2], SP[2], SP[2])
+        sl.setSpacing(SP[1])
+        sl.addWidget(SectionHeader("В этот момент"))
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(SP[2])
+        grid.setVerticalSpacing(SP[1])
+        for r, (key, title) in enumerate(self.MOMENT_ROWS):
+            t = QLabel(title)
+            t.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px; background: transparent;")
+            v = QLabel("—")
+            v.setStyleSheet("font-weight: 600; background: transparent;")
+            v.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            grid.addWidget(t, r, 0)
+            grid.addWidget(v, r, 1)
+            self.moment[key] = v
+        sl.addLayout(grid)
+        sl.addStretch(1)
+        mid = QHBoxLayout()
+        mid.setSpacing(SP[2])
+        mid.addWidget(self.preview, 1)
+        mid.addWidget(side)
+
+        # --- дорожка, ползунок, ▶, время, скорость ---
+        times = self.source.times
+        self.strip = TimelineStrip(timeline_segments(episode), times[0] if times else 0.0,
+                                   times[-1] if times else 0.0)
+        self.strip.seek.connect(self._seek_time)
+        legend = QHBoxLayout()
+        legend.setSpacing(SP[2])
+        for k, text in TIMELINE_LEGEND:
+            legend.addWidget(_legend_item(TIMELINE_COLORS[k], text))
+        legend.addStretch(1)
         self.play_btn = QPushButton("▶")
-        self.play_btn.setFixedWidth(44)
+        self.play_btn.setProperty("variant", "primary")
+        self.play_btn.setFixedWidth(48)
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, max(0, len(self.source) - 1))
         self.time_label = QLabel()
-        self.speed_combo = QComboBox()
-        for s in SPEEDS:
-            self.speed_combo.addItem(f"×{s:g}".replace(".", ","), s)
+        self.time_label.setStyleSheet("font-weight: 600;")
+        hint = QLabel("Пробел ▶/⏸ · ← → кадр")
+        hint.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
+        self.speed_combo = QComboBox()  # модель скорости; на экране — кнопки
+        for sp in SPEEDS:
+            self.speed_combo.addItem(f"×{sp:g}".replace(".", ","), sp)
+        self.speed_combo.setVisible(False)
+        self.speed_buttons: dict[float, QPushButton] = {}
+        speeds = QHBoxLayout()
+        speeds.setSpacing(0)
+        group = QButtonGroup(self)
+        for i, sp in enumerate(SPEEDS):
+            b = QPushButton(self.speed_combo.itemText(i))
+            b.setCheckable(True)
+            b.setProperty("variant", "seg")
+            b.setFocusPolicy(Qt.NoFocus)
+            b.clicked.connect(lambda _=False, i=i: self.speed_combo.setCurrentIndex(i))
+            group.addButton(b)
+            speeds.addWidget(b)
+            self.speed_buttons[sp] = b
+        self.speed_combo.currentIndexChanged.connect(
+            lambda i: self.speed_buttons[SPEEDS[i]].setChecked(True))
         self.speed_combo.setCurrentIndex(SPEEDS.index(1.0))
-        self.status = QLabel()
-        self.status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.speed_buttons[1.0].setChecked(True)
+        self.status = QLabel()  # «В записи нет кадров.» и прочие сбои
+        self.status.setStyleSheet(f"color: {C.TEXT_DIM};")
+        self.status.setVisible(False)
 
         bar = QHBoxLayout()
+        bar.setSpacing(SP[2])
         bar.addWidget(self.play_btn)
-        bar.addWidget(self.slider, 1)
         bar.addWidget(self.time_label)
-        bar.addWidget(self.speed_combo)
+        bar.addWidget(hint)
+        bar.addStretch(1)
+        bar.addLayout(speeds)
         lay = QVBoxLayout(self)
-        lay.addWidget(self.preview, 1)
+        lay.setContentsMargins(SP[3], SP[2], SP[3], SP[3])
+        lay.setSpacing(SP[2])
+        lay.addLayout(head)
+        lay.addLayout(mid, 1)
+        lay.addWidget(self.strip)
+        lay.addWidget(self.slider)
+        lay.addLayout(legend)
         lay.addLayout(bar)
         lay.addWidget(self.status)
 
@@ -241,6 +456,7 @@ class ReplayWindow(QWidget):
         else:
             self.play_btn.setEnabled(False)
             self.status.setText("В записи нет кадров.")
+            self.status.setVisible(True)
 
     @property
     def speed(self) -> float:
@@ -290,6 +506,11 @@ class ReplayWindow(QWidget):
         if not self._ticking:
             self._play_t = self.source.times[i]  # ползунок сдвинули руками — играть отсюда
 
+    def _seek_time(self, t: float) -> None:
+        times = self.source.times
+        if times:
+            self.slider.setValue(max(0, min(len(times) - 1, bisect.bisect_right(times, t) - 1)))
+
     # --- показ кадра ---
 
     def _show(self, i: int) -> None:
@@ -298,8 +519,13 @@ class ReplayWindow(QWidget):
         self.source.show(i)
         self.analysis.show(t)
         t0 = self.source.times[0]
-        self.time_label.setText(f"{t - t0:5.1f} / {self.source.times[-1] - t0:.1f} с")
-        self.status.setText(f"{target_text(self.analysis.latest())} · {control_text(self.controls.near(t))}")
+        self.time_label.setText(f"{fmt_clock(t - t0)} / {fmt_clock(self.source.times[-1] - t0)}")
+        self.strip.set_now(t)
+        e = self.controls.near(t)
+        pan, tilt, zoom = _codes(e)
+        for key, text in (("target", target_text(self.analysis.latest())), ("state", state_text(e)),
+                          ("pan", pan), ("tilt", tilt), ("zoom", zoom)):
+            self.moment[key].setText(text)
 
     def keyPressEvent(self, e):  # noqa: N802
         if e.key() == Qt.Key_Escape:
@@ -308,9 +534,30 @@ class ReplayWindow(QWidget):
                 self._on_escape()
             self.close()
             return
+        if e.key() == Qt.Key_Space:
+            self.toggle_play()
+            return
+        if e.key() in (Qt.Key_Left, Qt.Key_Right) and len(self.source):
+            self.slider.setValue(self.index + (1 if e.key() == Qt.Key_Right else -1))
+            return
         super().keyPressEvent(e)
 
     def closeEvent(self, e):  # noqa: N802
         self._set_playing(False)
         self.source.stop()
         super().closeEvent(e)
+
+
+def _legend_item(color: str, text: str) -> QWidget:
+    w = QWidget()
+    h = QHBoxLayout(w)
+    h.setContentsMargins(0, 0, 0, 0)
+    h.setSpacing(5)
+    sw = QLabel()
+    sw.setFixedSize(10, 10)
+    sw.setStyleSheet(f"background: {color}; border-radius: 3px;")
+    lab = QLabel(text)
+    lab.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px;")
+    h.addWidget(sw)
+    h.addWidget(lab)
+    return w

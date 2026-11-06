@@ -1,0 +1,84 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Окно «Агент»</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A;--lost:#F0A020;--pgm:#E5484D;--pvw:#3DBE6B;--fault:#E5484D}
+*{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:16px 18px;font-size:13px}
+h1{font-size:18px;margin:0 0 4px}.sub{color:var(--dim);font-size:12.5px;margin:0 0 16px;line-height:1.45;max-width:1100px}
+.row{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}.cap{color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin:0 0 6px}
+.win{background:var(--bg);border:1px solid var(--line);border-radius:12px;width:560px;max-width:100%}
+.tb{height:30px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:12px;font-weight:600}
+.body{padding:16px}
+.head{display:flex;align-items:center;gap:10px;margin-bottom:6px}.head b{font-size:15px}
+.chip{font-size:11px;font-weight:700;padding:2px 7px;border-radius:5px;border:1px solid var(--line);color:var(--faint)}
+.chip.on{background:var(--lime);border-color:var(--lime);color:var(--bg)}.chip.err{border-color:var(--fault);color:var(--fault)}
+.intro{color:var(--dim);font-size:12.5px;line-height:1.45;margin:0 0 14px}
+.sec{color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin:14px 0 8px}
+.cards{display:flex;flex-direction:column;gap:8px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.card.live{border-color:var(--lime)}
+.ch{display:flex;align-items:center;gap:8px}.num{width:18px;height:18px;border-radius:5px;background:var(--raised-hi);font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center}
+.num.pgm{background:var(--pgm)}.num.pvw{background:var(--pvw);color:var(--bg)}
+.nm{font-weight:600}.sp{flex:1}
+.st{font-size:12px;color:var(--faint)}.st.on{color:var(--lime)}
+.tg{display:flex;align-items:center;gap:10px;margin-top:9px;font-size:13px;color:var(--dim)}
+.sw{width:30px;height:17px;border-radius:9px;background:var(--raised-hi);border:1px solid var(--line);position:relative;flex:none}
+.sw i{position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:var(--faint)}
+.sw.on{background:var(--lime);border-color:var(--lime)}.sw.on i{left:15px;background:var(--bg)}
+.tg .why{color:var(--faint);font-size:11.5px}
+.warn{margin-top:8px;font-size:12px;color:var(--lost);display:flex;gap:6px}
+.api{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:12.5px;color:var(--dim)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--lime);flex:none}
+.foot{display:flex;align-items:center;gap:10px;margin-top:16px}.foot .f{color:var(--faint);font-size:12px;flex:1}
+.btn{background:var(--raised);border:1px solid var(--line);border-radius:8px;padding:7px 14px;color:var(--white);font-size:13px}
+.btn.pri{background:var(--white);color:var(--bg);font-weight:600;border-color:var(--white)}
+.kc{border:1px solid var(--line);background:var(--raised);border-radius:5px;padding:1px 6px;font-size:11px;font-weight:600}
+.old{background:#ECECEC;color:#111;border-radius:8px;padding:12px;width:520px;font:13px -apple-system,system-ui}
+.old fieldset{border:1px solid #bbb;border-radius:6px}.old label{margin-right:12px}
+.ncall{display:inline-flex;width:20px;height:20px;border-radius:50%;background:#FFD43B;color:#111;font:700 11px Inter;align-items:center;justify-content:center;flex:none}
+.notes{font-size:12.5px;color:var(--dim);line-height:1.45;max-width:420px}.notes ol{padding:0;margin:0;list-style:none}.notes li{margin-bottom:10px;display:flex;gap:8px}
+</style></head><body>
+<h1>Окно «Агент» — в общем стиле</h1>
+<p class="sub">Агент — программа на этом компьютере (например, Claude), которой оператор разрешает управлять слежением. Сейчас окно — серая рамка с флажками в строку. Предлагаю карточку на каждую камеру, как в «Геймпадах» и пресетах.</p>
+<div class="row">
+<div><div class="cap">Сейчас</div>
+<div class="old"><fieldset><legend>Агент</legend>
+<div><b>1 · TEST:</b> <label><input type="checkbox"> Разрешить управление агенту</label><label><input type="checkbox"> Камера НЕ в эфире</label></div>
+<div><b>2 · Club:</b> <label><input type="checkbox" checked> Разрешить управление агенту</label><label><input type="checkbox"> Камера НЕ в эфире</label></div>
+<div style="color:#666;margin-top:6px">API: http://127.0.0.1:8765</div></fieldset></div></div>
+
+<div><div class="cap">Предлагаю</div>
+<div class="win"><div class="tb">Агент</div><div class="body">
+ <div class="head"><svg width="22" height="22" viewBox="0 0 120 120"><g fill="none" stroke="#F5F5F2" stroke-width="9" stroke-linecap="round"><path d="M31 58V42c0-6 5-11 11-11h16"/><path d="M62 89h16c6 0 11-5 11-11V62"/></g><circle cx="60" cy="60" r="10" fill="#B7F34A"/></svg><b>Агент</b><span class="sp"></span><span class="chip on">AGENT</span><span class="ncall">1</span></div>
+ <p class="intro">Разрешения — у каждой камеры свои, не сохраняются после перезапуска. <span class="kc">Esc</span>, ручное управление камерой и аварийный стоп снимают их сразу.</p>
+
+ <div class="sec">Камеры</div>
+ <div class="cards">
+  <div class="card"><div class="ch"><span class="num pgm">1</span><span class="nm">TEST</span><span class="chip" style="border-color:var(--pgm);color:var(--pgm)">PGM</span><span class="sp"></span><span class="st">агенту нельзя</span><span class="ncall">2</span></div>
+   <div class="tg"><span class="sw"><i></i></span>Разрешить управление агенту</div>
+   <div class="tg"><span class="sw"><i></i></span>Камера НЕ в эфире</div>
+  </div>
+  <div class="card live"><div class="ch"><span class="num">2</span><span class="nm">Club</span><span class="sp"></span><span class="st on">агент ведёт камеру</span></div>
+   <div class="tg"><span class="sw on"><i></i></span>Разрешить управление агенту</div>
+   <div class="tg"><span class="sw on"><i></i></span>Камера НЕ в эфире <span class="why">— можно двигать камеру</span></div>
+  </div>
+  <div class="card"><div class="ch"><span class="num pvw">3</span><span class="nm">Зал</span><span class="chip" style="border-color:var(--pvw);color:var(--pvw)">PVW</span><span class="sp"></span><span class="st">только выключить слежение</span></div>
+   <div class="tg"><span class="sw on"><i></i></span>Разрешить управление агенту</div>
+   <div class="tg"><span class="sw"><i></i></span>Камера НЕ в эфире</div>
+   <div class="warn"><span class="ncall">3</span>Камера на PVW — следующей уйдёт в эфир. Перед «НЕ в эфире» проверьте микшер.</div>
+  </div>
+ </div>
+
+ <div class="sec">Связь</div>
+ <div class="api"><span class="dot"></span>API работает · 127.0.0.1:8765 · токен в config.json<span class="sp"></span><span class="ncall">4</span></div>
+
+ <div class="foot"><span class="f"></span><button class="btn">Снять все разрешения</button><button class="btn pri">Готово</button></div>
+</div></div></div>
+
+<div class="notes"><ol>
+<li><span class="ncall">1</span><span>Шапка со знаком, как в «Справке». Плашка AGENT горит, если хоть у одной камеры есть разрешение (та же, что в верхней строке).</span></li>
+<li><span class="ncall">2</span><span>Карточка на камеру: плитка номера цветом эфира, имя, ярлык PGM/PVW. Справа одним словом, что сейчас может агент: «нельзя», «только выключить слежение», «ведёт камеру». Флажки — тумблеры, как в меню ☰; рамка карточки лаймовая, когда агенту можно двигать камеру.</span></li>
+<li><span class="ncall">3</span><span>Подсказка про эфир только словами: Tally по-прежнему ничего не блокирует (решение от 2026-10-22). У PGM-камеры — «В эфире!» оранжевым, если ставят «НЕ в эфире».</span></li>
+<li><span class="ncall">4</span><span>Связь — одна строка: зелёная точка — API работает, красная — ошибка с причиной. Внизу — «Снять все разрешения» (как Esc) и «Готово».</span></li>
+</ol></div>
+</div>
+</body></html>

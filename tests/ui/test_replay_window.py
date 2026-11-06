@@ -53,10 +53,12 @@ def test_replay_window_scrubs(qtbot, tmp_path):
     assert r.tracks[0].box[0] == 105.0 and r.t_capture == T0 + 1.0
     assert r.tracks[0].last_seen == r.t_capture  # виден в этом кадре: превью рисует скелет
     qtbot.waitUntil(lambda: w.preview.has_frame(), timeout=2000)
-    assert "55/49/50" in w.status.text() and "moving" in w.status.text()
+    m = w.moment
+    assert m["pan"].text() == "55" and m["tilt"].text() == "49" and m["zoom"].text() == "50"
+    assert m["state"].text() == "ведёт" and m["target"].text() == "№3 · веду"
     w.slider.setValue(8)
     assert w.analysis.latest().target_state == "lost"
-    assert "58/49/50" in w.status.text()
+    assert m["pan"].text() == "58" and m["target"].text() == "№3 · потеряна"
     assert w.analysis.select_at(10, 10) is None  # только просмотр: цель не выбирается
 
 
@@ -119,7 +121,7 @@ def test_replay_window_drops_stale_analysis(qtbot, tmp_path):
     assert w.analysis.latest() is not None
     w.slider.setValue(9)  # 1,0 с — рамки не «замерзают»
     assert w.analysis.latest() is None
-    assert "цель: нет" in w.status.text()
+    assert w.moment["target"].text() == "нет"
 
 
 def test_escape_in_viewer_without_main_window_closes(qtbot, tmp_path):
@@ -152,3 +154,44 @@ def test_escape_in_viewer_is_emergency_stop(qtbot, tmp_path):
     assert not rw.isVisible()
     qtbot.waitUntil(lambda: "#PTS5050" in s.sim.received, timeout=2000)
     mw.close()
+
+
+def test_header_time_and_speed_buttons(qtbot, tmp_path):
+    from ptztracker.ui.replay_window import fmt_clock
+
+    w = ReplayWindow(_episode(tmp_path))
+    qtbot.addWidget(w)
+    assert "e.zip" in w.title_label.text() and "версия test" in w.meta_label.text()
+    w.slider.setValue(5)
+    assert w.time_label.text() == "0:01,0 / 0:01,8"
+    assert fmt_clock(75.25) == "1:15,2"
+    w.speed_buttons[4.0].click()  # ×4 — кнопкой, как в макете
+    assert w.speed == 4.0 and w.speed_buttons[4.0].isChecked() and not w.speed_buttons[1.0].isChecked()
+
+
+def test_timeline_strip_colours_whole_record(qtbot, tmp_path):
+    from ptztracker.ui.replay_window import timeline_segments
+
+    ep = _episode(tmp_path)
+    segs = timeline_segments(ep)
+    kinds = [k for _t0, _t1, k in segs]
+    assert kinds == ["on", "lost"]  # кадры 0–6 ведёт, 7–9 цель потеряна
+    assert segs[0][0] == T0 and abs(segs[-1][1] - (T0 + 1.8)) < 1e-6
+    w = ReplayWindow(ep)
+    qtbot.addWidget(w)
+    w.show()
+    strip = w.strip
+    qtbot.mouseClick(strip, Qt.LeftButton, pos=strip.rect().center())  # клик по дорожке — перемотка
+    assert 3 <= w.index <= 6
+
+
+def test_space_plays_and_arrows_step(qtbot, tmp_path):
+    w = ReplayWindow(_episode(tmp_path))
+    qtbot.addWidget(w)
+    w.show()
+    qtbot.keyClick(w, Qt.Key_Right)
+    assert w.index == 1
+    qtbot.keyClick(w, Qt.Key_Space)
+    assert w.playing
+    qtbot.keyClick(w, Qt.Key_Space)
+    assert not w.playing
