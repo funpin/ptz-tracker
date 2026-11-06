@@ -119,3 +119,13 @@ def test_guard_blocks_zone_drag_in_unselected_cell(qtbot):
     p.zoneChanged.connect(lambda *a: got.append(a))
     drag(qtbot, p, at(p, 0.6, 0.3), at(p, 0.4, 0.3))
     assert got == []
+
+
+def test_zone_stays_put_while_point_leads_the_walker(qtbot):
+    f = follower()
+    f.controller.x.lead = -0.1  # человек идёт: регулятор оставляет место для взгляда
+    p = make(qtbot, f)
+    soft, dead, pt = p._zone_rects()
+    centre = at(p, 0.5, 0.25)
+    assert abs(soft.center().x() - centre.x()) < 2 and abs(dead.center().x() - centre.x()) < 2  # рамка на месте
+    assert abs(pt.x() - at(p, 0.4, 0.25).x()) < 2  # сдвиг видно только по точке

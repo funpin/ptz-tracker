@@ -91,14 +91,15 @@ class PreviewWidget(QWidget):
         self.update()
 
     def follow_zones(self):
-        """(центр x, центр y, мёртвая зона, мягкая зона) в долях кадра — или None, если слежение выключено."""
+        """(точка x, точка y, мёртвая зона, мягкая зона, сдвиг x) в долях кадра — или None, если слежение выключено.
+        Сдвиг — «место для взгляда» идущему человеку: его показывает только точка, рамка стоит, где её поставили."""
         f = self._follower
         if f is None or not f.enabled or f.output is None:
             return None
         c = f.controller
         e = c.effort
         ax, ay = c.composition.anchor
-        return (ax + c.x.lead, ay, (e.dead_x, e.dead_y), (e.soft_x, e.soft_y))
+        return (ax, ay, (e.dead_x, e.dead_y), (e.soft_x, e.soft_y), c.x.lead)
 
     def has_frame(self) -> bool:
         return self._image is not None
@@ -171,13 +172,13 @@ class PreviewWidget(QWidget):
         r = self._image_rect()
         if z is None or r is None:
             return None
-        cx, cy, dead, soft = z
+        cx, cy, dead, soft, lead = z
 
         def rect(hw, hh):
             return QRectF(r.x() + (cx - hw) * r.width(), r.y() + (cy - hh) * r.height(),
                           2 * hw * r.width(), 2 * hh * r.height())
 
-        return rect(*soft), rect(*dead), QPointF(r.x() + cx * r.width(), r.y() + cy * r.height())
+        return rect(*soft), rect(*dead), QPointF(r.x() + (cx + lead) * r.width(), r.y() + cy * r.height())
 
     def _zone_hit(self, pt: QPointF) -> str | None:
         z = self._zone_rects()
