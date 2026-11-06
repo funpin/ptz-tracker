@@ -1,0 +1,74 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Управление мышью</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--lime:#B7F34A;--lost:#F0A020}
+*{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:16px 18px;font-size:13px}
+h1{font-size:18px;margin:0 0 4px}.sub{color:var(--dim);font-size:12.5px;margin:0 0 14px;line-height:1.45;max-width:1150px}
+.row{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.cell{width:640px;max-width:100%;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.ch{display:flex;align-items:center;gap:8px;padding:7px 10px}.num{width:18px;height:18px;border-radius:5px;background:var(--white);color:var(--bg);font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center}
+.tag{font-size:11px;font-weight:700;padding:2px 6px;border-radius:5px;border:1px solid var(--line);color:var(--faint)}
+.v{position:relative;aspect-ratio:16/9;background:linear-gradient(180deg,#56606a,#4b545d 60%,#3a4047);cursor:none;overflow:hidden;user-select:none}
+.v .pr{position:absolute}
+.frame{position:absolute;inset:0;border:2px solid var(--lime);border-radius:2px;pointer-events:none;display:none}
+.plate{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:rgba(23,25,29,.85);border-radius:7px;padding:5px 10px;font-size:12px;display:none;white-space:nowrap;align-items:center;gap:8px}
+.plate b{color:var(--lime);letter-spacing:.06em;font-size:11px}
+.plate .k{border:1px solid var(--line);background:var(--raised);border-radius:5px;padding:0 5px;font-size:11px;font-weight:600}
+.plate .w{color:var(--white);font-weight:600}
+.on .frame,.on .plate{display:flex}
+.cross{position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-11px;display:none}
+.cross:before,.cross:after{content:"";position:absolute;background:rgba(245,245,242,.8)}.cross:before{left:10px;top:0;width:2px;height:22px}.cross:after{top:10px;left:0;height:2px;width:22px}
+.on .cross{display:block}
+svg.vec{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.hint{position:absolute;left:10px;bottom:10px;background:rgba(23,25,29,.85);border-radius:7px;padding:5px 9px;font-size:12px;color:var(--dim)}
+.ncall{display:inline-flex;width:20px;height:20px;border-radius:50%;background:#FFD43B;color:#111;font:700 11px Inter;align-items:center;justify-content:center;flex:none}
+.notes{font-size:12.5px;color:var(--dim);line-height:1.45;max-width:440px}.notes ol{padding:0;margin:0;list-style:none}.notes li{margin-bottom:10px;display:flex;gap:8px}.notes b{color:var(--white)}
+.try{color:var(--faint);font-size:12px;margin-top:6px}
+</style></head><body>
+<h1>«Камера как курсор» — управление мышью</h1>
+<p class="sub">Как договаривались в плане: режим включается клавишей <b>Tab</b> или двойным кликом по видео, выключается <b>Tab</b> или <b>Esc</b>. <b>Попробуйте прямо здесь:</b> кликните дважды по видео, ведите мышь от центра, крутите колесо, нажмите правую кнопку.</p>
+<div class="row">
+<div>
+<div class="cell">
+ <div class="ch"><span class="num">1</span><b>Club_1</b><span style="flex:1"></span><span class="tag" id="state">ВЫКЛ</span></div>
+ <div class="v" id="v">
+  <div class="pr" style="left:0;top:58%;width:10%;height:42%;background:#b88445"></div>
+  <div class="pr" style="left:10%;top:40%;width:24%;height:60%;background:#5a3c26"></div>
+  <div class="pr" style="left:34%;top:60%;width:24%;height:40%;background:#4569bb"></div>
+  <div class="pr" style="left:63%;top:46%;width:6%;height:11%;border-radius:50%;background:#d9ae96"></div>
+  <div class="pr" style="left:60%;top:57%;width:12%;height:43%;border-radius:12px 12px 0 0;background:#c08d82"></div>
+  <svg class="vec" id="vec"></svg>
+  <div class="cross"></div>
+  <div class="frame"></div>
+  <div class="plate"><b>УПРАВЛЕНИЕ МЫШЬЮ</b> · колесо: <span class="w" id="wheel">ЗУМ</span> · <span class="k">ПКМ</span> зум ↔ ирис · <span class="k">ЛКМ</span> взять человека · <span class="k">Tab</span> выйти</div>
+  <div class="hint" id="hint">Двойной клик по видео или Tab — управление мышью</div>
+ </div>
+</div>
+<div class="try" id="log">Камера стоит.</div>
+</div>
+<div class="notes"><ol>
+<li><span class="ncall">1</span><span><b>Вход:</b> Tab или двойной клик по видео (не по зоне — двойной клик по зоне её сбрасывает). Курсор прячется, в центре — крестик, по краю видео — лаймовая рамка, сверху — плашка с подсказкой.</span></li>
+<li><span class="ncall">2</span><span><b>Движение мыши → скорость камеры:</b> как ведёте — так и едет; отвели дальше от центра — быстрее. Стрелка от крестика показывает, куда и как быстро. Остановили руку — камера плавно останавливается. Маленькая дрожь руки не двигает камеру. Действует «Медленнее на крупном плане».</span></li>
+<li><span class="ncall">3</span><span><b>Колесо</b> — зум; <b>ПКМ</b> переключает колесо на ирис и обратно (написано в плашке). <b>ЛКМ</b> — взять в слежение человека ближе всех к центру и включить слежение.</span></li>
+<li><span class="ncall">4</span><span><b>Выход:</b> Tab или Esc (Esc заодно останавливает все камеры). При выходе камера сразу останавливается. Если окно потеряло фокус — камера останавливается, режим остаётся до Tab или Esc.</span></li>
+<li><span class="ncall">?</span><span>Любое движение мышью, как и стик, выключает слежение этой камеры и снимает флажки агента. Режим работает в выбранной клетке.</span></li>
+</ol></div>
+</div>
+<script>
+const v=document.getElementById('v'),vec=document.getElementById('vec'),log=document.getElementById('log'),st=document.getElementById('state'),hint=document.getElementById('hint');
+let on=false,wheel='ЗУМ',zoom=1,iris=8,last=null,stopT;
+function set(o){on=o;v.classList.toggle('on',o);hint.style.display=o?'none':'block';vec.innerHTML='';st.textContent=o?'ВРУЧНУЮ':'ВЫКЛ';log.textContent=o?'Режим мыши: ведите мышь.':'Камера стоит.'}
+v.ondblclick=()=>set(!on);
+addEventListener('keydown',e=>{if(e.key==='Tab'){e.preventDefault();set(!on)}if(e.key==='Escape')set(false)});
+v.onmousemove=e=>{if(!on)return;const r=v.getBoundingClientRect(),cx=r.width/2,cy=r.height/2;
+ const dx=e.clientX-r.left-cx,dy=e.clientY-r.top-cy,d=Math.hypot(dx,dy);
+ if(d<8){vec.innerHTML='';log.textContent='Камера стоит (рука в центре).';return}
+ const k=Math.min(1,d/(r.width*.35));
+ vec.innerHTML=`<line x1="${cx}" y1="${cy}" x2="${cx+dx}" y2="${cy+dy}" stroke="#B7F34A" stroke-width="3" stroke-linecap="round"/><circle cx="${cx+dx}" cy="${cy+dy}" r="5" fill="#B7F34A"/>`;
+ log.textContent=`Поворот ${dx>0?'вправо':'влево'} ${Math.round(k*100)} %, наклон ${dy<0?'вверх':'вниз'}.`};
+v.onwheel=e=>{if(!on)return;e.preventDefault();const d=e.deltaY<0?1:-1;
+ if(wheel==='ЗУМ'){zoom=Math.max(1,Math.min(20,zoom+d*.5));log.textContent=`Зум ×${zoom.toFixed(1).replace('.',',')}`}else{iris=Math.max(0,Math.min(16,iris+d));log.textContent=`Ирис: шаг ${iris}`}};
+v.oncontextmenu=e=>{e.preventDefault();if(!on)return;wheel=wheel==='ЗУМ'?'ИРИС':'ЗУМ';document.getElementById('wheel').textContent=wheel;log.textContent='Колесо теперь — '+wheel.toLowerCase()};
+v.onclick=e=>{if(on&&e.detail===1)log.textContent='Беру человека ближе к центру и включаю слежение (рамка «ВЕДУ»).'};
+</script>
+</body></html>
