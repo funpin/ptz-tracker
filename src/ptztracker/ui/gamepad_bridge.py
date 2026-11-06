@@ -14,6 +14,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Qt, Signal
 
+from ptztracker.config import DEFAULT_TILT_SPEED, TILT_SPEED_MAX, TILT_SPEED_MIN
 from ptztracker.control.manual_curve import PAD_GEAR_DEG_S, pad_velocity
 from ptztracker.gamepad.battery import BatteryEstimator
 from ptztracker.gamepad.device import GamepadThread, SdlBackend
@@ -85,6 +86,7 @@ class GamepadBridge(QObject):
         self.info: dict | None = None
         self._vel = (0.0, 0.0, 0.0)
         self._max_deg = float(PAD_GEAR_DEG_S[-1])  # ступень L1/R1: поворот и наклон на упоре стика, °/с
+        self._tilt_k = DEFAULT_TILT_SPEED / 100  # наклон на упоре — доля скорости поворота
         self._led: tuple[int, int, int] | None = None
         self._player: int | None = None
         self.battery_percent: int | None = None
@@ -184,7 +186,23 @@ class GamepadBridge(QObject):
     def velocity(self) -> tuple[float, float, float]:
         """Поворот и наклон — по °/с ступени L1/R1 (manual_curve.pad_velocity); зум курками — как есть."""
         vx, vy, vz = self._vel
-        return pad_velocity(vx, self._max_deg), pad_velocity(vy, self._max_deg), vz
+        return pad_velocity(vx, self._max_deg), pad_velocity(vy, self._max_deg * self._tilt_k), vz
+
+    def set_tilt_speed(self, pct: int) -> None:
+        """Вверх/вниз: скорость наклона на упоре, % от скорости поворота (TILT_SPEED_MIN…100)."""
+        self._tilt_k = max(TILT_SPEED_MIN, min(TILT_SPEED_MAX, int(pct))) / 100
+
+    @property
+    def tilt_speed(self) -> int:
+        return round(self._tilt_k * 100)
+
+    def set_tilt_sensitivity(self, sens: int) -> None:
+        """Кривая вверх/вниз 0…100, отдельно от влево/вправо; со следующего опроса."""
+        self._mapper.tilt_sensitivity = int(sens)
+
+    @property
+    def tilt_sensitivity(self) -> int:
+        return self._mapper.tilt_sensitivity
 
     def set_speed_limit(self, max_deg_s: float) -> None:
         """Ступень этого геймпада: скорость поворота и наклона на упоре стика, °/с (не больше полной)."""

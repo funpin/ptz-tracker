@@ -67,6 +67,7 @@ class Mapper:
         self._menu_open = menu_open
         # чувствительность стика 0…100 (control.manual_curve); пишет поток Qt, читает поток опроса — одно число
         self.sensitivity = DEFAULT_SENS
+        self.tilt_sensitivity = DEFAULT_SENS  # вверх/вниз — своя кривая (окно «Геймпады…»)
         self._reset()
 
     def _reset(self) -> None:
@@ -109,7 +110,7 @@ class Mapper:
         g = lambda k: float(ax.get(k, 0.0))  # noqa: E731
 
         sens = self.sensitivity
-        vx, vy = shape(_dz(g("leftx")), sens), -shape(_dz(g("lefty")), sens)
+        vx, vy = shape(_dz(g("leftx")), sens), -shape(_dz(g("lefty")), self.tilt_sensitivity)
         z = max(-1.0, min(1.0, _dz(g("r2")) - _dz(g("l2"))))
         if self._latched:
             if vx == 0.0 and vy == 0.0 and z == 0.0:

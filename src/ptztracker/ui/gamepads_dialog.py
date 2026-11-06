@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -25,8 +26,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ptztracker.config import DEFAULT_GEAR, SPEED_GEARS
+from ptztracker.config import DEFAULT_GEAR, DEFAULT_TILT_SPEED, SPEED_GEARS, TILT_SPEED_MAX, TILT_SPEED_MIN
 from ptztracker.control.manual_curve import (
+    DEFAULT_SENS,
     PAD_GEAR_DEG_S,
     SENS_MAX,
     SENS_MIN,
@@ -63,6 +65,8 @@ class PadRow:
     mode: str = "limit"  # что меняют L1/R1: limit — предел скорости, sens — чувствительность
     gear: int = DEFAULT_GEAR  # ступень скорости L1/R1
     main: bool = False  # главный: в виде «1 камера» Create переключает и камеру в программе
+    tilt_sens: int = DEFAULT_SENS  # вверх/вниз: своя кривая
+    tilt_speed: int = DEFAULT_TILT_SPEED  # вверх/вниз: % от скорости влево/вправо
 
 
 def time_left_text(seconds: float | None) -> str | None:
@@ -216,7 +220,9 @@ class GamepadsDialog(QDialog):
                  on_sensitivity: Callable[[str, int], None], on_slow_tele: Callable[[bool], None], parent=None,
                  on_mode: Callable[[str, str], None] | None = None, tele_strength: int = TELE_STRENGTH_MAX,
                  on_tele_strength: Callable[[int], None] | None = None,
-                 on_main: Callable[[str | None], None] | None = None):
+                 on_main: Callable[[str | None], None] | None = None,
+                 on_tilt_sens: Callable[[str, int], None] | None = None,
+                 on_tilt_speed: Callable[[str, int], None] | None = None):
         super().__init__(parent)
         self.setWindowTitle("Геймпады")
         self._on_tele_strength = on_tele_strength
@@ -224,6 +230,11 @@ class GamepadsDialog(QDialog):
         self._on_mode = on_mode
         self._on_main = on_main
         self.main_checks: dict[str, ToggleCheck] = {}
+        self._on_tilt_sens = on_tilt_sens or (lambda *a: None)
+        self._on_tilt_speed = on_tilt_speed or (lambda *a: None)
+        self.tilt_sliders: dict[str, QSlider] = {}
+        self.tilt_speed_sliders: dict[str, QSlider] = {}
+        self.tilt_speed_labels: dict[str, QLabel] = {}
         self.mode_combos: dict[str, QComboBox] = {}
         self._rows: dict[str, PadRow] = {}
         self.sliders: dict[str, QSlider] = {}
@@ -346,6 +357,7 @@ class GamepadsDialog(QDialog):
         text.addLayout(extra)
         # что меняют L1/R1 у этого геймпада: предел скорости (ступени) или чувствительность
         mode = QComboBox()
+        mode.setSizeAdjustPolicy(QComboBox.AdjustToContents)  # «L1/R1 — предел скорости» целиком
         for key, label in L1R1_MODES:
             mode.addItem(label, key)
         mode.setCurrentIndex(max(0, mode.findData(r.mode)))
@@ -365,23 +377,34 @@ class GamepadsDialog(QDialog):
         self.main_checks[r.pad_id] = main
         host = QWidget()
         host.setLayout(text)
-        host.setFixedWidth(300)
+        host.setFixedWidth(350)
         h.addWidget(host)
         h.addStretch(1)
-        sl = QSlider(Qt.Horizontal)
-        sl.setRange(SENS_MIN, SENS_MAX)
-        sl.setPageStep(10)
-        sl.setValue(clamp_sens(r.sensitivity))
-        sl.setFixedWidth(150)
-        sl.setTracking(False)  # значение — по отпусканию: config.json не пишется на каждый шаг
-        sl.valueChanged.connect(lambda v, pid=r.pad_id: self._on_sens(pid, v))
-        curve = CurvePreview(clamp_sens(r.sensitivity))
-        sl.sliderMoved.connect(curve.set_sens)  # график — сразу, пока тянут
-        sl.valueChanged.connect(curve.set_sens)
-        h.addWidget(self._caption("Плавно"))
-        h.addWidget(sl)
-        h.addWidget(self._caption("Резко"))
-        h.addWidget(curve)
+        # справа — сетка: влево/вправо и вверх/вниз — каждая своя кривая с графиком, ниже — скорость вверх/вниз
+        g = QGridLayout()
+        g.setHorizontalSpacing(SP[1])
+        g.setVerticalSpacing(2)
+        sl, curve = self._curve_row(g, 0, "← →", r.sensitivity, lambda v, pid=r.pad_id: self._on_sens(pid, v))
+        tl, tcurve = self._curve_row(g, 1, "↑ ↓", r.tilt_sens, lambda v, pid=r.pad_id: self._on_tilt_sens(pid, v))
+        tcurve.setToolTip("Вверх/вниз — своя кривая: кадр 16:9 по высоте почти вдвое уже, и те же градусы"
+                          " в секунду по вертикали выглядят резче")
+        sp = QSlider(Qt.Horizontal)
+        sp.setRange(TILT_SPEED_MIN, TILT_SPEED_MAX)
+        sp.setSingleStep(5)
+        sp.setPageStep(10)
+        sp.setValue(r.tilt_speed)
+        sp.setTracking(False)  # по отпусканию: config.json не пишется на каждый шаг
+        lab = self._caption(f"{r.tilt_speed} %")
+        sp.sliderMoved.connect(lambda v, lb=lab: lb.setText(f"{v} %"))
+        sp.valueChanged.connect(lambda v, pid=r.pad_id, lb=lab: (lb.setText(f"{v} %"), self._on_tilt_speed(pid, v)))
+        sp.setToolTip("Скорость вверх/вниз в процентах от влево/вправо")
+        g.addWidget(self._caption("↑ ↓ скорость"), 2, 0)
+        g.addWidget(sp, 2, 1, 1, 3)
+        g.addWidget(lab, 2, 4)
+        h.addLayout(g)
+        self.tilt_sliders[r.pad_id] = tl
+        self.tilt_speed_sliders[r.pad_id] = sp
+        self.tilt_speed_labels[r.pad_id] = lab
         self.sliders[r.pad_id] = sl
         self.status_labels[r.pad_id] = status
         self.name_labels[r.pad_id] = name
@@ -397,7 +420,7 @@ class GamepadsDialog(QDialog):
             if w is not None:
                 w.deleteLater()
         for d in (self.sliders, self.status_labels, self.name_labels, self.tiles, self.curves, self.row_extras,
-                  self.mode_combos):
+                  self.mode_combos, self.tilt_sliders, self.tilt_speed_sliders, self.tilt_speed_labels):
             d.clear()
         self._rows = {r.pad_id: r for r in rows}
         for i, r in enumerate(rows):
@@ -410,6 +433,26 @@ class GamepadsDialog(QDialog):
                 c.setChecked(False)
         if self._on_main is not None:
             self._on_main(pad_id if on else None)
+
+    def _curve_row(self, g: QGridLayout, row: int, title: str, sens: int, on_change) -> tuple[QSlider, CurvePreview]:
+        """Строка «← →  Плавно [ползунок] Резко [график]»: кривая стика по одной оси."""
+        sl = QSlider(Qt.Horizontal)
+        sl.setRange(SENS_MIN, SENS_MAX)
+        sl.setPageStep(10)
+        sl.setValue(clamp_sens(sens))
+        sl.setFixedWidth(130)
+        sl.setTracking(False)  # значение — по отпусканию: config.json не пишется на каждый шаг
+        sl.valueChanged.connect(on_change)
+        curve = CurvePreview(clamp_sens(sens))
+        curve.setFixedSize(40, 30)
+        sl.sliderMoved.connect(curve.set_sens)  # график — сразу, пока тянут
+        sl.valueChanged.connect(curve.set_sens)
+        g.addWidget(self._caption(title), row, 0)
+        g.addWidget(self._caption("Плавно"), row, 1)
+        g.addWidget(sl, row, 2)
+        g.addWidget(self._caption("Резко"), row, 3)
+        g.addWidget(curve, row, 4)
+        return sl, curve
 
     def _mode_changed(self, pad_id: str, mode: str) -> None:
         if self._on_mode is not None:
