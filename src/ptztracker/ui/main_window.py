@@ -2379,7 +2379,8 @@ class MainWindow(QMainWindow):
                         battery_time=time_left_text(b.battery_remaining_s())) if b is not None else {}
             tally = self._tally_per[cell - 1][1] if cell is not None and cell <= len(self._tally_per) else None
             rows.append(PadRow(pid, name, self.pad_sensitivity({"id": pid}), b is not None, cell, tally=tally,
-                               mode=self.pad_l1r1_mode(pid), gear=self.pad_speed_gear(pid), **batt))
+                               mode=self.pad_l1r1_mode(pid), gear=self.pad_speed_gear(pid),
+                               main=pid == self.cfg.main_pad, **batt))
         return rows
 
     def show_gamepads(self) -> None:
@@ -2387,7 +2388,8 @@ class MainWindow(QMainWindow):
             self.gamepads_dialog = GamepadsDialog(
                 self.pad_rows(), self.cfg.slow_on_tele, self.set_pad_sensitivity,
                 self.controls.slow_tele_check.setChecked, parent=self, on_mode=self.set_pad_l1r1_mode,
-                tele_strength=self.cfg.tele_strength, on_tele_strength=self._on_tele_strength)
+                tele_strength=self.cfg.tele_strength, on_tele_strength=self._on_tele_strength,
+                on_main=self.set_main_pad)
         else:
             self.gamepads_dialog.set_rows(self.pad_rows())
             self.gamepads_dialog.set_slow_on_tele(self.cfg.slow_on_tele)
@@ -2566,10 +2568,24 @@ class MainWindow(QMainWindow):
         self.agent_panel.refresh()
 
     def pad_create(self, pad: int) -> None:
-        """Create: геймпад на следующую камеру по кругу."""
+        """Create: геймпад на следующую камеру по кругу. Главный геймпад в виде «1 камера» переключает
+        и камеру в программе: видео, пресеты снизу и правую колонку."""
         moves, fb = self.pad_router.create(pad)
         self._pad_apply(moves, fb)
+        slot = self.pad_router.slot_of(pad)
+        pid = self._pad_id(pad)
+        if moves and self.single_view and pid and pid == self.cfg.main_pad and slot is not None:
+            self.select_slot(slot)
         self._refresh_service_cells()
+
+    def _pad_id(self, pad: int) -> str | None:
+        b = self.pads.get(pad)
+        return (b.info or {}).get("id") if b is not None else None
+
+    def set_main_pad(self, pad_id: str | None) -> None:
+        """Окно «Геймпады»: главный геймпад (один) или никакого."""
+        self.cfg.main_pad = pad_id or ""
+        self._save()
 
     def pad_session(self, pad: int) -> CameraSession | None:
         c = self._cell_of_pad(pad)

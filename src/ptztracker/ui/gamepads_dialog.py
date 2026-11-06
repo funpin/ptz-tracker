@@ -37,7 +37,7 @@ from ptztracker.control.manual_curve import (
 )
 from ptztracker.ui.icons import icon
 from ptztracker.ui.theme import FS_CAPTION, R_PANEL, SP, C, qcolor
-from ptztracker.ui.widgets import battery_level
+from ptztracker.ui.widgets import ToggleCheck, battery_level
 
 L1R1_MODES = (("limit", "L1/R1 — предел скорости"), ("sens", "L1/R1 — чувствительность"))
 SHARED_NOTE = "одинаковые геймпады без серийного номера делят эту настройку"
@@ -62,6 +62,7 @@ class PadRow:
     tally: str | None = None  # эфир камеры, которой управляет: pgm | pvw | None — цвет плитки номера
     mode: str = "limit"  # что меняют L1/R1: limit — предел скорости, sens — чувствительность
     gear: int = DEFAULT_GEAR  # ступень скорости L1/R1
+    main: bool = False  # главный: в виде «1 камера» Create переключает и камеру в программе
 
 
 def time_left_text(seconds: float | None) -> str | None:
@@ -214,12 +215,15 @@ class GamepadsDialog(QDialog):
     def __init__(self, rows: list[PadRow], slow_on_tele: bool,
                  on_sensitivity: Callable[[str, int], None], on_slow_tele: Callable[[bool], None], parent=None,
                  on_mode: Callable[[str, str], None] | None = None, tele_strength: int = TELE_STRENGTH_MAX,
-                 on_tele_strength: Callable[[int], None] | None = None):
+                 on_tele_strength: Callable[[int], None] | None = None,
+                 on_main: Callable[[str | None], None] | None = None):
         super().__init__(parent)
         self.setWindowTitle("Геймпады")
         self._on_tele_strength = on_tele_strength
         self._on_sens = on_sensitivity
         self._on_mode = on_mode
+        self._on_main = on_main
+        self.main_checks: dict[str, ToggleCheck] = {}
         self.mode_combos: dict[str, QComboBox] = {}
         self._rows: dict[str, PadRow] = {}
         self.sliders: dict[str, QSlider] = {}
@@ -350,8 +354,15 @@ class GamepadsDialog(QDialog):
                         " «Чувствительность» — ползунок справа шагами по 10. Крупность — свайп по тачпаду.")
         mode.currentIndexChanged.connect(lambda _i, pid=r.pad_id, c=mode: self._mode_changed(pid, c.currentData()))
         extra.addWidget(mode)
+        main = ToggleCheck("Главный")
+        main.setChecked(r.main)
+        main.setToolTip("Главный геймпад: в виде «1 камера» Create на нём переключает и камеру в программе —"
+                        " видео, пресеты снизу и правую колонку. Главный может быть только один.")
+        main.clicked.connect(lambda on, pid=r.pad_id: self._main_changed(pid, on))
+        extra.addWidget(main)
         extra.addStretch(1)
         self.mode_combos[r.pad_id] = mode
+        self.main_checks[r.pad_id] = main
         host = QWidget()
         host.setLayout(text)
         host.setFixedWidth(300)
@@ -393,6 +404,13 @@ class GamepadsDialog(QDialog):
             self._list_lay.addWidget(self._row(i, r))
         self.empty_label.setVisible(not rows)
         self._list.setVisible(bool(rows))
+    def _main_changed(self, pad_id: str, on: bool) -> None:
+        for pid, c in self.main_checks.items():  # главный — один
+            if pid != pad_id and c.isChecked():
+                c.setChecked(False)
+        if self._on_main is not None:
+            self._on_main(pad_id if on else None)
+
     def _mode_changed(self, pad_id: str, mode: str) -> None:
         if self._on_mode is not None:
             self._on_mode(pad_id, mode)

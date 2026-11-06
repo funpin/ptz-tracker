@@ -92,6 +92,8 @@ class AppConfig:
     pad_names: dict = field(default_factory=dict)
     # L1/R1 у каждого геймпада: "limit" — ступени предела скорости (по умолчанию), "sens" — чувствительность ±10
     pad_l1r1_mode: dict = field(default_factory=dict)
+    # главный геймпад: в виде «1 камера» его Create переключает и камеру в программе (пресеты, правая колонка)
+    main_pad: str = ""
     pad_gear: dict = field(default_factory=dict)  # ступень 1…8 (manual_curve.PAD_GEAR_DEG_S); нет записи — 6
 
 
@@ -294,6 +296,7 @@ def _fix_control_settings(cfg: AppConfig) -> None:
     gears = cfg.pad_gear
     cfg.pad_gear = {k: max(1, min(SPEED_GEARS, v)) for k, v in gears.items()
                           if isinstance(k, str) and k and isinstance(v, int) and not isinstance(v, bool)}
+    cfg.main_pad = normalize_pad_id(cfg.main_pad) if isinstance(cfg.main_pad, str) and cfg.main_pad else ""
 
 
 def ensure_api_token(cfg: AppConfig) -> bool:

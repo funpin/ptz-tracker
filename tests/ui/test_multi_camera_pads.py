@@ -339,3 +339,22 @@ def test_ps_button_toggles_help(qtbot, tmp_path):
     w._on_pad_intents([Help()], 1)  # второе нажатие PS — закрыть
     qtbot.waitUntil(lambda: not w.hotkeys_dialog.isVisible(), timeout=2000)
     w.close()
+
+
+def test_main_pad_create_switches_selected_camera_in_single_view(qtbot, tmp_path):
+    w, _ = make(qtbot, tmp_path)
+    w.pad_connected()
+    w._pad_id = lambda n: "MAIN" if n == 1 else None
+    w.set_single_view(True)
+    w.select_slot(0)
+    w.pad_create(1)  # не главный — выбор в программе не меняется
+    assert w.grid.selected == 0
+    w.pad_create(1)  # вернулся на клетку 1
+    w.set_main_pad("MAIN")
+    w.pad_create(1)
+    assert w.pad_router.slot_of(1) == 1 and w.grid.selected == 1  # камера, пресеты и правая колонка — его
+    w.set_single_view(False)
+    w.pad_create(1)  # в сетке 2×2 выбор не трогаем
+    assert w.grid.selected == 1
+    assert w.cfg.main_pad == "MAIN"
+    w.close()

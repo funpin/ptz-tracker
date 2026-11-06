@@ -148,3 +148,17 @@ def test_tele_strength_slider_readout_and_callback(qtbot):
     assert got == [100] and "15 %" in d.tele_readout.text() and d.tele_graph.strength == 100
     d.slow_tele_check.setChecked(False)
     assert not d.tele_slider.isEnabled()
+
+
+def test_main_pad_toggle_is_exclusive(qtbot):
+    from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow
+
+    got = []
+    rows = [PadRow("A", "DualSense", 50, True, 1, main=True), PadRow("B", "DualSense", 50, True, 2)]
+    d = GamepadsDialog(rows, False, lambda *a: None, lambda *a: None, on_main=got.append)
+    qtbot.addWidget(d)
+    assert d.main_checks["A"].isChecked() and not d.main_checks["B"].isChecked()
+    d.main_checks["B"].click()
+    assert got[-1] == "B" and not d.main_checks["A"].isChecked()
+    d.main_checks["B"].click()  # сняли — главного нет
+    assert got[-1] is None
