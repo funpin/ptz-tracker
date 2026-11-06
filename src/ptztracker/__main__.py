@@ -135,6 +135,7 @@ def run_gui(use_sim: bool) -> int:
     from ptztracker.config import ConfigStore, default_config_path
     from ptztracker.logging_setup import setup_logging
     from ptztracker.ui.main_window import MainWindow
+    from ptztracker.ui.single_instance import claim
     from ptztracker.ui.theme import apply_dark_theme, install_russian
 
     setup_logging()
@@ -142,7 +143,20 @@ def run_gui(use_sim: bool) -> int:
     app.setApplicationName("PTZ Tracker")
     install_russian(app)
     apply_dark_theme(app)
+    server = claim()
+    if server is None:  # уже запущена: вторая копия вела бы те же камеры тем же геймпадом
+        print("PTZ Tracker уже запущен — показываю его окно.")
+        return 0
     w = MainWindow(ConfigStore(default_config_path()), use_sim=use_sim)
+
+    def raise_window() -> None:
+        while (conn := server.nextPendingConnection()) is not None:
+            conn.close()
+        w.showNormal()
+        w.raise_()
+        w.activateWindow()
+
+    server.newConnection.connect(raise_window)
     w.show()
     return app.exec()
 
