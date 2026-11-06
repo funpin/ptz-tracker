@@ -168,8 +168,8 @@ class PadDrawing(_Drawing):
         """«l2,r2» → {l2, r2}; «dpad_lr» → обе половинки крестовины."""
         out: set[str] = set()
         for k in keys.split(","):
-            out |= {"dpad_lr": {"dpad_left", "dpad_right"}, "dpad_ud": {"dpad_up", "dpad_down"}}.get(
-                k, {self.owner(k)})
+            out |= {"dpad_lr": {"dpad_left", "dpad_right"}, "dpad_ud": {"dpad_up", "dpad_down"},
+                    "swipe": {"touchpad"}}.get(k, {self.owner(k)})
         return out & set(self._elements)
 
     def set_highlight(self, key: str | None) -> None:
@@ -179,7 +179,13 @@ class PadDrawing(_Drawing):
 
     def animation_for(self, key: str) -> str | None:
         first = getattr(self, "_keys", "").split(",")[0]
-        return {"lstick": "circle", "rstick": "sway"}.get(first, "press")
+        return {"lstick": "circle", "rstick": "sway", "l3": "circle", "r3": "sway", "swipe": "swipe"}.get(first, "press")
+
+    STICK_MS = 1600  # стик: движение, потом нажатие (L3 / R3) — в одной строке оба действия
+
+    @classmethod
+    def stick_mode(cls, ms: int) -> str:
+        return "move" if ms % (2 * cls.STICK_MS) < cls.STICK_MS else "press"
 
     def _lit(self, key: str) -> bool:
         keys = getattr(self, "_keys", "")
@@ -223,13 +229,18 @@ class PadDrawing(_Drawing):
             lit = self._lit(key)
             self._part(p, key, self._elements[key], lit)
             ox, oy = self._stick_offset(key) if lit else (0.0, 0.0)
-            knob = _circle(cx + ox, cy + oy, 20)
+            r = 20.0
+            if lit and self._anim in ("circle", "sway") and self.stick_mode(self._clock.elapsed()) == "press":
+                r = 20 - 3.5 * math.sin(self.phase() * math.pi * 2) ** 2  # нажатие стика — ручка «утапливается»
+            knob = _circle(cx + ox, cy + oy, r)
             self._part(p, key + "_knob", knob, lit)
+        if self._anim == "swipe":
+            self._paint_swipe(p)
         for rect, text, align in (
             (QRectF(96, 12, 86, 14), "L2", Qt.AlignCenter), (QRectF(378, 12, 86, 14), "R2", Qt.AlignCenter),
             (QRectF(40, 62, 54, 14), "L1", Qt.AlignRight), (QRectF(466, 62, 54, 14), "R1", Qt.AlignLeft),
             (QRectF(120, 82, 54, 12), "Create", Qt.AlignRight), (QRectF(386, 82, 60, 12), "Options", Qt.AlignLeft),
-            (QRectF(206, 92, 148, 78), "тачпад", Qt.AlignCenter),
+            (QRectF(206, 92, 148, 78), "" if self._anim == "swipe" else "тачпад", Qt.AlignCenter),
             (QRectF(269, 204, 22, 16), "PS", Qt.AlignCenter),
             (QRectF(140, 272, 120, 14), "L-стик · L3", Qt.AlignCenter),
             (QRectF(300, 272, 120, 14), "R-стик · R3", Qt.AlignCenter),
@@ -237,7 +248,27 @@ class PadDrawing(_Drawing):
             self._label(p, rect, text, align)
         p.end()
 
+    def _paint_swipe(self, p: QPainter) -> None:
+        """Свайп: стрелка «ближе ← → шире» на тачпаде и лаймовый палец, который по ней проходит."""
+        y = 128.0
+        p.setPen(QPen(qcolor(C.LIME), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.setBrush(Qt.NoBrush)
+        p.drawLine(QPointF(236, y), QPointF(324, y))
+        for x, d in ((324, -1), (236, 1)):
+            p.drawLine(QPointF(x, y), QPointF(x + 9 * d, y - 6))
+            p.drawLine(QPointF(x, y), QPointF(x + 9 * d, y + 6))
+        self._label(p, QRectF(216, 140, 64, 14), "ближе", Qt.AlignCenter, C.LIME)
+        self._label(p, QRectF(280, 140, 64, 14), "шире", Qt.AlignCenter, C.LIME)
+        t = self.phase()
+        x = 244 + 72 * min(1.0, t / 0.7)  # палец идёт вправо и пропадает
+        alpha = int(230 * (min(1.0, t / 0.12) if t < 0.7 else max(0.0, 1 - (t - 0.7) / 0.3)))
+        p.setPen(Qt.NoPen)
+        p.setBrush(qcolor(C.LIME, alpha))
+        p.drawEllipse(QPointF(x, y), 7, 7)
+
     def _stick_offset(self, key: str) -> tuple[float, float]:
+        if self.stick_mode(self._clock.elapsed()) == "press":
+            return 0.0, 0.0
         a = self.phase() * 2 * math.pi
         if self._anim == "circle":
             return 10 * math.cos(a), 10 * math.sin(a)
@@ -349,3 +380,117 @@ class MouseDrawing(_Drawing):
         self._label(p, QRectF(40, 290, 340, 16), "выбранная камера", Qt.AlignCenter)
         self._label(p, QRectF(400, 134, 120, 16), "другая камера", Qt.AlignCenter)
         p.end()
+
+
+class PadGlyphs(QWidget):
+    """Кнопки строки справки той же формы, что на рисунке геймпада (макет help-pad-chips.html).
+    Подсветка — по одной кнопке: навели на △ на рисунке — горит только △."""
+
+    CELL = (40, 24)
+    NUMBERS = {"cross": "1", "circle": "2", "square": "3", "triangle": "4"}  # пресеты
+
+    def __init__(self, keys: list[str], parent: QWidget | None = None):
+        super().__init__(parent)
+        self.keys = keys
+        self.lit: set[str] = set()
+        cw, ch = self.CELL
+        if self._grid:
+            self.setFixedSize(2 * (cw + 12), 2 * ch + 4)
+        else:
+            self.setFixedSize(cw * len(keys) + 4 * (len(keys) - 1), ch)
+
+    @property
+    def _grid(self) -> bool:
+        return len(self.keys) == 4  # пресеты — два ряда: ✕ 1 ○ 2 / □ 3 △ 4
+
+    def set_lit(self, keys: set[str]) -> None:
+        if keys != self.lit:
+            self.lit = keys
+            self.update()
+
+    def _cell(self, i: int) -> QPointF:
+        cw, ch = self.CELL
+        if self._grid:
+            return QPointF((i % 2) * (cw + 12), (i // 2) * (ch + 4))
+        return QPointF(i * (cw + 4), 0)
+
+    def paintEvent(self, _e):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        for i, k in enumerate(self.keys):
+            p.save()
+            p.translate(self._cell(i))
+            self._glyph(p, k, k in self.lit)
+            if self._grid:
+                _Drawing._label(p, QRectF(38, 0, 12, 24), self.NUMBERS.get(k, ""), Qt.AlignCenter, C.TEXT_FAINT, 11)
+            p.restore()
+        p.end()
+
+    @staticmethod
+    def _glyph(p: QPainter, k: str, lit: bool) -> None:
+        line = qcolor(C.LIME if lit else C.GREY)
+        sym = qcolor(C.LIME if lit else C.TEXT_DIM)
+        p.setPen(QPen(line, 1.5))
+        p.setBrush(qcolor(C.LIME, 56) if lit else qcolor(C.RAISED))
+
+        def text(t: str, px: int = 10) -> None:
+            _Drawing._label(p, QRectF(0, 0, 40, 24), t, Qt.AlignCenter, C.LIME if lit else C.TEXT_DIM, px)
+
+        if k in ("l1", "r1"):
+            p.drawRoundedRect(QRectF(4, 7, 32, 10), 4, 4)
+            text(k.upper(), 9)
+        elif k in ("l2", "r2"):
+            path = QPainterPath(QPointF(6, 21))
+            path.lineTo(6, 9)
+            path.quadTo(6, 3, 12, 3)
+            path.lineTo(28, 3)
+            path.quadTo(34, 3, 34, 9)
+            path.lineTo(34, 21)
+            path.closeSubpath()
+            p.drawPath(path)
+            text(k.upper(), 9)
+        elif k in ("lstick", "rstick"):
+            p.drawEllipse(QPointF(20, 12), 10, 10)
+            text("L" if k == "lstick" else "R")
+        elif k in ("cross", "circle", "square", "triangle"):
+            p.drawEllipse(QPointF(20, 12), 10, 10)
+            p.setPen(QPen(sym, 1.5))
+            p.setBrush(Qt.NoBrush)
+            if k == "cross":
+                p.drawLine(QPointF(16.5, 8.5), QPointF(23.5, 15.5))
+                p.drawLine(QPointF(23.5, 8.5), QPointF(16.5, 15.5))
+            elif k == "circle":
+                p.drawEllipse(QPointF(20, 12), 4.5, 4.5)
+            elif k == "square":
+                p.drawRect(QRectF(16, 8, 8, 8))
+            else:
+                tri = QPainterPath(QPointF(20, 7.5))
+                tri.lineTo(24.5, 15.5)
+                tri.lineTo(15.5, 15.5)
+                tri.closeSubpath()
+                p.drawPath(tri)
+        elif k in ("dpad_lr", "dpad_ud"):
+            cross = QPainterPath(QPointF(16, 2))
+            for x, y in ((24, 2), (24, 8), (30, 8), (30, 16), (24, 16), (24, 22), (16, 22), (16, 16), (10, 16),
+                         (10, 8), (16, 8)):
+                cross.lineTo(x, y)
+            cross.closeSubpath()
+            p.drawPath(cross)
+            p.setPen(Qt.NoPen)
+            p.setBrush(sym)  # нужные стороны крестовины — точками
+            pts = ((13, 12), (27, 12)) if k == "dpad_lr" else ((20, 5), (20, 19))
+            for x, y in pts:
+                p.drawEllipse(QPointF(x, y), 1.8, 1.8)
+        elif k in ("touchpad", "swipe"):
+            p.drawRoundedRect(QRectF(3, 4, 34, 16), 4, 4)
+            if k == "swipe":
+                p.setPen(QPen(sym, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+                p.drawLine(QPointF(11, 12), QPointF(29, 12))
+                for x, d in ((29, -1), (11, 1)):
+                    p.drawLine(QPointF(x, 12), QPointF(x + 4 * d, 9))
+                    p.drawLine(QPointF(x, 12), QPointF(x + 4 * d, 15))
+        elif k in ("options", "create"):
+            p.drawRoundedRect(QRectF(15, 3, 10, 18), 5, 5)
+        elif k == "ps":
+            p.drawEllipse(QPointF(20, 12), 9, 9)
+            text("PS", 8)

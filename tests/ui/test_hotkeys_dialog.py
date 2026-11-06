@@ -102,7 +102,7 @@ def test_hover_drawing_highlights_row(qtbot):
     assert len(lit) == 1 and "СТОП КАМЕРЫ" in lit[0].what_label.text()
     d.pad.hovered.emit("dpad_left")
     lit = [r for r in d.rows if r.lit]
-    assert len(lit) == 1 and lit[0].key_label.text().startswith("Крестовина")
+    assert len(lit) == 1 and lit[0].key.startswith("Крестовина")
 
 
 def test_unused_key_no_highlight(qtbot):
@@ -158,3 +158,48 @@ def test_drawing_hover_scrolls_row_into_view(qtbot):
     vp = d.list_scroll.viewport()
     top = lit.mapTo(vp, lit.rect().topLeft()).y()
     assert 0 <= top and top + lit.height() <= vp.height()
+
+
+def row_of(prefix):
+    return next(n for n, (k, _v) in enumerate(GAMEPAD_HELP) if k.startswith(prefix))
+
+
+def test_pad_rows_show_gamepad_shaped_buttons(qtbot):
+    d = HotkeysDialog()
+    qtbot.addWidget(d)
+    assert d.rows[row_of("✕")].glyphs.keys == ["cross", "circle", "square", "triangle"]
+    assert d.rows[row_of("L1")].glyphs.keys == ["l1", "r1"]
+    assert d.rows[row_of("Левый стик")].glyphs.keys == ["lstick"]
+    assert not d.rows[0].grab().isNull()
+    d.tabs.setCurrentIndex(1)  # клавиатура — по-прежнему клавиши-подсказки
+    assert d.rows[0].glyphs is None and d.rows[0].key_label.isVisible() is not None
+
+
+def test_hover_one_button_lights_only_that_button(qtbot):
+    d = HotkeysDialog()
+    qtbot.addWidget(d)
+    d.pad.hovered.emit("triangle")
+    row = d.rows[row_of("✕")]
+    assert row.lit and row.glyphs.lit == {"triangle"}
+    assert d.pad._lit("triangle") and not d.pad._lit("cross")  # на рисунке — тоже один △
+    d.row_hovered(row_of("✕"))  # навели на строку — горят все четыре
+    assert row.glyphs.lit == {"cross", "circle", "square", "triangle"} and d.pad._lit("cross")
+
+
+def test_stick_row_holds_move_and_press_and_touchpad_rows_are_together():
+    labels = [k for k, _v in GAMEPAD_HELP]
+    assert not any(k.startswith(("L3", "R3")) for k in labels)  # нажатие стика — в его строке
+    left = dict(GAMEPAD_HELP)[labels[row_of("Левый стик")]]
+    assert "автофокус" in left
+    assert row_of("Свайп") == row_of("Тачпад") + 1
+    assert any(k.startswith("PS") for k in labels)
+
+
+def test_swipe_row_shows_finger_and_stick_alternates(qtbot):
+    from ptztracker.ui.help_drawings import PadDrawing
+
+    d = HotkeysDialog()
+    qtbot.addWidget(d)
+    d.row_hovered(row_of("Свайп"))
+    assert d.pad.highlighted == "touchpad" and d.pad._anim == "swipe"
+    assert PadDrawing.stick_mode(500) == "move" and PadDrawing.stick_mode(2100) == "press"
