@@ -15,8 +15,8 @@ def test_three_silhouettes_with_keys(qtbot):
     p = FollowPanel()
     qtbot.addWidget(p)
     assert list(p.comp_buttons) == ["waist_center", "full", "wide"]
-    assert [b.text() for b in p.comp_buttons.values()] == ["Пояс · 1", "Рост · 2", "Общий · 3"]
-    assert "клавиша 2" in p.comp_buttons["full"].toolTip()
+    assert [b.text() for b in p.comp_buttons.values()] == ["Пояс · Z", "Рост · X", "Общий · C"]
+    assert "клавиша X" in p.comp_buttons["full"].toolTip()
 
 
 def test_slider_snaps_to_sizes(qtbot):

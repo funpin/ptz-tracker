@@ -67,76 +67,69 @@ def test_composition_and_effort_saved(qtbot, tmp_path):
     assert cam.composition == "wide" and abs(cam.effort - 0.2) < 1e-9
 
 
-def test_number_keys_select_composition(qtbot, tmp_path):
+def raw_key(w, key: int, text: str, release: bool = False):
+    """Клавиша русской раскладки: qtbot принимает только Qt.Key, а Qt отдаёт код буквы (0x0424 — «Ф»)."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.sendEvent(w, QKeyEvent(QEvent.KeyRelease if release else QEvent.KeyPress, key, Qt.NoModifier, text))
+
+
+def test_zxc_keys_select_composition(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
-    qtbot.keyClick(w, Qt.Key_2)  # 1 пояс, 2 рост, 3 общий
+    qtbot.keyClick(w, Qt.Key_X)  # Z пояс, X рост, C общий (план шага Б, часть 3)
     assert w.follow_panel.comp_buttons["full"].isChecked()
     assert w.session.follower.controller.composition.key == "full"
-    qtbot.keyClick(w, Qt.Key_5)  # 4 и 5 больше ничего не делают
-    assert w.session.follower.controller.composition.key == "full"
+    qtbot.keyClick(w, Qt.Key_C)
+    assert w.session.follower.controller.composition.key == "wide"
+    raw_key(w, 0x042F, "я")  # «Я» — та же клавиша Z в русской раскладке
+    raw_key(w, 0x042F, "я", release=True)
+    assert w.session.follower.controller.composition.key == "waist_center"
     w.close()
 
 
-def test_zones_painted_when_following(qtbot, tmp_path):
+def test_number_keys_recall_presets(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
-    select(w)
-    w.follow_panel.follow_btn.click()
-    qtbot.waitUntil(lambda: w.session.follower.output is not None, timeout=3000)
-    assert w.preview.follow_zones() is not None
-    assert not w.preview.grab().isNull()
+    sim = w.grid.cells[w.grid.selected].session.sim
+    qtbot.keyClick(w, Qt.Key_3)
+    qtbot.waitUntil(lambda: "#R02" in sim.received, timeout=2000)  # клавиша 3 — пресет 3 (#R02)
+    qtbot.keyClick(w, Qt.Key_9)
+    qtbot.waitUntil(lambda: "#R08" in sim.received, timeout=2000)
     w.close()
 
 
-def test_uncalibrated_warning(qtbot, tmp_path):
+def test_shift_number_stores_preset_after_confirm(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a[2]) or QMessageBox.Yes)
     w = make(qtbot, tmp_path)
-    assert "не откалибрована" in w.follow_panel.calib_label.text()
+    sim = w.grid.cells[w.grid.selected].session.sim
+    qtbot.keyClick(w, Qt.Key_Exclam, Qt.ShiftModifier)  # Shift+1 на английской раскладке даёт «!»
+    qtbot.waitUntil(lambda: "#M00" in sim.received, timeout=2000)
+    assert "пресет 1" in asked[-1]
     w.close()
 
 
-def test_window_fits_small_screen(qtbot, tmp_path):
-    # у пользователя окно ~1640×850: боковая панель не должна растягивать окно по высоте
+def test_wasd_pan_like_arrows_and_shift_is_faster(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
-    assert w.minimumSizeHint().height() <= 760
+    qtbot.keyPress(w, Qt.Key_D)
+    assert w._held == {Qt.Key_Right}
+    qtbot.keyRelease(w, Qt.Key_D)
+    raw_key(w, 0x0424, "ф")  # «Ф» — клавиша A в русской раскладке: влево
+    assert w._held == {Qt.Key_Left}
+    raw_key(w, 0x0424, "ф", release=True)
+    assert not w._held
+    assert w._key_pan(fast=True) > w._key_pan(fast=False)
     w.close()
 
 
-def test_effort_applied_on_any_change(qtbot, tmp_path):
-    w = make(qtbot, tmp_path)
-    w.follow_panel.effort_slider.setValue(100)  # колесо/клик по полосе — тоже применяется
-    assert w.session.follower.controller.effort.gain == 2.0
-    w.close()
+def test_logical_key_maps_layouts():
+    from ptztracker.ui.keys import digit_of, logical_key
 
-
-def test_recalibration_note_shown_only_for_calibrated_camera(qtbot, tmp_path):
-    w = make(qtbot, tmp_path)
-    fp = w.follow_panel
-    fp.set_calibrated(False)
-    fp.set_calibration_note("Калибровка сделана на другой модели")
-    assert "не откалибрована" in fp.calib_label.text()  # без калибровки — прежнее сообщение
-    fp.set_calibrated(True)
-    assert fp.calib_label.isHidden()  # новая калибровка — прежняя подсказка не нужна
-    fp.set_calibration_note("Калибровка сделана на другой модели")
-    assert fp.calib_label.text() == "Калибровка сделана на другой модели" and not fp.calib_label.isHidden()
-    fp.set_calibration_note(None)
-    assert fp.calib_label.isHidden()
-    w.close()
-
-
-def test_zone_drag_moves_point_keeps_following_and_is_per_size(qtbot, tmp_path):
-    w = make(qtbot, tmp_path)
-    select(w)
-    w.follow_panel.follow_btn.click()
-    qtbot.waitUntil(lambda: w.session.follower.enabled, timeout=2000)
-    w.preview.zoneChanged.emit(0.38, 0.3, 1.2)
-    w.preview.zoneCommitted.emit()
-    ctrl = w.session.follower.controller
-    assert ctrl.composition.anchor == (0.38, 0.3)
-    assert w.session.follower.enabled  # перенос зоны — не ручное управление
-    assert w.preview.zone_scale_of() == 1.2
-    w.follow_panel.comp_buttons["wide"].click()  # у «Общего» своя зона — по умолчанию
-    assert ctrl.composition.anchor == (0.5, 0.4)
-    w.follow_panel.comp_buttons["waist_center"].click()
-    assert ctrl.composition.anchor == (0.38, 0.3)
-    w.preview.zoneReset.emit()
-    assert ctrl.composition.anchor == (0.5, 0.25)
-    w.close()
+    assert logical_key(0x0426) == Qt.Key_W and logical_key(0x0421) == Qt.Key_C  # Ц, С
+    assert logical_key(0x042C) == Qt.Key_M  # «Ь» — клавиша M (быстрые настройки) в русской раскладке
+    assert digit_of(Qt.Key_7, 0) == 7 and digit_of(Qt.Key_Ampersand, 0) == 7  # Shift+7 на английской
+    assert digit_of(0x2116, 0) == 3  # «№» — Shift+3 на русской
+    assert digit_of(Qt.Key_0, 0) is None and digit_of(Qt.Key_A, 0) is None

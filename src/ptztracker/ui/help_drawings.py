@@ -284,12 +284,13 @@ class KeyboardDrawing(_Drawing):
 
     ROWS: tuple[tuple[tuple[str, str, float], ...], ...] = (
         (("Esc", "Esc", 1), ("F1", "F1", 1), ("F2", "F2", 1), ("…", "", 1), ("F9", "F9", 1)),
-        tuple((d, d, 1) for d in "123456") + (("−", "−", 1), ("+", "+", 1)),
+        tuple((d, d, 1) for d in "123456789") + (("−", "−", 1), ("+", "+", 1)),
         tuple((c, c, 1) for c in "QWERTYU") + (("P", "P", 1),),
         tuple((c, c, 1) for c in "ASDFGHJ") + (("M", "M", 1),),
+        (("Shift", "Shift", 2), *((c, c, 1) for c in "ZXCV")),
         (("Пробел", "Space", 6.4), ("←", "Left", 1), ("↑", "Up", 1), ("↓", "Down", 1), ("→", "Right", 1)),
     )
-    KEY, GAP = 44.0, 7.0
+    KEY, GAP = 40.0, 6.0
 
     def __init__(self, used: set[str] | None = None, parent: QWidget | None = None):
         super().__init__(parent)
@@ -306,7 +307,7 @@ class KeyboardDrawing(_Drawing):
                 if key:
                     self._elements.setdefault(key, QPainterPath()).addRoundedRect(rect, 7, 7)
                 x += rect.width() + self.GAP
-            y += self.KEY + self.GAP + 10
+            y += self.KEY + self.GAP + 4
 
     def elements(self) -> dict[str, QPainterPath]:
         return {k: v for k, v in self._elements.items() if k in self.used}

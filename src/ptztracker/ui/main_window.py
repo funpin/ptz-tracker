@@ -101,6 +101,7 @@ from ptztracker.ui.follow_panel import SIZES, FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge
 from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow, time_left_text
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
+from ptztracker.ui.keys import digit_of, logical_key
 from ptztracker.ui.main_menu import MainMenu
 from ptztracker.ui.manual_controls import STICK_MIN, ManualControls
 from ptztracker.ui.presets_drawer import DrawerRow, PresetsDrawer
@@ -145,11 +146,16 @@ ZOOM_POLL_S = 1.0  # «медленнее на крупном плане»: #GZ 
 KEY_ZOOM_SPEED = 0.5
 SIDE_WIDTH = 372
 _HOTKEYS = [
-    ("Пробел", "слежение"), ("1–3", "кадр: пояс, рост, общий"), ("← → ↑ ↓", "поворот"), ("+ −", "зум"), ("Esc", "стоп"),
-    ("F9", "сохранить момент"), ("M", "быстрые настройки (меню поверх видео)"), ("G", "4 камеры ↔ 1 камера крупно"),
+    ("Пробел", "слежение"), ("1–9", "пресет выбранной камеры; Shift + цифра — записать (спросит)"),
+    ("W A S D", "поворот, пока держите (как стрелки); с Shift — быстрее"), ("← → ↑ ↓", "поворот; с Shift — быстрее"),
+    ("+ −", "зум"), ("Z X C", "кадр: пояс, рост, общий"), ("Esc", "стоп"),
+    ("F9", "сохранить момент"), ("M", "быстрые настройки (меню поверх видео)"), ("P", "панель пресетов"),
+    ("G", "4 камеры ↔ 1 камера крупно"),
 ]  # F1 («справка») сюда не добавляем: окно F1 показывает её само
 # в строке состояния — только главное; остальное в окне F1
 _PAN_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
+_WASD = {Qt.Key_W: Qt.Key_Up, Qt.Key_A: Qt.Key_Left, Qt.Key_S: Qt.Key_Down, Qt.Key_D: Qt.Key_Right}  # как стрелки
+KEY_PAN_FAST = 1.0  # Shift + стрелки / WASD: полный наклон, как упор стика
 _MENU_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter}
 _ZOOM_IN_KEYS = {Qt.Key_Plus, Qt.Key_Equal}
 _ZOOM_OUT_KEYS = {Qt.Key_Minus, Qt.Key_Underscore}
@@ -230,6 +236,7 @@ class MainWindow(QMainWindow):
         self._tracking_set: frozenset[int] = frozenset()
         self._cell_dialogs: dict[int, QDialog] = {}
         self._held: set[int] = set()
+        self._fast = False  # Shift зажат
         self._atem_port = atem_port
         self.atem: AtemTally | None = None
         self._tally_shown: tuple | None = None
@@ -2213,12 +2220,26 @@ class MainWindow(QMainWindow):
             focus = QApplication.focusWidget()
             if isinstance(focus, (QLineEdit, QAbstractSpinBox)):
                 return False
-            key = event.key()
+            key = logical_key(event.key())
+            if key == Qt.Key_Shift:  # Shift + стрелки / WASD — поворот быстрее
+                self._fast = et == QEvent.KeyPress
+                if self._held:
+                    self._apply_held()
+                return False
+            digit = digit_of(event.key(), event.nativeVirtualKey())
+            if digit is not None and not self.camera_menu.is_open:  # 1–9 — пресет, Shift + цифра — записать
+                if et == QEvent.KeyPress and not event.isAutoRepeat() and self.grid.selected is not None:
+                    if event.modifiers() & Qt.ShiftModifier:
+                        self.store_preset(self.grid.selected, digit)
+                    else:
+                        self.recall_preset(self.grid.selected, digit)
+                return True
+            key = _WASD.get(key, key)
             if key == Qt.Key_Space:
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self.toggle_follow()
                 return True
-            comp_keys = {Qt.Key_1 + i: k for i, k in enumerate(SIZES)}  # 1 пояс, 2 рост, 3 общий
+            comp_keys = dict(zip((Qt.Key_Z, Qt.Key_X, Qt.Key_C), SIZES, strict=True))  # Z пояс, X рост, C общий
             if key in comp_keys:
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self._on_composition(comp_keys[key])
@@ -2298,7 +2319,7 @@ class MainWindow(QMainWindow):
     def _apply_held(self) -> None:
         """Клавиатура — в смеситель выбранной клетки, геймпад — в смеситель его клетки; сумма источников ±1 по оси."""
         h = self._held
-        pan = shape(KEY_PAN_SPEED, self.cfg.stick_sensitivity)  # стрелки — через ту же кривую, что мышь
+        pan = self._key_pan(self._fast)
         kv = (pan * ((Qt.Key_Right in h) - (Qt.Key_Left in h)),
               pan * ((Qt.Key_Up in h) - (Qt.Key_Down in h)),
               KEY_ZOOM_SPEED * (bool(h & _ZOOM_IN_KEYS) - bool(h & _ZOOM_OUT_KEYS)))
@@ -2307,6 +2328,10 @@ class MainWindow(QMainWindow):
             self._send_velocity(self._source(kc, "keyboard"), kv)
         for n, b in list(self.pads.items()):
             self.pad_velocity(n, *b.velocity())
+
+    def _key_pan(self, fast: bool) -> float:
+        """Скорость поворота стрелками / WASD — через ту же кривую, что мышь; с Shift — полный наклон."""
+        return shape(KEY_PAN_FAST if fast else KEY_PAN_SPEED, self.cfg.stick_sensitivity)
 
     # --- чувствительность ручного управления ---------------------------
 

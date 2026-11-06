@@ -20,6 +20,7 @@ from ptztracker.ui.widgets import SectionHeader, SilhouetteButton, TrackButton
 # убран из кнопок — вернётся перетаскиванием зоны в 1.2; агент и старые настройки ещё могут его задать
 SIZES = ("waist_center", "full", "wide")
 SIZE_TITLES = {"waist_center": "Пояс", "full": "Рост", "wide": "Общий"}
+SIZE_KEYS = ("Z", "X", "C")  # цифры 1–9 — пресеты (план шага Б, часть 3)
 
 
 class MarkedSlider(QSlider):
@@ -75,8 +76,8 @@ class FollowPanel(QWidget):
         grid = QHBoxLayout()
         grid.setSpacing(0)
         for i, key in enumerate(SIZES):
-            b = SilhouetteButton(key, f"{SIZE_TITLES[key]} · {i + 1}")
-            b.setToolTip(f"{COMPOSITIONS[key].title} — клавиша {i + 1}")
+            b = SilhouetteButton(key, f"{SIZE_TITLES[key]} · {SIZE_KEYS[i]}")
+            b.setToolTip(f"{COMPOSITIONS[key].title} — клавиша {SIZE_KEYS[i]}")
             b.clicked.connect(lambda _=False, k=key: self._pick(k))
             self.comp_group.addButton(b)
             self.comp_buttons[key] = b
