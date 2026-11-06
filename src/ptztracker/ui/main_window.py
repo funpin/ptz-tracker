@@ -109,6 +109,7 @@ from ptztracker.ui.keys import digit_of, logical_key
 from ptztracker.ui.main_menu import MainMenu
 from ptztracker.ui.manual_controls import STICK_MIN, ManualControls
 from ptztracker.ui.presets_drawer import DrawerRow, PresetsDrawer
+from ptztracker.ui.preview import PreviewWidget
 from ptztracker.ui.service_cell import KINDS, TITLES, ServiceCell, ServiceRow, WelcomeView
 from ptztracker.ui.state import (
     TrackingView,
@@ -160,6 +161,16 @@ _HOTKEYS = [
 # в строке состояния — только главное; остальное в окне F1
 _PAN_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
 _WASD = {Qt.Key_W: Qt.Key_Up, Qt.Key_A: Qt.Key_Left, Qt.Key_S: Qt.Key_Down, Qt.Key_D: Qt.Key_Right}  # как стрелки
+_KB_MOUSE_EVENTS = (QEvent.KeyPress, QEvent.MouseButtonPress, QEvent.MouseButtonDblClick, QEvent.Wheel)
+
+
+def _is_action(it) -> bool:
+    """Намерение геймпада — настоящее действие: кнопка или стик дальше мёртвой зоны (центр стика — нет)."""
+    if isinstance(it, PanTilt):
+        return bool(it.vx or it.vy)
+    if isinstance(it, Zoom):
+        return bool(it.v)
+    return not isinstance(it, Disconnected)
 KEY_PAN_FAST = 1.0  # Shift + стрелки / WASD: полный наклон, как упор стика
 _MENU_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter}
 _ZOOM_IN_KEYS = {Qt.Key_Plus, Qt.Key_Equal}
@@ -242,6 +253,7 @@ class MainWindow(QMainWindow):
         self._cell_dialogs: dict[int, QDialog] = {}
         self._held: set[int] = set()
         self._fast = False  # Shift зажат
+        self.last_input = "kb"  # чем управляли последним: "kb" (клавиатура и мышь) | "pad" — по нему подсказка
         # режим «камера как курсор»: клетка, колесо (zoom | iris), плашка сверху по центру видео
         self.mouse_slot: int | None = None
         self.mouse_wheel = "zoom"
@@ -978,6 +990,7 @@ class MainWindow(QMainWindow):
         self._reallocate_analysis()
         self._save_grid()
         self._update_selected_status()
+        self._update_hint_context()  # геймпад другой камеры — сразу подсказка клавиатуры, не ждём таймера
 
     def _select_effects(self) -> None:
         """Всё, что зависит от выбранной клетки: рамка, правая панель, управление, оверлеи, огоньки геймпада."""
@@ -1373,15 +1386,23 @@ class MainWindow(QMainWindow):
             if d.isVisibleTo(self) else 0
 
     def _fit_drawer_height(self) -> None:
+        """Панель пресетов растит окно вниз, но не за экран: что не влезло — панель делит место с камерами."""
+        grown = getattr(self, "_drawer_grown", 0)
         if self.isMaximized() or self.isFullScreen():
-            self._drawer_shown_h = self._drawer_extra()
-            return  # во весь экран расти некуда — панель делит место с камерами
+            self._drawer_grown = 0  # во весь экран расти некуда
+            return
         self.presets_drawer.adjustSize()
-        extra = self._drawer_extra()
-        delta = extra - getattr(self, "_drawer_shown_h", 0)
-        self._drawer_shown_h = extra
-        if delta:
-            self.resize(self.width(), self.height() + delta)
+        base = self.height() - grown
+        target = base + self._drawer_extra()
+        scr = self.screen().availableGeometry() if self.screen() else None
+        if scr is not None:
+            frame = self.frameGeometry().height() - self.height()
+            target = max(base, min(target, scr.height() - frame))
+        self._drawer_grown = target - base
+        if target != self.height():
+            self.resize(self.width(), target)
+            if scr is not None and self.frameGeometry().bottom() > scr.bottom():
+                self.move(self.x(), max(scr.top(), scr.bottom() - self.frameGeometry().height() + 1))
 
     def _thumbs_of(self, cam_id: str) -> dict:
         if cam_id not in self._thumb_cache:
@@ -2105,7 +2126,7 @@ class MainWindow(QMainWindow):
         a = c.session.analyzer if c else None
         r = a.latest() if a else None
         tid = r.target_id if r is not None else None
-        pad = bool(sel is not None and self.pad_router.pads_on(sel))
+        pad = self.last_input == "pad" and bool(sel is not None and self.pad_router.pads_on(sel))
         hover = sel is not None and self.cells[sel].preview.zone_hovered()
         self.follow_panel.set_hint_context(tid is not None, tid, pad, hover)
 
@@ -2274,8 +2295,17 @@ class MainWindow(QMainWindow):
     def _is_mine(self, obj) -> bool:
         return obj is self or (isinstance(obj, QWidget) and self.isAncestorOf(obj))
 
+    def _note_input(self, device: str) -> None:
+        """Чем управляли последним — подсказка внизу видео показывает кнопки этого устройства."""
+        if device != self.last_input:
+            self.last_input = device
+            self._update_hint_context()
+
     def eventFilter(self, obj, event):  # noqa: N802
         et = event.type()
+        if et in _KB_MOUSE_EVENTS or (et == QEvent.MouseMove and isinstance(obj, PreviewWidget)):
+            if self._is_mine(obj):  # мышь, проехавшая мимо видео, подсказку не переключает
+                self._note_input("kb")
         if et in (QEvent.KeyPress, QEvent.KeyRelease) and self._is_mine(obj):
             focus = QApplication.focusWidget()
             if isinstance(focus, (QLineEdit, QAbstractSpinBox)):
@@ -2864,6 +2894,8 @@ class MainWindow(QMainWindow):
                 bridge.zero_velocity()
             return
         b = bridge if bridge is not None else (self.pads.get(pad) or self.pad)
+        if any(_is_action(it) for it in intents):
+            self._note_input("pad")
         moved = False
         for it in intents:
             if isinstance(it, (PanTilt, Zoom)):

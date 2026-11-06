@@ -158,8 +158,16 @@ def test_no_rename_in_menu(qtbot):
     assert not hasattr(d, "renameRequested")
 
 
-def test_opening_presets_grows_window_not_cameras(qtbot, tmp_path):
+class TallScreen:
+    def availableGeometry(self):  # noqa: N802
+        from PySide6.QtCore import QRect
+
+        return QRect(0, 0, 1920, 1400)
+
+
+def test_opening_presets_grows_window_not_cameras(qtbot, tmp_path, monkeypatch):
     w = make(qtbot, tmp_path)
+    monkeypatch.setattr(w, "screen", lambda: TallScreen())
     w.resize(1640, 850)
     qtbot.wait(100)
     h0, cell0 = w.height(), w.grid_host.height()
@@ -172,6 +180,28 @@ def test_opening_presets_grows_window_not_cameras(qtbot, tmp_path):
     assert abs(w.grid_host.height() - cell0) <= 4
     w.presets_btn.click()
     qtbot.waitUntil(lambda: abs(w.height() - h0) <= 2, timeout=2000)
+    w.close()
+
+
+def test_presets_never_grow_window_past_screen(qtbot, tmp_path, monkeypatch):
+    """Ревью 2026-11-06: на экране 850 окно не уезжает вниз за край — панель делит место с камерами."""
+    from PySide6.QtCore import QRect
+
+    w = make(qtbot, tmp_path)
+    w.resize(1640, 800)
+    qtbot.wait(100)
+
+    class Scr:
+        def availableGeometry(self):  # noqa: N802
+            return QRect(0, 0, 1640, 850)
+
+    monkeypatch.setattr(w, "screen", lambda: Scr())
+    frame = w.frameGeometry().height() - w.height()
+    w.presets_btn.click()
+    qtbot.wait(300)
+    assert w.height() <= 850 - frame
+    w.presets_btn.click()
+    qtbot.waitUntil(lambda: abs(w.height() - 800) <= 2, timeout=2000)
     w.close()
 
 

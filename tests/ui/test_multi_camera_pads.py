@@ -393,3 +393,31 @@ def test_selection_never_moves_analysis_click_on_chip_does(qtbot, tmp_path):
     assert has(1) and not has(0)
     assert w.cfg.analysis_ids == [w.grid.cells[1].cfg.id]  # запомнено и после перезапуска
     w.close()
+
+
+def test_hint_follows_last_used_device(qtbot, tmp_path):
+    """Пользователь 2026-11-06: подсказка — для того, чем управляли последним, а не по привязке геймпада."""
+    from PySide6.QtCore import QPoint
+
+    from ptztracker.gamepad.intents import PanTilt
+
+    w, _ = make(qtbot, tmp_path)
+    w.pad_connected()  # геймпад 1 — на камере 1
+    w.select_slot(0)
+    assert w.last_input == "kb" and not w.follow_panel._ctx["pad"]  # после запуска — клавиатура и мышь
+    w._on_pad_intents([PanTilt(0.0, 0.0)], 1)  # стик в центре — не действие
+    assert w.last_input == "kb"
+    w._on_pad_intents([PanTilt(0.6, 0.0)], 1)
+    assert w.last_input == "pad" and w.follow_panel._ctx["pad"]
+    w.select_slot(1)  # геймпад этой камерой не управляет
+    assert not w.follow_panel._ctx["pad"]
+    w.select_slot(0)
+    assert w.follow_panel._ctx["pad"]
+    qtbot.keyPress(w, Qt.Key_Left)
+    qtbot.keyRelease(w, Qt.Key_Left)
+    assert w.last_input == "kb" and not w.follow_panel._ctx["pad"]
+    w._on_pad_intents([PanTilt(0.6, 0.0)], 1)
+    w._on_pad_intents([PanTilt(0.0, 0.0)], 1)
+    qtbot.mouseClick(w.cells[0].preview, Qt.LeftButton, pos=QPoint(5, 5))
+    assert w.last_input == "kb"
+    w.close()

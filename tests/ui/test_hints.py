@@ -41,3 +41,15 @@ def test_hint_bar_text_and_plain(qtbot):
     assert not b.grab().isNull()
     b.setText("Уже следит Симулятор 1")  # простое сообщение — без кнопок
     assert b.text() == "Уже следит Симулятор 1" and b.pairs == []
+
+
+def test_hint_bar_shows_device(qtbot):
+    """Пользователь 2026-11-06: значок устройства слева — видно, почему кнопки такие."""
+    b = HintBar()
+    qtbot.addWidget(b)
+    b.set_hint("", [("pad", "rstick", "нажать — вести")])
+    assert b.device == "pad"
+    b.set_hint("", [("mouse", "L", "по человеку"), ("key", "Пробел", "вести")])
+    assert b.device == "kb"
+    b.setText("Уже следит Симулятор 1")
+    assert b.device is None

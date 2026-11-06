@@ -81,6 +81,47 @@ class MouseGlyph(QWidget):
         p.end()
 
 
+class DeviceIcon(QWidget):
+    """Чем управляли последним: геймпад или клавиатура — серый контур 18×12 в начале плашки."""
+
+    def __init__(self, device: str, parent=None):
+        super().__init__(parent)
+        self.device = device
+        self.setFixedSize(QSize(18, 14))
+        self.setToolTip("Подсказка для геймпада" if device == "pad" else "Подсказка для клавиатуры и мыши")
+
+    def paintEvent(self, _e):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(qcolor(C.TEXT_FAINT), 1.2))
+        p.setBrush(Qt.NoBrush)
+        if self.device == "pad":
+            body = QPainterPath()
+            body.addRoundedRect(QRectF(1, 2, 16, 8), 4, 4)
+            body.addEllipse(QRectF(1.5, 5, 5, 7.5))  # рукоятки
+            body.addEllipse(QRectF(11.5, 5, 5, 7.5))
+            p.drawPath(body.simplified())
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(C.TEXT_FAINT))
+            p.drawEllipse(QPointF(6, 6), 1.3, 1.3)
+            p.drawEllipse(QPointF(12, 6), 1.3, 1.3)
+        else:
+            p.drawRoundedRect(QRectF(1, 2.5, 16, 10), 2.5, 2.5)
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(C.TEXT_FAINT))
+            for row, y in enumerate((5, 7.6)):
+                for i in range(5 - row):
+                    p.drawRect(QRectF(3.2 + i * 2.6 + row * 1.3, y, 1.4, 1.3))
+            p.drawRect(QRectF(5.5, 10.1, 7, 1.2))  # пробел
+        p.end()
+
+
+def _device_of(pairs: list[Pair]) -> str | None:
+    if not pairs:
+        return None
+    return "pad" if any(k == "pad" for k, _c, _t in pairs) else "kb"
+
+
 def _glyph(kind: str, code: str) -> QWidget:
     if kind == "mouse":
         return MouseGlyph(code)
@@ -104,6 +145,7 @@ class HintBar(QFrame):
         self.setStyleSheet(f"QFrame#hintBar {{ background: {_rgba(C.BG, 0.85)}; border-radius: 7px; }}")
         self.title = ""
         self.pairs: list[Pair] = []
+        self.device: str | None = None  # "pad" | "kb" — значок слева; None — простое сообщение
         self.muted = False  # на этом месте другая плашка (режим мыши): текст обновляется, но не показывается
         self._lay = QHBoxLayout(self)
         self._lay.setContentsMargins(SP[1] + 1, 4, SP[1] + 2, 4)
@@ -124,10 +166,13 @@ class HintBar(QFrame):
             self.setVisible(bool(title or pairs) and not self.muted)  # могли спрятать при смене камеры
             return
         self.title, self.pairs = title, list(pairs)
+        self.device = _device_of(self.pairs)
         while self._lay.count():
             w = self._lay.takeAt(0).widget()
             if w is not None:
                 w.deleteLater()
+        if self.device:
+            self._lay.addWidget(DeviceIcon(self.device))
         if title:
             t = QLabel(title)
             t.setStyleSheet(f"color: {C.TEXT}; font-weight: 600; font-size: {FS_CAPTION}px; background: transparent;")
