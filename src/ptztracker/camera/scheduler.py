@@ -40,6 +40,9 @@ QUERY_MAX_WAIT_S = 0.4
 PT_SMALL_CHANGE = 2
 # Стопы поворота и зума не отбрасываются по счётчику ошибок: потерянный стоп оставляет камеру ехать.
 _NEVER_DROP = frozenset({STOP_PT, STOP_ZOOM})
+# Одно и то же предупреждение о сбое команды — не чаще раза в столько секунд: при долгом обрыве аварийные стопы
+# повторяются ~7 раз в секунду, и журнал (1 МБ × 5) иначе прокручивается за 1,5–2 часа.
+FAILURE_LOG_INTERVAL_S = 5.0
 _PT_RE = re.compile(r"#PTS(\d\d)(\d\d)")
 _ZOOM_RE = re.compile(r"#Z(\d\d)")
 
@@ -111,6 +114,8 @@ class CommandScheduler:
         # после каждой отправки: {"t", "cmd", "key", "priority", "queued_s", "reply", "ok"} — запись, модель зума
         self._sent_listeners: list[Callable[[dict], None]] = [on_sent] if on_sent else []
         self._last_on_sent_log = float("-inf")
+        self._last_failure_log: tuple[str, str] | None = None  # (cmd, текст ошибки) последнего предупреждения
+        self._last_failure_log_t = float("-inf")
         self._thread: threading.Thread | None = None
         self._running = False
         self._inflight: _Item | None = None
@@ -362,13 +367,16 @@ class CommandScheduler:
                     self._st.last_sent[item.key] = item.cmd
                 self._unreachable_streak = 0
                 self.last_error = None
+                # команда больше не «в пути»: снять под тем же замком, иначе submit между записью last_sent и
+                # finally в _execute увидит устаревшую команду в пути
+                self._inflight = None
             _settle(item.future, resp)
             self._set_online(True)
             return True, resp
 
     def _on_failure(self, item: _Item, err: Exception, unreachable: bool) -> None:
         self.last_error = str(err)
-        log.warning("Команда %s не прошла: %s", item.cmd, err)
+        self._log_failure(item, err)
         _settle(item.future, exc=err)
         with self._cond:
             if item.key is not None:
@@ -391,15 +399,30 @@ class CommandScheduler:
                 # но следующим пусть уйдёт пульс: по нему видно, что камера спит
                 self._probe_next = item.key != self.probe_key
             elif item.priority != Priority.EMERGENCY and item.cmd not in _NEVER_DROP:
-                # аварийный стоп и стопы поворота/зума не отбрасываются никогда
                 item.errors += 1
+            else:
+                # аварийный стоп и стопы поворота/зума не отбрасываются никогда и повторяются вечно с приоритетом
+                # выше пульса: пусть следующим уйдёт пульс, иначе отвергаемый стоп навсегда займёт очередь
+                self._probe_next = item.key != self.probe_key
             if item.key is not None and item.key not in self._st.slots:
                 if item.errors < MAX_CAMERA_ERROR_RETRIES:
                     self._st.slots[item.key] = item
                 else:
                     log.error("Команда %s отброшена после %d ошибок", item.cmd, item.errors)
+            # исход разобран, ячейка вернула команду: снять «в пути» под этим же замком — иначе submit того же кода
+            # между этим местом и finally в _execute счёл бы повтор дублем команды в пути (а last_sent уже забыт)
+            self._inflight = None
         if unreachable:
             self._set_online(False)
+
+    def _log_failure(self, item: _Item, err: Exception) -> None:
+        """Предупреждение о сбое: одинаковое (та же команда и тот же текст) — не чаще FAILURE_LOG_INTERVAL_S."""
+        now, text = self._clock(), str(err)
+        if (item.cmd, text) == self._last_failure_log and now - self._last_failure_log_t < FAILURE_LOG_INTERVAL_S:
+            log.debug("Команда %s не прошла: %s", item.cmd, err)
+            return
+        self._last_failure_log, self._last_failure_log_t = (item.cmd, text), now
+        log.warning("Команда %s не прошла: %s", item.cmd, err)
 
     def _set_online(self, value: bool) -> None:
         if self._online is value:

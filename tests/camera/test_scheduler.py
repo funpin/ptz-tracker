@@ -637,3 +637,41 @@ def test_query_abandoned_while_in_flight_does_not_break_thread():
     finally:
         gate.set()
         s.stop()
+
+
+def test_failed_stop_retry_not_deduped_before_inflight_cleared(env):
+    # между _on_failure и концом _execute упавший стоп ещё «в пути»: повтор того же кода из on_state_change
+    # не должен считаться дублем команды в пути, иначе стоп потерян (last_sent уже забыт)
+    s, clock, send = env
+    s.submit("pt", "#PTS6050", Priority.MANUAL); s.pump(); clock.t += 1   # камера подтверждённо едет
+    s.on_state_change = lambda online: None if online else s.submit("pt", "#PTS5050", Priority.MANUAL)
+    send.fail_next = [CameraUnreachable("timeout")]
+    s.submit("pt", "#PTS5050", Priority.MANUAL)
+    s.pump()                                                  # упал; в on_state_change стоп подан снова
+    clock.t += 0.131
+    assert s.pump() == "#PTS5050"
+    assert send.ok[-1] == "#PTS5050"
+
+
+def test_rejected_stop_retries_let_heartbeat_through(env):
+    # камера отвергает стоп ошибкой er1 всегда: повторы стопа (приоритет выше пульса) не должны навсегда занять очередь
+    s, clock, send = env
+    s.probe_key = "heartbeat"
+    send.fail_with = lambda cmd: CameraError("er1", "eR1:" + cmd) if cmd == "#PTS5050" else None
+    s.submit("pt", "#PTS5050", Priority.MANUAL, only_if_changed=False)
+    for _ in range(20):
+        s.submit("heartbeat", "#O", Priority.QUERY, only_if_changed=False)
+        s.pump(); clock.t += 0.131
+    assert "#O" in send.calls
+    assert send.calls.count("#PTS5050") > 1
+
+
+def test_repeated_failure_warning_rate_limited(env, caplog):
+    s, clock, send = env
+    send.fail_next = [CameraError("er1", "eR1:PTS")] * 20
+    s.submit("pt", "#PTS5050", Priority.MANUAL, only_if_changed=False)
+    with caplog.at_level("DEBUG", logger="ptztracker.camera.scheduler"):
+        for _ in range(20):
+            s.pump(); clock.t += 0.131
+    warnings = [r for r in caplog.records if r.levelname == "WARNING" and "не прошла" in r.getMessage()]
+    assert len(warnings) == 1
