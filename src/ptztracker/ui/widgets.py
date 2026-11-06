@@ -777,7 +777,14 @@ class VideoFrame(QFrame):
                 below = self.tracking_tag.height() if self.tracking_tag.isVisibleTo(self) else 0
                 w.move(off + SP[1], off + below + SP[1])
             elif corner == "bottom-right":
-                w.move(self.width() - w.width() - off - SP[1], self.height() - w.height() - off - SP[1])
+                x, y = self.width() - w.width() - off - SP[1], self.height() - w.height() - off - SP[1]
+                # нижние плашки слева и справа не помещаются рядом (узкая клетка) — правая поднимается над левой
+                left = [o for o, c in self._overlays if c == "bottom-left" and o.isVisibleTo(self)]
+                for o in left:
+                    o.adjustSize()
+                    if off + SP[1] + o.width() + SP[1] > x:
+                        y = min(y, self.height() - o.height() - off - SP[1] - SP[0] - w.height())
+                w.move(x, y)
             else:
                 w.move(off + SP[1], self.height() - w.height() - off - SP[1])
 

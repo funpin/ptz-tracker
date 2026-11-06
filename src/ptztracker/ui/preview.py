@@ -23,6 +23,20 @@ from ptztracker.vision.types import (
     KP_R_SHOULDER,
 )
 
+MOUSE_DEAD = 0.03  # режим мыши: отклонение от центра видео (доля ширины), меньше — дрожь руки
+MOUSE_FULL = 0.35  # дальше — полная скорость, как упор стика
+
+
+def mouse_velocity(dx: float, dy: float) -> tuple[float, float]:
+    """Режим мыши: смещение указателя от центра видео (доли ширины, вниз — плюс) → скорость (-1…1, вверх — плюс)."""
+    def axis(v: float) -> float:
+        a = abs(v)
+        if a < MOUSE_DEAD:
+            return 0.0
+        return round(min(1.0, (a - MOUSE_DEAD) / (MOUSE_FULL - MOUSE_DEAD)) * (1 if v > 0 else -1), 3) + 0.0
+    return axis(dx), axis(-dy)
+
+
 TARGET_COLOR = qcolor(C.ON)
 LOST_COLOR = qcolor(C.LOST)
 OTHER_COLOR = qcolor(C.TEXT, 170)
@@ -48,6 +62,12 @@ class PreviewWidget(QWidget):
     zoneCommitted = Signal()  # отпустил кнопку — можно сохранять
     zoneReset = Signal()  # двойной клик по зоне
     zoneHoverChanged = Signal(bool)  # мышь над зоной — подсказка внизу видео показывает, как её тянуть
+    # режим «камера как курсор» (макет mouse-mode.html): окно двигает камеру по этим сигналам
+    mouseVector = Signal(float, float)  # скорость поворота и наклона −1…1
+    wheelStep = Signal(int)  # +1 — колесо от себя
+    leftClicked = Signal()
+    rightClicked = Signal()
+    doubleClicked = Signal()  # двойной клик по видео вне зоны — войти в режим мыши
 
     click_guard: Callable[[], bool] | None = None  # False — клик не выбирает человека
     zone_scale_of: Callable[[], float] | None = None  # масштаб сохранённой зоны этой камеры (по умолчанию 1)
@@ -70,6 +90,8 @@ class PreviewWidget(QWidget):
         self._press = None  # (точка нажатия, что под мышью, точка лица, мягкая зона, масштаб) — пока кнопка нажата
         self._drag: str | None = None  # "move" | "nw" | "se"
         self._hover: str | None = None
+        self.mouse_mode = False
+        self._mouse_pt: QPointF | None = None
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(33)
@@ -191,7 +213,36 @@ class PreviewWidget(QWidget):
                 return name
         return "move" if soft.contains(pt) else None
 
+    def set_mouse_mode(self, on: bool) -> None:
+        """Камера как курсор: курсор прячется, в центре — крестик, по краю — лаймовая рамка."""
+        self.mouse_mode = on
+        self._mouse_pt = None
+        self._press, self._drag = None, None
+        self.setCursor(Qt.BlankCursor if on else Qt.ArrowCursor)
+        if not on:
+            self.mouseVector.emit(0.0, 0.0)
+        self.update()
+
+    def _mouse_mode_move(self, pos: QPointF) -> None:
+        self._mouse_pt = pos
+        w = max(1.0, float(self.width()))
+        self.mouseVector.emit(*mouse_velocity((pos.x() - self.width() / 2) / w, (pos.y() - self.height() / 2) / w))
+        self.update()
+
+    def wheelEvent(self, e):  # noqa: N802
+        if self.mouse_mode and e.angleDelta().y():
+            self.wheelStep.emit(1 if e.angleDelta().y() > 0 else -1)
+            e.accept()
+            return
+        super().wheelEvent(e)
+
     def mousePressEvent(self, e):  # noqa: N802
+        if self.mouse_mode:
+            if e.button() == Qt.LeftButton:
+                self.leftClicked.emit()
+            elif e.button() == Qt.RightButton:
+                self.rightClicked.emit()
+            return
         if e.button() != Qt.LeftButton:
             return
         if self.click_guard is not None and not self.click_guard():
@@ -209,6 +260,9 @@ class PreviewWidget(QWidget):
 
     def mouseMoveEvent(self, e):  # noqa: N802
         pos = e.position()
+        if self.mouse_mode:
+            self._mouse_mode_move(pos)
+            return
         if self._press is not None:
             p0, hit, (ax, ay), soft0, scale0 = self._press
             if self._drag is None and (pos - p0).manhattanLength() > self.DRAG_PX:
@@ -251,17 +305,24 @@ class PreviewWidget(QWidget):
         self.update()
 
     def mouseDoubleClickEvent(self, e):  # noqa: N802
-        if e.button() == Qt.LeftButton and self._zone_hit(e.position()) is not None:
-            if self.click_guard is None or self.click_guard():
-                self.zoneReset.emit()
-                e.accept()
-                return
-        super().mouseDoubleClickEvent(e)
+        if self.mouse_mode or e.button() != Qt.LeftButton:
+            return
+        if self.click_guard is not None and not self.click_guard():
+            return
+        if self._zone_hit(e.position()) is not None:
+            self.zoneReset.emit()
+        elif self.widget_to_frame(e.position()) is not None:
+            self.doubleClicked.emit()  # по видео вне зоны — режим мыши
+        e.accept()
 
     def zone_hovered(self) -> bool:
         return self._hover is not None or self._drag is not None
 
     def leaveEvent(self, e):  # noqa: N802
+        if self.mouse_mode:  # указатель ушёл с видео — камера стоит
+            self._mouse_pt = None
+            self.mouseVector.emit(0.0, 0.0)
+            self.update()
         if self._hover is not None:
             self._hover = None
             self.update()
@@ -340,7 +401,29 @@ class PreviewWidget(QWidget):
             p.drawText(plate, Qt.AlignCenter, text)
         p.restore()
 
+    def _paint_mouse_mode(self, p: QPainter) -> None:
+        """Лаймовая рамка по краю, крестик в центре и стрелка к указателю: куда и как быстро едет камера."""
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(qcolor(C.LIME), 2))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(QRectF(self.rect()).adjusted(1, 1, -1, -1))
+        c = QPointF(self.width() / 2, self.height() / 2)
+        p.setPen(QPen(qcolor(C.TEXT, 220), 2))
+        p.drawLine(c - QPointF(11, 0), c + QPointF(11, 0))
+        p.drawLine(c - QPointF(0, 11), c + QPointF(0, 11))
+        pt = self._mouse_pt
+        if pt is not None and (pt - c).manhattanLength() > MOUSE_DEAD * self.width():
+            p.setPen(QPen(qcolor(C.LIME), 3, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(c, pt)
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(C.LIME))
+            p.drawEllipse(pt, 5, 5)
+        p.restore()
+
     def _paint_overlay(self, p: QPainter) -> None:
+        if self.mouse_mode:
+            self._paint_mouse_mode(p)
         self._paint_zones(p)
         r = self._result()
         if r is None:

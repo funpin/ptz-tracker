@@ -302,3 +302,24 @@ def test_pad_badge_gear_bars_widen_and_flash(qtbot):
     b.set(1, 70, False)  # режим не «предел скорости» — столбиков нет
     assert b.width() == w0 and b.gear_text() == ""
     assert not b.grab().isNull()
+
+
+def test_bottom_plates_do_not_overlap_in_narrow_frame(qtbot):
+    from PySide6.QtWidgets import QLabel, QWidget
+
+    from ptztracker.ui.widgets import VideoFrame
+
+    f = VideoFrame(QWidget())
+    qtbot.addWidget(f)
+    f.resize(420, 240)
+    f.show()
+    left, right = QLabel("Подсказка слева, довольно длинная строка"), QLabel("1280×720 · 25 · анализ 15")
+    f.add_overlay(left, "bottom-left")
+    f.add_overlay(right, "bottom-right")
+    left.show()
+    right.show()
+    qtbot.wait(20)
+    assert not left.geometry().intersects(right.geometry())
+    f.resize(1200, 240)  # широко — снова рядом, на одной высоте
+    qtbot.wait(20)
+    assert left.geometry().bottom() == right.geometry().bottom()

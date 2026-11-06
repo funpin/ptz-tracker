@@ -137,6 +137,7 @@ class CameraCell(QFrame):
             f" font-size: {FS_CAPTION - 0.5}px;")
         self.info_label.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.info_label.hide()
+        self.info_muted = False  # режим мыши: внизу — его плашка, цифры потока прячутся
         self.video_frame.add_overlay(self.info_label, "bottom-right")
 
         self._stack = QStackedLayout()
@@ -256,7 +257,7 @@ class CameraCell(QFrame):
 
     def set_info(self, text: str) -> None:
         self.info_label.setText(text)
-        self.info_label.setVisible(bool(text))
+        self.info_label.setVisible(bool(text) and not self.info_muted)
         if text:
             self.info_label.adjustSize()
             self.video_frame._place_tags()

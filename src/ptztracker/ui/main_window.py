@@ -100,6 +100,7 @@ from ptztracker.ui.camera_strip import CameraStrip, StripItem
 from ptztracker.ui.follow_panel import SIZES, FollowPanel
 from ptztracker.ui.gamepad_bridge import GamepadBridge
 from ptztracker.ui.gamepads_dialog import GamepadsDialog, PadRow, time_left_text
+from ptztracker.ui.hints import HintBar
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.keys import digit_of, logical_key
 from ptztracker.ui.main_menu import MainMenu
@@ -151,6 +152,7 @@ _HOTKEYS = [
     ("+ −", "зум"), ("Z X C", "кадр: пояс, рост, общий"), ("Esc", "стоп"),
     ("F9", "сохранить момент"), ("M", "быстрые настройки (меню поверх видео)"), ("P", "панель пресетов"),
     ("G", "4 камеры ↔ 1 камера крупно"),
+    ("Tab", "управление мышью: ведёте — едет, колесо — зум (ПКМ — ирис), ЛКМ — взять человека; Tab — выйти"),
 ]  # F1 («справка») сюда не добавляем: окно F1 показывает её само
 # в строке состояния — только главное; остальное в окне F1
 _PAN_KEYS = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
@@ -237,6 +239,14 @@ class MainWindow(QMainWindow):
         self._cell_dialogs: dict[int, QDialog] = {}
         self._held: set[int] = set()
         self._fast = False  # Shift зажат
+        # режим «камера как курсор»: клетка, колесо (zoom | iris), плашка сверху по центру видео
+        self.mouse_slot: int | None = None
+        self.mouse_wheel = "zoom"
+        self.mouse_hint = HintBar()
+        self.mouse_hint.hide()
+        self._wheel_timer = QTimer(self)
+        self._wheel_timer.setSingleShot(True)
+        self._wheel_timer.timeout.connect(lambda: self._mouse_src() and self._mouse_src().set_zoom_velocity(0.0))
         self._atem_port = atem_port
         self.atem: AtemTally | None = None
         self._tally_shown: tuple | None = None
@@ -448,6 +458,11 @@ class MainWindow(QMainWindow):
             c.preview.zoneReset.connect(lambda s=i: self._on_zone(s, None, save=True))
             c.preview.zone_scale_of = lambda s=i: self._zone_scale(s)
             c.preview.zoneHoverChanged.connect(lambda _h: self._update_hint_context())
+            c.preview.mouseVector.connect(lambda x, y, s=i: self._on_mouse_vector(s, x, y))
+            c.preview.wheelStep.connect(lambda d, s=i: self._on_mouse_wheel(s, d))
+            c.preview.rightClicked.connect(lambda s=i: self._on_mouse_right(s))
+            c.preview.leftClicked.connect(lambda s=i: self._on_mouse_left(s))
+            c.preview.doubleClicked.connect(lambda s=i: self.enter_mouse_mode() if s == self.grid.selected else None)
             c.powerClicked.connect(self._cell_power)
             c.viewToggleRequested.connect(self._toggle_view_at)
         # пресеты — выдвижная панель под сеткой камер (кнопка «Пресеты» внизу или P); правая колонка не двигается
@@ -624,6 +639,7 @@ class MainWindow(QMainWindow):
         self._strip_timer.timeout.connect(self._refresh_strip_frames)
 
         QApplication.instance().installEventFilter(self)
+        QApplication.instance().applicationStateChanged.connect(self._on_app_state)
         self._restart_atem()
         self._initial_grid()
         self._api = start_window_api(self)
@@ -942,6 +958,7 @@ class MainWindow(QMainWindow):
         if not 0 <= slot < GRID_SLOTS or slot == self.grid.selected:
             return
         self.camera_menu.close_menu()  # до переноса: ручной фокус получает ноль
+        self.exit_mouse_mode()  # режим мыши — у выбранной клетки
         self.release_all_held()  # геймпад ведёт свою камеру и выбором клетки не трогается
         old = self.selected_cell
         if old is not None:
@@ -2252,6 +2269,10 @@ class MainWindow(QMainWindow):
                         self.recall_preset(self.grid.selected, digit)
                 return True
             key = _WASD.get(key, key)
+            if key in (Qt.Key_Tab, Qt.Key_Backtab):  # Tab — режим мыши вкл / выкл
+                if et == QEvent.KeyPress and not event.isAutoRepeat():
+                    self.exit_mouse_mode() if self.mouse_slot is not None else self.enter_mouse_mode()
+                return True
             if key == Qt.Key_Space:
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self.toggle_follow()
@@ -2301,9 +2322,103 @@ class MainWindow(QMainWindow):
                 return True
         return super().eventFilter(obj, event)
 
+    # --- режим «камера как курсор» (план шага Б, часть 3; макет mouse-mode.html) -----------------
+
+    MOUSE_WHEEL_ZOOM = 0.6  # скорость зума от одного щелчка колеса…
+    MOUSE_WHEEL_MS = 180  # …столько миллисекунд
+    MOUSE_IRIS_STEP = 4  # шаг ириса колесом, % ползунка
+
+    def _mouse_src(self):
+        c = self.grid.cells[self.mouse_slot] if self.mouse_slot is not None else None
+        return self._source(c, "mousemode") if c is not None else None
+
+    def enter_mouse_mode(self) -> None:
+        sel = self.grid.selected
+        if sel is None or self.grid.cells[sel] is None or self.mouse_slot is not None:
+            return
+        self.camera_menu.close_menu()
+        self.mouse_slot, self.mouse_wheel = sel, "zoom"
+        self.cells[sel].preview.set_mouse_mode(True)
+        # плашка режима — на месте обычной подсказки внизу (сверху слева уже плашка цели)
+        self.follow_panel.status_label.set_muted(True)
+        self.cells[sel].info_muted = True
+        self.cells[sel].info_label.hide()
+        self.cells[sel].video_frame.add_overlay(self.mouse_hint, "bottom-left")
+        self._show_mouse_hint()
+        self.mouse_hint.show()
+
+    def exit_mouse_mode(self) -> None:
+        """Tab, Esc, другая клетка, ЛКМ: камера сразу останавливается."""
+        slot = self.mouse_slot
+        if slot is None:
+            return
+        src = self._mouse_src()
+        self.mouse_slot = None
+        self._wheel_timer.stop()
+        if src is not None:
+            src.set_pan_tilt_velocity(0.0, 0.0)
+            src.set_zoom_velocity(0.0)
+        self.cells[slot].preview.set_mouse_mode(False)
+        self.cells[slot].video_frame.remove_overlay(self.mouse_hint)
+        self.mouse_hint.hide()
+        self.follow_panel.status_label.set_muted(False)
+        self.cells[slot].info_muted = False
+
+    def _show_mouse_hint(self) -> None:
+        zoom = self.mouse_wheel == "zoom"
+        self.mouse_hint.set_hint("Мышь", [("mouse", "W", "зум" if zoom else "ирис"),
+                                          ("mouse", "R", "колесо → ирис" if zoom else "колесо → зум"),
+                                          ("mouse", "L", "взять человека"), ("key", "Tab", "выйти")])
+
+    def _on_mouse_vector(self, slot: int, x: float, y: float) -> None:
+        src = self._mouse_src() if slot == self.mouse_slot else None
+        if src is not None:  # как стик: та же кривая чувствительности; ручное действие выключает слежение
+            sens = self.cfg.stick_sensitivity
+            src.set_pan_tilt_velocity(shape(x, sens), shape(y, sens))
+
+    def _on_mouse_wheel(self, slot: int, d: int) -> None:
+        src = self._mouse_src() if slot == self.mouse_slot else None
+        if src is None:
+            return
+        if self.mouse_wheel == "zoom":
+            src.set_zoom_velocity(self.MOUSE_WHEEL_ZOOM * d)
+            self._wheel_timer.start(self.MOUSE_WHEEL_MS)
+        else:
+            c = self.controls
+            if c.iris_auto.isChecked():
+                c.iris_auto.setChecked(False)  # колесо — значит вручную, как крестовина геймпада
+            c.iris_slider.setValue(c.iris_slider.value() + self.MOUSE_IRIS_STEP * d)
+
+    def _on_mouse_right(self, slot: int) -> None:
+        if slot == self.mouse_slot:
+            self.mouse_wheel = "iris" if self.mouse_wheel == "zoom" else "zoom"
+            self._show_mouse_hint()
+
+    def _on_mouse_left(self, slot: int) -> None:
+        """ЛКМ: взять в слежение человека ближе всех к центру и включить слежение; режим мыши — выключить
+        (иначе первое же движение руки выключило бы слежение)."""
+        c = self.grid.cells[slot] if slot == self.mouse_slot else None
+        a = c.session.analyzer if c is not None else None
+        r = a.latest() if a is not None else None
+        self.exit_mouse_mode()
+        if r is None or not r.tracks:
+            return
+        cx, cy = r.frame_size[0] / 2, r.frame_size[1] / 2
+        t = min(r.tracks, key=lambda t: ((t.box[0] + t.box[2]) / 2 - cx) ** 2 + ((t.box[1] + t.box[3]) / 2 - cy) ** 2)
+        if a.select_at((t.box[0] + t.box[2]) / 2, (t.box[1] + t.box[3]) / 2) is not None:
+            self._on_follow_requested(True)
+
+    def _on_app_state(self, state) -> None:
+        """Окно потеряло фокус — камера режима мыши стоит, сам режим остаётся до Tab или Esc."""
+        src = self._mouse_src()
+        if src is not None and state != Qt.ApplicationActive:
+            src.set_pan_tilt_velocity(0.0, 0.0)
+            src.set_zoom_velocity(0.0)
+
     def emergency_stop(self) -> None:
         """Общий аварийный стоп (Esc и кнопка «Стоп»): снять разрешение агенту, отпустить клавиши,
         выключить слежение и остановить все камеры."""
+        self.exit_mouse_mode()  # Esc выходит из режима мыши и останавливает все камеры
         self.agent_panel.revoke_all()
         self._pad_stop_motion()  # стоп обнуляет и геймпад: снова поедет после возврата стика в центр
         self.release_all_held()
@@ -2900,6 +3015,9 @@ class MainWindow(QMainWindow):
             self._api.stop()
             self._api = None
         QApplication.instance().removeEventFilter(self)
+        if not getattr(self, "_app_state_off", False):  # окно закрывают и второй раз — отключить один раз
+            self._app_state_off = True
+            QApplication.instance().applicationStateChanged.disconnect(self._on_app_state)
         self._status_timer.stop()
         self._hide_folder_timer.stop()
         self._follow_timer.stop()

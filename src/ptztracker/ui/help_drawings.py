@@ -285,7 +285,7 @@ class KeyboardDrawing(_Drawing):
     ROWS: tuple[tuple[tuple[str, str, float], ...], ...] = (
         (("Esc", "Esc", 1), ("F1", "F1", 1), ("F2", "F2", 1), ("…", "", 1), ("F9", "F9", 1)),
         tuple((d, d, 1) for d in "123456789") + (("−", "−", 1), ("+", "+", 1)),
-        tuple((c, c, 1) for c in "QWERTYU") + (("P", "P", 1),),
+        (("Tab", "TAB", 1.5), *((c, c, 1) for c in "QWERTYU"), ("P", "P", 1)),
         tuple((c, c, 1) for c in "ASDFGHJ") + (("M", "M", 1),),
         (("Shift", "Shift", 2), *((c, c, 1) for c in "ZXCV")),
         (("Пробел", "Space", 6.4), ("←", "Left", 1), ("↑", "Up", 1), ("↓", "Down", 1), ("→", "Right", 1)),

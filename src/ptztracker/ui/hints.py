@@ -104,6 +104,7 @@ class HintBar(QFrame):
         self.setStyleSheet(f"QFrame#hintBar {{ background: {_rgba(C.BG, 0.85)}; border-radius: 7px; }}")
         self.title = ""
         self.pairs: list[Pair] = []
+        self.muted = False  # на этом месте другая плашка (режим мыши): текст обновляется, но не показывается
         self._lay = QHBoxLayout(self)
         self._lay.setContentsMargins(SP[1] + 1, 4, SP[1] + 2, 4)
         self._lay.setSpacing(6)
@@ -120,6 +121,7 @@ class HintBar(QFrame):
 
     def set_hint(self, title: str, pairs: list[Pair]) -> None:
         if (title, pairs) == (self.title, self.pairs):
+            self.setVisible(bool(title or pairs) and not self.muted)  # могли спрятать при смене камеры
             return
         self.title, self.pairs = title, list(pairs)
         while self._lay.count():
@@ -142,5 +144,14 @@ class HintBar(QFrame):
             w = QLabel(what)
             w.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: {FS_CAPTION}px; background: transparent;")
             self._lay.addWidget(w)
-        self.setVisible(bool(title or pairs))
+        for i in range(self._lay.count()):  # новые дети видимой плашки сами не показываются
+            if (w := self._lay.itemAt(i).widget()) is not None:
+                w.show()
+        self.setVisible(bool(title or pairs) and not self.muted)
+        self._lay.invalidate()
+        self._lay.activate()  # раскладка — сразу: иначе новые подписи остаются нулевого размера до следующего показа
         self.adjustSize()
+
+    def set_muted(self, on: bool) -> None:
+        self.muted = on
+        self.setVisible(bool(self.title or self.pairs) and not on)
