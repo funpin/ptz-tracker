@@ -40,3 +40,9 @@ def test_refusal_not_allowed():
     assert tracking_refusal([c(allowed=False)], 0, 4) == (
         "Слежение на этой камере выключено в настройках камеры"
     )
+
+
+def test_preferred_list_in_order():
+    cells = [c(), c(), c()]
+    assert allocate_analysis(cells, [2, 0], 1) == frozenset({2})  # первый в списке оператора
+    assert allocate_analysis(cells, [2, 0], 2) == frozenset({2, 0})

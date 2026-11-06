@@ -242,7 +242,6 @@ class MainWindow(QMainWindow):
         self._cell_dialogs: dict[int, QDialog] = {}
         self._held: set[int] = set()
         self._fast = False  # Shift зажат
-        self._analysis_pick: int | None = None  # клетка, выбранная оператором (главный геймпад её не меняет)
         # режим «камера как курсор»: клетка, колесо (zoom | iris), плашка сверху по центру видео
         self.mouse_slot: int | None = None
         self.mouse_wheel = "zoom"
@@ -462,6 +461,7 @@ class MainWindow(QMainWindow):
             c.preview.zoneReset.connect(lambda s=i: self._on_zone(s, None, save=True))
             c.preview.zone_scale_of = lambda s=i: self._zone_scale(s)
             c.preview.zoneHoverChanged.connect(lambda _h: self._update_hint_context())
+            c.analysisRequested.connect(self.request_analysis)
             c.preview.mouseVector.connect(lambda x, y, s=i: self._on_mouse_vector(s, x, y))
             c.preview.wheelStep.connect(lambda d, s=i: self._on_mouse_wheel(s, d))
             c.preview.rightClicked.connect(lambda s=i: self._on_mouse_right(s))
@@ -849,7 +849,8 @@ class MainWindow(QMainWindow):
         sel = next((i for i, cid in enumerate(ids) if cid and cid == want), occupied[0] if occupied else 0)
         self.grid.selected = sel
         states = [CellState(by_id[c].name, by_id[c].tracking, False) if c else None for c in ids]
-        alloc = allocate_analysis(states, sel, self.cfg.max_analyzed)
+        pref = [i for cid in self.cfg.analysis_ids for i, c in enumerate(ids) if c == cid]
+        alloc = allocate_analysis(states, pref, self.cfg.max_analyzed)
         for slot, cid in enumerate(ids):
             if cid:
                 self._open_cell(slot, by_id[cid], analysis=slot in alloc)
@@ -960,14 +961,9 @@ class MainWindow(QMainWindow):
 
     def select_slot(self, slot: int, keep_analysis: bool = False) -> None:
         """Выбрать клетку: клавиатура, мышь, геймпад и правая панель теперь относятся к ней.
-        keep_analysis — переключил главный геймпад: анализ остаётся на камере, которую выбрал оператор."""
+        Анализ выбор клетки не трогает: он там, где его назначил оператор (плашка «БЕЗ АНАЛИЗА»)."""
         if not 0 <= slot < GRID_SLOTS or slot == self.grid.selected:
             return
-        if keep_analysis:
-            if self._analysis_pick is None:
-                self._analysis_pick = self.grid.selected
-        else:
-            self._analysis_pick = slot
         self.camera_menu.close_menu()  # до переноса: ручной фокус получает ноль
         self.exit_mouse_mode()  # режим мыши — у выбранной клетки
         self.release_all_held()  # геймпад ведёт свою камеру и выбором клетки не трогается
@@ -1168,12 +1164,20 @@ class MainWindow(QMainWindow):
             self.cfg.last_camera_id = c.cfg.id
         self._save()
 
-    def _analysis_slot(self) -> int | None:
-        """Клетка, которой анализ положен в первую очередь: выбранная оператором (не главным геймпадом)."""
-        p = self._analysis_pick
-        if p is not None and 0 <= p < len(self.grid.cells) and self.grid.cells[p] is not None:
-            return p
-        return self.grid.selected
+    def _analysis_slot(self) -> list[int]:
+        """Клетки, которым оператор назначил анализ (важнее — раньше). Выбор клетки сюда не входит."""
+        slots = {c.cfg.id: i for i, c in enumerate(self.grid.cells) if c is not None}
+        return [slots[i] for i in self.cfg.analysis_ids if i in slots]
+
+    def request_analysis(self, slot: int) -> None:
+        """Оператор назначил анализ этой камере (клик по «БЕЗ АНАЛИЗА» или слежение на ней)."""
+        c = self.grid.cells[slot] if 0 <= slot < len(self.grid.cells) else None
+        if c is None:
+            return
+        self.cfg.analysis_ids = [c.cfg.id, *(i for i in self.cfg.analysis_ids if i != c.cfg.id)]
+        self._save()
+        self._reallocate_analysis()
+        self._update_status()
 
     def _reallocate_analysis(self) -> None:
         """Нейросеть — слежущим, затем выбранной и остальным по порядку, пока не кончился лимит."""
@@ -1231,6 +1235,8 @@ class MainWindow(QMainWindow):
             if self.on_operator_follow:
                 self.on_operator_follow(want)
         if want and self.selected_cell is not None:
+            if self.selected_cell.session.analyzer is None and self.selected_cell.cfg.tracking:
+                self.request_analysis(self.grid.selected)  # слежение здесь — значит и анализ здесь
             refusal = tracking_refusal(self._states(), self.grid.selected, self.cfg.max_analyzed)
             if refusal is not None:
                 self.follow_panel.set_state(False, None)

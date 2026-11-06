@@ -14,12 +14,12 @@ class CellState:
 
 
 def allocate_analysis(
-    cells: Sequence[CellState | None], selected: int | None, limit: int
+    cells: Sequence[CellState | None], selected: int | Sequence[int] | None, limit: int
 ) -> frozenset[int]:
     """Индексы клеток, которым положен анализ.
 
     Порядок: все со включённым слежением (даже сверх лимита — не отнимаем),
-    затем выбранная, затем остальные разрешённые по порядку клеток, пока есть место.
+    затем выбранные оператором (одна клетка или список по важности), затем остальные по порядку клеток.
     """
     result = {i for i, c in enumerate(cells) if c is not None and c.tracking_on}
 
@@ -28,8 +28,9 @@ def allocate_analysis(
         if c is not None and c.tracking_allowed and len(result) < limit:
             result.add(i)
 
-    if selected is not None and 0 <= selected < len(cells):
-        take(selected)
+    for i in ([selected] if isinstance(selected, int) else list(selected or [])):
+        if 0 <= i < len(cells):
+            take(i)
     for i in range(len(cells)):
         take(i)
     return frozenset(result)

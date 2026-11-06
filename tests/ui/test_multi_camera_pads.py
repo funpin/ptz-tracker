@@ -377,3 +377,19 @@ def test_main_pad_switch_keeps_analysis_and_moves_preset_row(qtbot, tmp_path):
     w.select_slot(0)  # выбор мышью — снова оператор
     assert w._preset_rows() == [0]
     w.close()
+
+
+def test_selection_never_moves_analysis_click_on_chip_does(qtbot, tmp_path):
+    w, _ = make(qtbot, tmp_path)
+    w.cfg.max_analyzed = 1
+    w._reallocate_analysis()
+    has = lambda i: w.grid.cells[i].session.analyzer is not None  # noqa: E731
+    assert has(0) and not has(1)
+    w.select_slot(1)  # выбор камеры — анализ остаётся
+    assert has(0) and not has(1)
+    w.cells[1].analysisRequested.emit(1)  # клик по «БЕЗ АНАЛИЗА» у камеры 2
+    assert has(1) and not has(0)
+    w.select_slot(0)
+    assert has(1) and not has(0)
+    assert w.cfg.analysis_ids == [w.grid.cells[1].cfg.id]  # запомнено и после перезапуска
+    w.close()

@@ -94,6 +94,8 @@ class AppConfig:
     pad_l1r1_mode: dict = field(default_factory=dict)
     # главный геймпад: в виде «1 камера» его Create переключает и камеру в программе (пресеты, правая колонка)
     main_pad: str = ""
+    # камеры с анализом, выбранные оператором (id, важнее — раньше); выбор клетки анализ не двигает
+    analysis_ids: list = field(default_factory=list)
     pad_gear: dict = field(default_factory=dict)  # ступень 1…8 (manual_curve.PAD_GEAR_DEG_S); нет записи — 6
     # вверх/вниз левого стика у каждого геймпада: своя кривая (нет записи — как влево/вправо) и скорость,
     # % от влево/вправо (нет записи — DEFAULT_TILT_SPEED)
@@ -307,6 +309,8 @@ def _fix_control_settings(cfg: AppConfig) -> None:
     cfg.pad_gear = {k: max(1, min(SPEED_GEARS, v)) for k, v in gears.items()
                           if isinstance(k, str) and k and isinstance(v, int) and not isinstance(v, bool)}
     cfg.main_pad = normalize_pad_id(cfg.main_pad) if isinstance(cfg.main_pad, str) and cfg.main_pad else ""
+    ai = cfg.analysis_ids if isinstance(cfg.analysis_ids, list) else []
+    cfg.analysis_ids = list(dict.fromkeys(x for x in ai if isinstance(x, str) and x))
 
 
 def ensure_api_token(cfg: AppConfig) -> bool:

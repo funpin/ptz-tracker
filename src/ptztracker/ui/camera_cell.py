@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QComboBox,
@@ -46,6 +46,7 @@ class CameraCell(QFrame):
     selectRequested = Signal(int)
     powerClicked = Signal(int)
     viewToggleRequested = Signal(int)  # двойной клик по шапке: «4 камеры» ↔ «1 камера»
+    analysisRequested = Signal(int)  # клик по «БЕЗ АНАЛИЗА»: анализ — этой камере
 
     def __init__(self, slot: int, parent: QWidget | None = None):
         super().__init__(parent)
@@ -101,6 +102,7 @@ class CameraCell(QFrame):
             "QComboBox:hover::down-arrow { width: 10px; height: 10px; }")
         self.tally_tag = StateTag("pgm")
         self.state_tag = StateTag("off")
+        self.state_tag.installEventFilter(self)  # «БЕЗ АНАЛИЗА» — клик назначает анализ этой камере
         self.sim_tag = StateTag("sim")
         self.pad_badges = [PadBadge() for _ in range(MAX_PADS)]
         self.more_pads = QLabel()
@@ -163,6 +165,13 @@ class CameraCell(QFrame):
             e.accept()
             return
         super().mouseDoubleClickEvent(e)
+
+    def eventFilter(self, obj, e):  # noqa: N802
+        if (obj is self.state_tag and e.type() == QEvent.MouseButtonPress and e.button() == Qt.LeftButton
+                and self.state_tag.kind() == "no_analysis"):
+            self.analysisRequested.emit(self.slot)
+            return True
+        return super().eventFilter(obj, e)
 
     def _click_guard(self) -> bool:
         if self._selected:
@@ -246,6 +255,9 @@ class CameraCell(QFrame):
         self.state_tag.setVisible(state is not None)
         if state:
             self.state_tag.set(state)
+            free = state == "no_analysis"
+            self.state_tag.setCursor(Qt.PointingHandCursor if free else Qt.ArrowCursor)
+            self.state_tag.setToolTip("Включить анализ на этой камере (YOLO): нажмите" if free else "")
         self.sim_tag.setVisible(sim)
         self.power_btn.setVisible(power is not None)
         self.more_btn.setVisible(power is not None)

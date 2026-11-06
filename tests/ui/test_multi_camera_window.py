@@ -118,10 +118,13 @@ def test_tracking_refused_over_limit(qtbot, tmp_path):
     w.close()
 
 
-def test_analysis_follows_selection(qtbot, tmp_path):
+def test_analysis_stays_on_operator_choice(qtbot, tmp_path):
+    """Пользователь 2026-11-06: выбор камеры анализ не двигает — его назначают кликом по «БЕЗ АНАЛИЗА»."""
     w = make(qtbot, tmp_path)
     assert w.grid.cells[0].session.analyzer is not None and w.grid.cells[1].session.analyzer is None
     w.select_slot(1)
+    assert w.grid.cells[0].session.analyzer is not None and w.grid.cells[1].session.analyzer is None
+    w.cells[1].analysisRequested.emit(1)
     assert w.grid.cells[1].session.analyzer is not None and w.grid.cells[0].session.analyzer is None
     assert w.cells[1].preview._analyzer is w.grid.cells[1].session.analyzer
     assert w.cells[0].preview._analyzer is None
