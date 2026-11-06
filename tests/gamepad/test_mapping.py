@@ -3,6 +3,7 @@ from ptztracker.gamepad.intents import (
     Composition,
     Disconnected,
     GainStep,
+    Help,
     IrisStep,
     MenuAccept,
     MenuClose,
@@ -105,7 +106,7 @@ def test_neighbor_needs_recenter():
 def test_buttons():
     m = mk()
     for b, want in [("r3", ToggleFollow()), ("touchpad", Stop()), ("l3", PushFocus()),
-                    ("l1", SpeedStep(-1)), ("r1", SpeedStep(+1)), ("options", MenuOpen())]:
+                    ("l1", SpeedStep(-1)), ("r1", SpeedStep(+1)), ("options", MenuOpen()), ("ps", Help())]:
         assert m.update(pad({b}), 0.0) == [want]
         assert m.update(pad({b}), 0.1) == []
         m.update(pad(), 0.2)
@@ -115,7 +116,7 @@ def test_menu_mode():
     m = mk(menu=True)
     for b, want in [("dpad_down", [MenuNav(0, 1)]), ("dpad_left", [MenuNav(-1, 0)]), ("cross", [MenuAccept()]),
                     ("circle", [MenuClose()]), ("triangle", [MenuClose()]), ("options", [MenuClose()]),
-                    ("square", []), ("touchpad", [Stop()])]:
+                    ("square", []), ("touchpad", [Stop()]), ("ps", [Help()])]:
         assert m.update(pad({b}), 0.0) == want
         m.update(pad(), 0.1)
     assert m.update(pad(leftx=1.0), 0.2) == [PanTilt(1.0, 0.0)]
