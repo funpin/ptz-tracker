@@ -61,6 +61,19 @@
 | **Разбор полётов** | F9 сохраняет последние 5 минут в zip, окно «Повтор» прокручивает их по кадрам. |
 | **Агент** | Локальный API для Claude Code: двигать камеру можно только с двумя флажками оператора. |
 
+<table>
+  <tr>
+    <td width="50%"><img src="./docs/assets/guide/camera-tracking.png" alt="Слежение: камера ведёт докладчика"><br><sub><b>Слежение</b> — лаймовые уголки на цели, зону кадра тянут мышью</sub></td>
+    <td width="50%"><img src="./docs/assets/guide/quick-menu.png" alt="Быстрые настройки поверх видео"><br><sub><b>Быстрые настройки</b> (M) — фокус, баланс, ирис, затвор; в эфир не попадают</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="./docs/assets/guide/mouse-mode.png" alt="Камера как курсор"><br><sub><b>Камера как курсор</b> (Tab) — ведёте мышь, едет камера</sub></td>
+    <td width="50%"><img src="./docs/assets/guide/summary-positions.png" alt="Сводка и положение камер"><br><sub><b>Сводка и положение камер</b> — все камеры на одном экране</sub></td>
+  </tr>
+</table>
+
+Больше картинок — в [руководстве оператора](docs/OPERATOR.md).
+
 ## Управление
 
 | | Клавиатура и мышь | Геймпад |
@@ -110,7 +123,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q -m "not slow" && .venv/bin/ruff check src tests
 ```
 
-`.exe` собирает `build.bat` или CI на Windows. Внешний вид — по [брендбуку](docs/BRANDBOOK.md); картинку окна пересобирает `python scripts/make_overview.py`. Ещё: [бэклог](docs/BACKLOG.md), [релизы](docs/RELEASING.md), [правила для агента](AGENTS.md), [участие](CONTRIBUTING.md).
+`.exe` собирает `build.bat` или CI на Windows. Внешний вид — по [брендбуку](docs/BRANDBOOK.md); картинку окна пересобирает `python scripts/make_overview.py`, картинки руководства — `python scripts/shoot_guide.py`. Ещё: [бэклог](docs/BACKLOG.md), [релизы](docs/RELEASING.md), [правила для агента](AGENTS.md), [участие](CONTRIBUTING.md).
 </details>
 
 ## Лицензия
