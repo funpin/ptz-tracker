@@ -253,8 +253,8 @@ class ManualControls(QWidget):
         self.iris_value.setToolTip("Насколько открыт ирис: 0 % — закрыт, 100 % — открыт")
         self.iris_auto.toggled.connect(self._on_iris_auto)
         self.iris_slider.valueChanged.connect(self._on_iris)
-        self.iris_slider.valueChanged.connect(lambda v: self.iris_value.setText(f"{v} %"))
-        self.iris_value.setText(f"{self.iris_slider.value()} %")
+        self.iris_slider.valueChanged.connect(lambda _v: self._show_iris())
+        self._show_iris()
         il = self._row("Ирис", self.iris_auto, self.iris_slider, self.iris_value)
 
         # gain: шаги по 3 dB (коды GAIN_CODES) и «Авто»
@@ -469,7 +469,13 @@ class ManualControls(QWidget):
     def _touch(self, name: str) -> None:
         self._touched[name] = time.monotonic()
 
+    def _show_iris(self) -> None:
+        """Насколько открыт ирис; в «Авто» — какое значение выбрала камера (она отвечает на #GI и в авто)."""
+        v = f"{self.iris_slider.value()} %"
+        self.iris_value.setText(f"авто · {v}" if self.iris_auto.isChecked() else v)
+
     def _show_values(self) -> None:
+        self._show_iris()
         code = P.GAIN_CODES[self.gain_slider.value()]
         self.gain_value.setText("авто" if self.gain_auto.isChecked() else f"{P.gain_db(code)} dB")
         self.gain_slider.setEnabled(not self.gain_auto.isChecked())

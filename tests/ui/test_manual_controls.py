@@ -245,6 +245,7 @@ def test_iris_and_wb_show_values(qtbot):
     from ptztracker.camera import protocol as P
 
     c, _ = make(qtbot)
+    c.iris_auto.setChecked(False)
     c.iris_slider.setValue(45)
     assert c.iris_value.text() == "45 %"
     labels = {}
@@ -269,3 +270,18 @@ def test_sensitivity_texts_do_not_widen_panel(qtbot):
             lab.setText("Чувствительность " * 4)
     c.layout().invalidate()
     assert c.minimumSizeHint().width() <= SIDE_WIDTH - 16
+
+
+def test_iris_label_follows_camera_and_shows_auto_value(qtbot):
+    """Площадка 2026-11-06: ирис всегда показывал «50 %» — подпись не обновлялась из ответа камеры."""
+    import dataclasses
+
+    from ptztracker.camera.session import ImageState
+
+    c, _ = make(qtbot)
+    c.sync_image(dataclasses.replace(ImageState(), iris=0xD00, iris_auto=False))  # 0xAAA — ровно середина, 50 %
+    assert c.iris_value.text() != "50 %" and c.iris_value.text().endswith("%")
+    c.sync_image(dataclasses.replace(ImageState(), iris=0xFFF, iris_auto=True))
+    assert c.iris_value.text() == "авто · 100 %"  # в «Авто» — какое значение выбрала камера
+    c.sync_image(dataclasses.replace(ImageState(), iris=None, iris_auto=True))
+    assert c.iris_value.text().startswith("авто")
