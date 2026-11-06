@@ -11,7 +11,7 @@ GUID_ID = "030000004c050000e60c000000000000:DualSense Wireless Controller"
 
 class IdPad(PadBackend):
     def info(self):
-        return {**super().info(), "id": "a0:b1:c2:d3:e4:f5", "has_serial": True}
+        return {**super().info(), "id": "A0:B1:C2:D3:E4:F5", "has_serial": True}
 
 
 def make(qtbot, tmp_path):
@@ -29,7 +29,7 @@ def make(qtbot, tmp_path):
 
 
 def test_has_serial():
-    assert has_serial("a0:b1:c2:d3:e4:f5")
+    assert has_serial("A0:B1:C2:D3:E4:F5")
     assert not has_serial(GUID_ID) and not has_serial("?:Pad")
 
 
@@ -38,17 +38,17 @@ def test_dialog_lists_seen_pads_and_applies_at_once(qtbot, tmp_path):
     assert w.pads_action.text() == "Геймпады…"
     w.show_gamepads()
     d = w.gamepads_dialog
-    assert set(d.sliders) == {GUID_ID, "a0:b1:c2:d3:e4:f5"}
-    live = d.status_labels["a0:b1:c2:d3:e4:f5"].text()
+    assert set(d.sliders) == {GUID_ID, "A0:B1:C2:D3:E4:F5"}
+    live = d.status_labels["A0:B1:C2:D3:E4:F5"].text()
     assert "подключён · камера 1" in live and SHARED_NOTE not in live
     old = d.status_labels[GUID_ID].text()
     assert "не подключён" in old and SHARED_NOTE in old
     names = [w_.text() for i in range(d._grid.count()) if hasattr(w_ := d._grid.itemAt(i).widget(), "text")]
-    assert "DualSense · …e4:f5" in names
-    assert d.sliders[GUID_ID].value() == 20 and d.sliders["a0:b1:c2:d3:e4:f5"].value() == 50
-    d.sliders["a0:b1:c2:d3:e4:f5"].setValue(90)
+    assert "DualSense · …E4:F5" in names
+    assert d.sliders[GUID_ID].value() == 20 and d.sliders["A0:B1:C2:D3:E4:F5"].value() == 50
+    d.sliders["A0:B1:C2:D3:E4:F5"].setValue(90)
     assert w.pad.sensitivity == 90  # сразу, без «ОК»
-    assert ConfigStore(tmp_path / "c.json").load().pad_sensitivity["a0:b1:c2:d3:e4:f5"] == 90
+    assert ConfigStore(tmp_path / "c.json").load().pad_sensitivity["A0:B1:C2:D3:E4:F5"] == 90
     d.slow_tele_check.setChecked(False)
     assert not w.cfg.slow_on_tele and not w.controls.slow_tele_check.isChecked()
     w.controls.slow_tele_check.setChecked(True)
@@ -60,7 +60,7 @@ def test_dialog_updates_when_pad_unplugged(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)
     w.show_gamepads()
     b.pad = None
-    qtbot.waitUntil(lambda: "не подключён" in w.gamepads_dialog.status_labels["a0:b1:c2:d3:e4:f5"].text(),
+    qtbot.waitUntil(lambda: "не подключён" in w.gamepads_dialog.status_labels["A0:B1:C2:D3:E4:F5"].text(),
                     timeout=2000)
     w.close()
 
@@ -75,7 +75,7 @@ def test_empty_dialog(qtbot):
 
 def test_dialog_l1r1_mode_per_pad(qtbot, tmp_path):
     w, b = make(qtbot, tmp_path)
-    pid = "a0:b1:c2:d3:e4:f5"
+    pid = "A0:B1:C2:D3:E4:F5"
     w.cfg.pad_gear[pid] = 2
     w._apply_pad_speed(w.pad)
     assert w.pad.speed_limit == 5

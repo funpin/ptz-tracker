@@ -91,6 +91,25 @@ class AppConfig:
 
 
 PAD_L1R1_MODES = ("limit", "sens")
+_MAC_RE = re.compile(r"[0-9A-Fa-f]{2}(?:[-:][0-9A-Fa-f]{2}){5}")
+
+
+def normalize_pad_id(pad_id: str) -> str:
+    """Опознаватель геймпада в одном виде: адрес Bluetooth — «AA:BB:CC:DD:EE:FF». SDL на Mac отдавал адрес одного
+    DualSense то через «-» строчными, то через «:» заглавными; остальное — как есть."""
+    if _MAC_RE.fullmatch(pad_id):
+        return pad_id.replace("-", ":").upper()
+    return pad_id
+
+
+def _merge_pad_keys(d: dict) -> dict:
+    """Ключи в один вид; при совпадении важнее запись, которая уже была в нём."""
+    out: dict = {}
+    for k, v in d.items():
+        n = normalize_pad_id(k)
+        if n not in out or k == n:
+            out[n] = v
+    return out
 SPEED_GEARS = len(PAD_GEAR_DEG_S)  # ступени скорости геймпада: 3 … 90 °/с на упоре стика
 DEFAULT_GEAR = 6  # 34 °/с: середина хода — как у 1.1 на полной скорости, без рывка у упора
 
@@ -251,13 +270,17 @@ def _fix_control_settings(cfg: AppConfig) -> None:
     cfg.stick_sensitivity = d.stick_sensitivity if s is None else s
     if not isinstance(cfg.slow_on_tele, bool):
         cfg.slow_on_tele = d.slow_on_tele
-    ps = cfg.pad_sensitivity if isinstance(cfg.pad_sensitivity, dict) else {}
+    for f in ("pad_sensitivity", "pad_names", "pad_l1r1_mode", "pad_gear"):
+        v = getattr(cfg, f)
+        setattr(cfg, f, _merge_pad_keys({k: x for k, x in v.items() if isinstance(k, str) and k})
+                if isinstance(v, dict) else {})
+    ps = cfg.pad_sensitivity
     cfg.pad_sensitivity = {k: sens(v) for k, v in ps.items() if isinstance(k, str) and k and sens(v) is not None}
-    names = cfg.pad_names if isinstance(cfg.pad_names, dict) else {}
+    names = cfg.pad_names
     cfg.pad_names = {k: v for k, v in names.items() if isinstance(k, str) and k and isinstance(v, str)}
-    modes = cfg.pad_l1r1_mode if isinstance(cfg.pad_l1r1_mode, dict) else {}
+    modes = cfg.pad_l1r1_mode
     cfg.pad_l1r1_mode = {k: v for k, v in modes.items() if isinstance(k, str) and k and v in PAD_L1R1_MODES}
-    gears = cfg.pad_gear if isinstance(cfg.pad_gear, dict) else {}
+    gears = cfg.pad_gear
     cfg.pad_gear = {k: max(1, min(SPEED_GEARS, v)) for k, v in gears.items()
                           if isinstance(k, str) and k and isinstance(v, int) and not isinstance(v, bool)}
 

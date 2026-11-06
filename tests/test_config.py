@@ -433,3 +433,15 @@ def test_pad_l1r1_mode_and_speed_gear_roundtrip_and_bad_values(tmp_path):
     p.write_text(json.dumps({"cameras": [], "pad_l1r1_mode": [1], "pad_gear": "x"}), encoding="utf-8")
     cfg = ConfigStore(p).load()
     assert cfg.pad_l1r1_mode == {} and cfg.pad_gear == {}
+
+
+def test_pad_settings_of_one_address_in_two_forms_merge(tmp_path):
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps({"cameras": [],
+                             "pad_sensitivity": {"48-18-8d-0f-68-98": 0, "48:18:8D:0F:68:98": 55, "GUID:Pad": 30},
+                             "pad_names": {"48-18-8d-0f-68-98": "DualSense"},
+                             "pad_l1r1_mode": {"48-18-8d-0f-68-98": "sens"}}), encoding="utf-8")
+    cfg = ConfigStore(p).load()
+    assert cfg.pad_sensitivity == {"48:18:8D:0F:68:98": 55, "GUID:Pad": 30}  # запись в новом виде важнее
+    assert cfg.pad_names == {"48:18:8D:0F:68:98": "DualSense"}
+    assert cfg.pad_l1r1_mode == {"48:18:8D:0F:68:98": "sens"}
