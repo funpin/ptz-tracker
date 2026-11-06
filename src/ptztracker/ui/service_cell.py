@@ -195,7 +195,8 @@ class ServiceCell(QWidget):
         p.setFont(self._font(FS_CAPTION - 0.5))
         p.setPen(qcolor(C.TEXT_DIM))
         if g.has_data:
-            vals = (f"P {g.pan:+.1f}°", f"T {g.tilt:+.1f}°", f"{g.zoom_x:.1f}× · {2 * g.half_fov:.0f}°")
+            # порядок — как шкалы справа (зум, затем наклон у края): цифра наклона — под своей шкалой
+            vals = (f"P {g.pan:+.1f}°", f"{g.zoom_x:.1f}× · {2 * g.half_fov:.0f}°", f"T {g.tilt:+.1f}°")
             third = (card.width() - 2 * SP[1]) / 3
             for k, v in enumerate(vals):
                 align = (Qt.AlignLeft, Qt.AlignHCenter, Qt.AlignRight)[k] | Qt.AlignVCenter
@@ -219,7 +220,7 @@ class ServiceCell(QWidget):
         gx = mid.right() - gauges_w + SP[1]
         tilt_k = (g.tilt - TILT_RANGE[0]) / (TILT_RANGE[1] - TILT_RANGE[0])
         zoom_k = math.log(g.zoom_x) / math.log(ZOOM_MAX_X)
-        for k, (label, frac) in enumerate((("наклон", tilt_k), ("зум", zoom_k))):
+        for k, (label, frac) in enumerate((("зум", zoom_k), ("наклон", tilt_k))):
             self._paint_gauge(p, QRectF(gx + k * 22, mid.top() + 4, 18, mid.height() - 8), label, frac,
                               g.has_data)
         p.setOpacity(1.0)
