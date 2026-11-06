@@ -349,25 +349,28 @@ class TrackButton(QPushButton):
         self.setToolTip(tip)
 
 
-def paint_brackets(p: QPainter, rect: QRectF, color: QColor, width: float) -> None:
-    """Рамка цели как в знаке: два скруглённых угла — левый верхний и правый нижний."""
-    arm = max(8.0, min(rect.width(), rect.height()) * 0.3)
+def paint_brackets(p: QPainter, rect: QRectF, color: QColor, width: float,
+                   corners: tuple[str, ...] = ("tl", "br"), arm: float | None = None) -> None:
+    """Скруглённые углы-скобки. По умолчанию — как в знаке: левый верхний и правый нижний (зона слежения);
+    рамка цели «ВЕДУ» — зеркально, правый верхний и левый нижний, чтобы не сливаться с зоной."""
+    if arm is None:
+        arm = max(8.0, min(rect.width(), rect.height()) * 0.3)
     r = min(5.0, arm / 3)
     pen = QPen(color, width)
     pen.setCapStyle(Qt.RoundCap)
     p.save()
     p.setPen(pen)
     p.setBrush(Qt.NoBrush)
-    tl = QPainterPath(QPointF(rect.left(), rect.top() + arm))
-    tl.lineTo(rect.left(), rect.top() + r)
-    tl.quadTo(rect.left(), rect.top(), rect.left() + r, rect.top())
-    tl.lineTo(rect.left() + arm, rect.top())
-    br = QPainterPath(QPointF(rect.right(), rect.bottom() - arm))
-    br.lineTo(rect.right(), rect.bottom() - r)
-    br.quadTo(rect.right(), rect.bottom(), rect.right() - r, rect.bottom())
-    br.lineTo(rect.right() - arm, rect.bottom())
-    p.drawPath(tl)
-    p.drawPath(br)
+    for c in corners:
+        x = rect.left() if c[1] == "l" else rect.right()
+        y = rect.top() if c[0] == "t" else rect.bottom()
+        sx = 1 if c[1] == "l" else -1  # плечо уходит внутрь рамки
+        sy = 1 if c[0] == "t" else -1
+        path = QPainterPath(QPointF(x, y + sy * arm))
+        path.lineTo(x, y + sy * r)
+        path.quadTo(x, y, x + sx * r, y)
+        path.lineTo(x + sx * arm, y)
+        p.drawPath(path)
     p.restore()
 
 

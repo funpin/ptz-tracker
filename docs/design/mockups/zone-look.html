@@ -1,65 +1,51 @@
 <!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Вид зоны слежения</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#17191D;--surface:#1E2126;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--lime:#B7F34A;--lost:#F0A020}
+:root{--bg:#17191D;--surface:#1E2126;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--lime:#B7F34A}
 *{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:16px 18px;font-size:13px}
 h1{font-size:18px;margin:0 0 4px}.sub{color:var(--dim);font-size:12.5px;margin:0 0 14px;line-height:1.45;max-width:1150px}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,560px));gap:22px}
+.logo{display:inline-flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 14px;margin-bottom:16px;color:var(--dim);font-size:12.5px}
+.grid{display:grid;grid-template-columns:minmax(0,900px);gap:22px}
 .card h2{font-size:14px;margin:0 0 6px;display:flex;gap:8px;align-items:center}
 .ncall{display:inline-flex;width:20px;height:20px;border-radius:50%;background:#FFD43B;color:#111;font:700 11px Inter;align-items:center;justify-content:center;flex:none}
 .v{position:relative;width:100%;aspect-ratio:16/9;border-radius:8px;overflow:hidden;background:linear-gradient(180deg,#56606a,#4b545d 60%,#3a4047)}
-.v .pr{position:absolute}
+.v svg{position:absolute;inset:0;width:100%;height:100%}
 .note{color:var(--dim);font-size:12.5px;line-height:1.45;margin-top:6px}
-.tag{position:absolute;background:var(--lime);color:var(--bg);font-weight:700;font-size:11px;padding:1px 6px;border-radius:4px}
-.br{position:absolute}.br:before,.br:after{content:"";position:absolute;width:16px;height:16px;border:2.5px solid var(--lime)}
-.br:before{left:0;top:0;border-right:0;border-bottom:0}.br:after{right:0;top:0;border-left:0;border-bottom:0}
-.hint{position:absolute;left:10px;bottom:10px;background:rgba(23,25,29,.88);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:11.5px;color:var(--dim)}
-.v:not(:hover) .onhover{display:none}
 .choice{display:inline-flex;margin:14px 8px 0 0;padding:8px 14px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
 </style></head><body>
-<h1>Как показывать зону слежения на видео</h1>
-<p class="sub">Сейчас (слева сверху): две пунктирные рамки — лаймовая и оранжевая — и точка; рамка «мёртвой зоны» того же лаймового цвета, что и «ВЕДУ», и спорит с ней. Ниже три спокойных варианта. <b>Наведите мышь на картинку</b> — так выглядит, когда зону берут, чтобы тянуть.</p>
+<h1>Зона слежения — нашим знаком</h1>
+<p class="sub">Берём знак программы как есть: <b>две встречные скруглённые скобки — это зона</b>, <b>лаймовая точка — где камера держит лицо</b>. Ни пунктира, ни второго цвета: оранжевый у нас значит «ищу», лайм — только точка и «ВЕДУ». Внутренняя (мёртвая) зона — тонкий скруглённый контур вокруг точки: пока лицо в нём, камера стоит.</p>
+<div class="logo"><svg width="34" height="34" viewBox="0 0 120 120"><g fill="none" stroke="#F5F5F2" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M31 58V42c0-6.075 4.925-11 11-11h16"/><path d="M62 89h16c6.075 0 11-4.925 11-11V62"/></g><circle cx="60" cy="60" r="10" fill="#B7F34A"/></svg>знак PTZ Tracker — из него и зона</div>
 <div class="grid" id="g"></div>
+<p class="sub" style="margin-top:18px">Размеры зон и точка — те же, что сейчас; меняется только рисунок. Перетаскивание как договорились: тянете за любое место зоны, за скобку — размер, двойной клик — сброс.</p>
 <script>
-// одна и та же сцена: человек справа от центра, цель «ВЕДУ», зона у точки лица
-const scene=`<div class="pr" style="left:0;top:60%;width:9%;height:40%;background:#b88445"></div>
-<div class="pr" style="left:9%;top:42%;width:23%;height:58%;background:#5a3c26"></div>
-<div class="pr" style="left:18%;top:17%;width:11%;height:25%;background:#22bf86"></div>
-<div class="pr" style="left:32%;top:60%;width:24%;height:40%;background:#4569bb"></div>
-<div class="pr" style="left:61%;top:49%;width:6%;height:10%;border-radius:50%;background:#d9ae96"></div>
-<div class="pr" style="left:57.5%;top:60%;width:13%;height:40%;border-radius:12px 12px 0 0;background:#c08d82"></div>
-<div class="br" style="left:55.5%;top:46%;width:17%;height:54%"></div><div class="tag" style="left:56.3%;top:47.5%">ВЕДУ</div>`;
-// зона: точка лица (50 %, 25 %), мёртвая ±5 % × ±4.5 %, мягкая ±22 % × ±18 %
-const P={x:50,y:25,dx:5,dy:8,sx:22,sy:32};
-const r=(x,y,w,h,st)=>`<div class="pr" style="left:${x}%;top:${y}%;width:${w}%;height:${h}%;${st}"></div>`;
-const soft=st=>r(P.x-P.sx,P.y-P.sy<0?0:P.y-P.sy,2*P.sx,P.y+P.sy-(P.y-P.sy<0?0:P.y-P.sy),st);
-const dead=st=>r(P.x-P.dx,P.y-P.dy,2*P.dx,2*P.dy,st);
-const dot=(c,s=7)=>`<div class="pr" style="left:calc(${P.x}% - ${s/2}px);top:calc(${P.y}% - ${s/2}px);width:${s}px;height:${s}px;border-radius:50%;background:${c}"></div>`;
-const cross=c=>`<div class="pr" style="left:calc(${P.x}% - 9px);top:calc(${P.y}% - .75px);width:18px;height:1.5px;background:${c}"></div><div class="pr" style="left:calc(${P.x}% - .75px);top:calc(${P.y}% - 9px);width:1.5px;height:18px;background:${c}"></div>`;
-const corners=(c,len=14,w=1.5)=>{const x0=P.x-P.sx,x1=P.x+P.sx,y0=Math.max(0,P.y-P.sy),y1=P.y+P.sy;let s='';
- for(const[x,y,bx,by]of[[x0,y0,'left','top'],[x1,y0,'right','top'],[x0,y1,'left','bottom'],[x1,y1,'right','bottom']]){
-  const L=bx==='left'?`left:${x}%`:`left:calc(${x}% - ${len}px)`,T=by==='top'?`top:${y}%`:`top:calc(${y}% - ${len}px)`;
-  s+=`<div class="pr" style="${L};${T};width:${len}px;height:${len}px;border-${bx}:${w}px solid ${c};border-${by}:${w}px solid ${c}"></div>`}return s};
-const handles=c=>{const x0=P.x-P.sx,x1=P.x+P.sx,y0=Math.max(0,P.y-P.sy),y1=P.y+P.sy;return [[x0,y0],[x1,y1]].map(([x,y])=>`<div class="pr" style="left:calc(${x}% - 5px);top:calc(${y}% - 5px);width:10px;height:10px;border-radius:2px;background:#17191D;border:1.5px solid ${c}"></div>`).join('')};
+const W=1600,H=900;
+// сцена: человек справа от точки, цель «ВЕДУ» — лаймовые скобки по углам (как в программе)
+const scene=`<rect x="0" y="540" width="140" height="360" fill="#b88445"/><rect x="140" y="380" width="370" height="520" fill="#5a3c26"/>
+<rect x="290" y="150" width="180" height="230" fill="#22bf86"/><rect x="510" y="540" width="390" height="360" fill="#4569bb"/>
+<ellipse cx="1030" cy="490" rx="52" ry="56" fill="#d9ae96"/><path d="M920 900V620q0-60 60-60h100q60 0 60 60v280z" fill="#c08d82"/>
+<g fill="none" stroke="#B7F34A" stroke-width="7" stroke-linecap="round"><path d="M895 470v-40h40"/><path d="M1125 430h40v40"/></g>
+<rect x="902" y="438" width="104" height="38" rx="6" fill="#B7F34A"/><text x="954" y="465" text-anchor="middle" font-family="Inter" font-weight="700" font-size="24" fill="#17191D">ВЕДУ</text>`;
+// зона: точка (800, 225), мягкая ±352 × ±288 (обрезана сверху), мёртвая ±80 × ±72
+function zone(st){
+ const cx=st.cx??800,cy=225,sx=352*(st.k??1),sy=200*(st.k??1),dx=80*(st.k??1),dy=60*(st.k??1);
+ const x0=cx-sx,x1=cx+sx,y0=cy-sy,y1=cy+sy,L=Math.min(150,sx*0.45),r=26;
+ const a=st.hover?0.95:0.6, w=st.hover?7:5.5;
+ let s=`<g fill="none" stroke="rgba(245,245,242,${a})" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M${x0} ${y0+L}V${y0+r}q0-${r} ${r}-${r}H${x0+L}"/>
+  <path d="M${x1-L} ${y1}H${x1-r}q${r} 0 ${r}-${r}V${y1-L}"/></g>
+  <rect x="${cx-dx}" y="${cy-dy}" width="${2*dx}" height="${2*dy}" rx="18" fill="none" stroke="rgba(245,245,242,${st.hover?0.5:0.28})" stroke-width="2.5"/>
+  <circle cx="${cx}" cy="${cy}" r="12" fill="#B7F34A"/>`;
+ if(st.hover){s+=`<rect x="${x0}" y="${y0}" width="${2*sx}" height="${2*sy}" rx="${r}" fill="rgba(245,245,242,.05)"/>`}
+ if(st.plate){const tw=st.plate.length*13.2+36;
+  s+=`<rect x="${x0+L+18}" y="${y0-22}" width="${tw}" height="44" rx="7" fill="rgba(23,25,29,.85)"/>
+  <text x="${x0+L+36}" y="${y0+8}" font-family="Inter" font-size="23" fill="#F5F5F2">${st.plate}</text>`}
+ return s}
 const V=[
- ["Сейчас","",
-  soft("border:1.5px dashed rgba(240,160,32,.85)")+dead("border:1.5px dashed rgba(183,243,74,.9)")+dot("#B7F34A",6),
-  `<div class="onhover">${handles('#F0A020')}<div class="hint" style="top:2%;bottom:auto;left:29%">Зона кадра · тяните · двойной клик — сброс</div></div>`,
-  "Две рамки разного цвета, обе пунктиром. Много линий, лаймовая спорит с «ВЕДУ»."],
- ["A","Видоискатель",
-  corners('rgba(245,245,242,.55)')+dead("background:rgba(245,245,242,.08);border-radius:3px")+cross('rgba(245,245,242,.9)'),
-  `<div class="onhover">${soft("border:1px solid rgba(245,245,242,.35)")}${handles('#F5F5F2')}<div class="hint">Тяните зону · за уголок — размер · двойной клик — сброс</div></div>`,
-  "Мягкая зона — только уголки, как в видоискателе камеры. Мёртвая — лёгкая подсветка без линий. Точка лица — тонкий крестик. Всё белое: лайм остаётся только у «ВЕДУ». При наведении — тонкая рамка и ручки."],
- ["B","Только крестик",
-  cross('rgba(245,245,242,.9)'),
-  `<div class="onhover">${corners('rgba(245,245,242,.55)')}${dead("background:rgba(245,245,242,.08);border-radius:3px")}${handles('#F5F5F2')}<div class="hint">Тяните зону · за уголок — размер · двойной клик — сброс</div></div>`,
-  "В обычной работе на видео только крестик «здесь будет лицо». Зоны появляются, когда наводите мышь, — чтобы двигать. Самая чистая картинка."],
- ["C","Затемнение по краям",
-  `<div class="pr" style="inset:0;background:rgba(0,0,0,.28);clip-path:polygon(0 0,100% 0,100% 100%,0 100%,0 0,${P.x-P.sx}% 0,${P.x-P.sx}% ${P.y+P.sy}%,${P.x+P.sx}% ${P.y+P.sy}%,${P.x+P.sx}% 0,${P.x-P.sx}% 0)"></div>`+cross('rgba(245,245,242,.9)'),
-  `<div class="onhover">${soft("border:1px solid rgba(245,245,242,.35)")}${dead("background:rgba(245,245,242,.08)")}${handles('#F5F5F2')}<div class="hint">Тяните зону · за уголок — размер · двойной клик — сброс</div></div>`,
-  "Вне мягкой зоны кадр чуть притемнён — видно, где камера «держит» человека, без линий. Минус: затемнение мешает оценивать картинку для эфира."],
+ ["1","Обычно",{} ,"Знак во весь размер зоны. Скобки полупрозрачные — видно картинку под ними; точка — лаймовая, как в логотипе."],
+ ["2","Навели мышь",{hover:true,plate:"Тяните зону · за скобку — размер · двойной клик — сброс"},"Скобки становятся ярче, зона чуть подсвечивается — понятно, что её можно взять. Подсказка — нашей плашкой поверх видео (графит 85 %, скругление 7)."],
+ ["3","Тянут",{hover:true,cx:640,plate:"Лицо: 40 % · 25 %"},"Зона едет за мышью, на плашке — где будет лицо. Камера плавно доезжает, слежение не выключается."],
 ];
-document.getElementById('g').innerHTML=V.map(([n,t,base,hov,txt])=>`<div class="card"><h2>${n==='Сейчас'?'':`<span class="ncall">${n}</span>`}${n==='Сейчас'?'Сейчас':t}</h2><div class="v">${scene}${base}${hov}</div><div class="note">${txt}</div></div>`).join('');
+document.getElementById('g').innerHTML=V.map(([n,t,st,txt])=>`<div class="card"><h2><span class="ncall">${n}</span>${t}</h2><div class="v"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">${scene}${zone(st)}</svg></div><div class="note">${txt}</div></div>`).join('');
 </script>
-<p class="sub" style="margin-top:18px"><b style="color:var(--white)">Мой выбор — A:</b> рамки видно всегда (оператор понимает, когда камера тронется), но они не спорят с картинкой и с «ВЕДУ». Если хочется совсем чисто — B.</p>
 </body></html>

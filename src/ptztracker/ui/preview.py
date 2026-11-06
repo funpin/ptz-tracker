@@ -51,7 +51,7 @@ class PreviewWidget(QWidget):
     click_guard: Callable[[], bool] | None = None  # False — клик не выбирает человека
     zone_scale_of: Callable[[], float] | None = None  # масштаб сохранённой зоны этой камеры (по умолчанию 1)
     DRAG_PX = 6  # меньше — это клик (выбор человека), больше — перенос зоны
-    HANDLE_PX = 9  # уголок мягкой зоны ловится в этом радиусе
+    HANDLE_PX = 12  # скобка-уголок мягкой зоны ловится в этом радиусе
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -294,44 +294,45 @@ class PreviewWidget(QWidget):
         p.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, text)
 
     def _paint_zones(self, p: QPainter) -> None:
+        """Зона слежения — знаком программы (макет zone-look.html): мягкая зона — две встречные скобки,
+        мёртвая — тонкий скруглённый контур, точка лица — лаймовая."""
         z = self._zone_rects()
         if z is None:
             return
         soft, dead, pt = z
-        for rect, color in ((soft, qcolor(C.LOST, 200)), (dead, qcolor(C.ON, 220))):
-            pen = QPen(color, 1.5)
-            pen.setStyle(Qt.DashLine)
-            p.setPen(pen)
-            p.setBrush(Qt.NoBrush)
-            p.drawRect(rect)
-        p.setBrush(qcolor(C.ON))
-        p.setPen(Qt.NoPen)
-        p.drawEllipse(pt, 3, 3)
-        if self._hover is None and self._drag is None:
-            return
-        # мышь над зоной: ручки в уголках и ярлык над рамкой (набросок drawer-and-frame.html)
+        live = self._hover is not None or self._drag is not None
+        p.save()
         p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QPen(qcolor(C.LOST), 1.5))
-        p.setBrush(qcolor(C.BG))
-        for c in (soft.topLeft(), soft.bottomRight()):
-            p.drawRoundedRect(QRectF(c.x() - 5, c.y() - 5, 10, 10), 2, 2)
-        if self._drag is not None:
-            a = self._follower.controller.composition.anchor
-            text = f"Лицо {round(a[0] * 100)} % · {round(a[1] * 100)} %"
-        else:
-            text = "Зона кадра · тяните · двойной клик — сброс"
-        f = QFont(FONT_FAMILY)
-        f.setPointSize(10)
-        p.setFont(f)
-        tw = p.fontMetrics().horizontalAdvance(text) + 12
-        th = p.fontMetrics().height() + 4
-        y = soft.top() - th if soft.top() - th >= 0 else soft.top() + 2
-        plate = QRectF(soft.left() + 8, y, tw, th)
+        if live:  # навели или тянут — зона чуть подсвечена: её можно взять
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(C.TEXT, 13))
+            p.drawRoundedRect(soft, 8, 8)
+        arm = max(10.0, min(60.0, min(soft.width(), soft.height()) * 0.22))
+        paint_brackets(p, soft, qcolor(C.TEXT, 240 if live else 150), 3, arm=arm)
+        p.setPen(QPen(qcolor(C.TEXT, 130 if live else 72), 1.5))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(dead, 6, 6)
         p.setPen(Qt.NoPen)
-        p.setBrush(qcolor(C.SURFACE, 230))
-        p.drawRoundedRect(plate, 4, 4)
-        p.setPen(qcolor(C.TEXT_DIM))
-        p.drawText(plate, Qt.AlignCenter, text)
+        p.setBrush(qcolor(C.ON))
+        p.drawEllipse(pt, 4.5, 4.5)
+        if live:
+            if self._drag is not None:
+                a = self._follower.controller.composition.anchor
+                text = f"Лицо: {round(a[0] * 100)} % · {round(a[1] * 100)} %"
+            else:
+                text = "Тяните зону · за скобку — размер · двойной клик — сброс"
+            f = QFont(FONT_FAMILY)
+            f.setPointSize(10)
+            p.setFont(f)
+            tw = p.fontMetrics().horizontalAdvance(text) + 16
+            th = p.fontMetrics().height() + 8
+            y = soft.top() - th / 2 if soft.top() - th / 2 >= 0 else soft.top() + 4
+            plate = QRectF(soft.left() + arm + 10, y, tw, th)
+            p.setBrush(qcolor(C.BG, 217))  # плашка поверх видео: графит 85 %, скругление 7 (BRANDBOOK §6)
+            p.drawRoundedRect(plate, 7, 7)
+            p.setPen(qcolor(C.TEXT))
+            p.drawText(plate, Qt.AlignCenter, text)
+        p.restore()
 
     def _paint_overlay(self, p: QPainter) -> None:
         self._paint_zones(p)
@@ -347,7 +348,7 @@ class PreviewWidget(QWidget):
             if is_target:
                 lost = r.target_state == "lost"
                 color = LOST_COLOR if lost else TARGET_COLOR
-                paint_brackets(p, rect, color, 3)
+                paint_brackets(p, rect, color, 3, corners=("tr", "bl"))
                 self._label(p, rect, "ЦЕЛЬ ПОТЕРЯНА" if lost else "ВЕДУ", color)
             else:
                 pen = QPen(OTHER_COLOR, 1)

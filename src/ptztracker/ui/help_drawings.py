@@ -324,16 +324,12 @@ class MouseDrawing(_Drawing):
         p.drawRoundedRect(QRectF(266, 100, 28, 130), 12, 12)
         lit = self.highlighted
         if lit == "m_target":
-            paint_brackets(p, QRectF(254, 92, 52, 146), qcolor(C.LIME), 3)
-        if lit == "m_zone":
-            pen = QPen(qcolor(C.LOST), 1.5, Qt.DashLine)
-            p.setPen(pen)
-            p.setBrush(Qt.NoBrush)
-            p.drawRect(QRectF(90, 74, 150, 80))
-            p.setPen(QPen(qcolor(C.LOST), 1.5))
-            p.setBrush(qcolor(C.BG))
-            for x, y in ((90, 74), (240, 154)):
-                p.drawRoundedRect(QRectF(x - 5, y - 5, 10, 10), 2, 2)
+            paint_brackets(p, QRectF(254, 92, 52, 146), qcolor(C.LIME), 3, corners=("tr", "bl"))
+        if lit == "m_zone":  # зона слежения — знаком: две скобки и лаймовая точка
+            paint_brackets(p, QRectF(90, 74, 150, 80), qcolor(C.TEXT), 3, arm=24)
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(C.LIME))
+            p.drawEllipse(QPointF(165, 114), 4.5, 4.5)
         if lit == "m_cell":
             p.setPen(QPen(qcolor(C.LIME), 2))
             p.setBrush(Qt.NoBrush)

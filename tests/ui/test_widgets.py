@@ -248,6 +248,17 @@ def test_brackets_only_at_corners():
     assert img.pixel(89, 14) != lime  # правого верхнего угла нет: две скобки, как в знаке
 
 
+def test_target_brackets_mirror_the_zone():
+    img = QImage(100, 100, QImage.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    paint_brackets(p, QRectF(10, 10, 80, 80), qcolor(C.LIME), 3, corners=("tr", "bl"))
+    p.end()
+    lime = qcolor(C.LIME).rgb()
+    assert img.pixel(86, 10) == lime and img.pixel(10, 86) == lime  # «ВЕДУ»: правый верхний и левый нижний
+    assert img.pixel(14, 10) != lime and img.pixel(89, 86) != lime  # углы знака — у зоны слежения
+
+
 def test_brand_mark_paints(qtbot):
     m = BrandMark(24)
     qtbot.addWidget(m)
