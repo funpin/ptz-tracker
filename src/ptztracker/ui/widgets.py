@@ -4,6 +4,7 @@ from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -851,4 +852,32 @@ class SilhouetteButton(QPushButton):
         p.setFont(f)
         p.setPen(qcolor(C.TEXT if on else C.TEXT_DIM))
         p.drawText(QRectF(0, self.H + 4, self.width(), 18), Qt.AlignHCenter | Qt.AlignTop, self.text())
+        p.end()
+
+
+class ToggleCheck(QCheckBox):
+    """Флажок-тумблер, как в меню ☰: дорожка 30×18 (лайм — включён) и подпись справа."""
+
+    TW, TH = 30.0, 18.0
+
+    def sizeHint(self) -> QSize:
+        fm = self.fontMetrics()
+        return QSize(int(self.TW) + 10 + fm.horizontalAdvance(self.text()), max(22, fm.height() + 4))
+
+    def hitButton(self, pos) -> bool:  # noqa: N802
+        return self.rect().contains(pos)
+
+    def paintEvent(self, _e):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        on = self.isChecked()
+        t = QRectF(0, (self.height() - self.TH) / 2, self.TW, self.TH)
+        p.setPen(Qt.NoPen)
+        p.setBrush(qcolor(C.LIME if on else C.RAISED_HI))
+        p.drawRoundedRect(t, self.TH / 2, self.TH / 2)
+        p.setBrush(qcolor(C.BG if on else C.GREY))
+        p.drawEllipse(QRectF(t.right() - 16 if on else t.left() + 2, t.top() + 2, 14, 14))
+        p.setPen(qcolor(C.TEXT if on else C.TEXT_DIM))
+        p.drawText(QRectF(self.TW + 10, 0, self.width() - self.TW - 10, self.height()),
+                   Qt.AlignLeft | Qt.AlignVCenter, self.text())
         p.end()

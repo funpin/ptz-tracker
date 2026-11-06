@@ -401,6 +401,7 @@ class MainWindow(QMainWindow):
         self.agent_window = QDialog(self)
         self.agent_window.setWindowTitle("Агент")
         self.agent_window.setModal(False)
+        self.agent_window.resize(560, 560)
         QVBoxLayout(self.agent_window).addWidget(self.agent_panel)
         self.agent_panel.attach(self.grid)
         self.agent_panel.anyAllowedChanged.connect(self.agent_badge.setVisible)  # хоть у одной камеры
@@ -780,6 +781,7 @@ class MainWindow(QMainWindow):
             else:
                 state = {"on": "on", "lost": "lost"}.get(self._current_view(c).kind, "off")
             cell.set_header(tally, state, c.cfg.kind == "sim", "standby" if s.power == "standby" else "on")
+            self.agent_panel.set_tally(i, tally)
             st = s.frames.stats()
             info = f"{st.width}×{st.height} · {st.fps:.0f}" if st.connected and st.width else ""
             r = s.analyzer.latest() if s.analyzer else None
