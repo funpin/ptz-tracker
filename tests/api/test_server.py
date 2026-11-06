@@ -471,11 +471,12 @@ def test_off_air_untick_on_other_camera_stops_only_that_agent_follow(qtbot, tmp_
     allow_cell(w, 1)
     c0, c1 = w.grid.cells[0], w.grid.cells[1]
     for c in (c0, c1):
+        c.session.follower.polling_paused = True  # без кадров анализа такт сам выключил бы слежение («анализ остановился»)
         c.session.follower.enabled = True
     w._api.backend._agent_followers[c0.gate] = c0.session.follower
     w._api.backend._agent_followers[c1.gate] = c1.session.follower
     c1.gate.set_off_air(False)
-    assert c0.session.follower.enabled and not c1.session.follower.enabled
+    assert c0.session.follower.enabled and not c1.session.follower.enabled, (c0.session.follower.last_reason, c1.session.follower.last_reason)
     w.close()
 
 

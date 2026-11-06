@@ -109,6 +109,7 @@ def test_none_closes_session_with_stop(qtbot, tmp_path):
 def test_tracking_refused_over_limit(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     qtbot.waitUntil(lambda: w.grid.cells[0].session.follower is not None, timeout=3000)
+    w.grid.cells[0].session.follower.polling_paused = True  # без кадров анализа такт сам выключил бы слежение
     w.grid.cells[0].session.follower.enabled = True  # слежение на клетке 1 включено
     w.select_slot(1)
     w._on_follow_requested(True)
