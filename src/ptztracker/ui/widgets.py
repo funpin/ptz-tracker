@@ -1,6 +1,6 @@
 """Общие компоненты интерфейса: клавиша-подсказка, плитка состояния, чип, рамка видео."""
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -678,6 +678,9 @@ class VideoFrame(QFrame):
         lay.setContentsMargins(b, b, b, b)
         lay.addWidget(inner)
         inner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._inner = inner
+        if hasattr(inner, "imageSizeChanged"):  # картинка с полями (режим «1 камера») — плашки к картинке
+            inner.imageSizeChanged.connect(self._place_tags)
         self.tracking_tag = self._make_tag()
         self.onair_tag = self._make_tag()
         self.tracking_tag.hide()
@@ -761,32 +764,45 @@ class VideoFrame(QFrame):
             t.raise_()
         self.tracking_tag.move(off, off)
         self.onair_tag.move(self.width() - self.onair_tag.width() - off, off)
+        a = self._picture_area()
         for w, corner in self._overlays:
             w.adjustSize()
             w.raise_()
             if corner == "fill":
                 w.setGeometry(self.rect().adjusted(off, off, -off, -off))
                 continue
+            left, top, right, bottom = a.left(), a.top(), a.right() + 1, a.bottom() + 1
             if corner == "center":
-                w.move(max(off, (self.width() - w.width()) // 2), max(off, (self.height() - w.height()) // 2))
+                w.move(max(left, left + (a.width() - w.width()) // 2), max(top, top + (a.height() - w.height()) // 2))
             elif corner == "left":  # слева по центру высоты: меню Panasonic камера рисует в середине кадра
-                w.move(off + SP[1], max(off, (self.height() - w.height()) // 2))
+                w.move(left + SP[1], max(top, top + (a.height() - w.height()) // 2))
             elif corner == "top-center":
-                w.move(max(off, (self.width() - w.width()) // 2), off + SP[1])
+                w.move(max(left, left + (a.width() - w.width()) // 2), top + SP[1])
             elif corner == "top-left":
                 below = self.tracking_tag.height() if self.tracking_tag.isVisibleTo(self) else 0
-                w.move(off + SP[1], off + below + SP[1])
+                w.move(left + SP[1], max(top, off + below) + SP[1])
             elif corner == "bottom-right":
-                x, y = self.width() - w.width() - off - SP[1], self.height() - w.height() - off - SP[1]
+                x, y = right - w.width() - SP[1], bottom - w.height() - SP[1]
                 # нижние плашки слева и справа не помещаются рядом (узкая клетка) — правая поднимается над левой
-                left = [o for o, c in self._overlays if c == "bottom-left" and o.isVisibleTo(self)]
-                for o in left:
+                lefts = [o for o, c in self._overlays if c == "bottom-left" and o.isVisibleTo(self)]
+                for o in lefts:
                     o.adjustSize()
-                    if off + SP[1] + o.width() + SP[1] > x:
-                        y = min(y, self.height() - o.height() - off - SP[1] - SP[0] - w.height())
+                    if left + SP[1] + o.width() + SP[1] > x:
+                        y = min(y, bottom - o.height() - SP[1] - SP[0] - w.height())
                 w.move(x, y)
             else:
-                w.move(off + SP[1], self.height() - w.height() - off - SP[1])
+                w.move(left + SP[1], bottom - w.height() - SP[1])
+
+    def _picture_area(self) -> QRect:
+        """Где на рамке сама картинка: без чёрных полей по бокам (видео 16:9 в широкой клетке)."""
+        off = self.BORDER
+        area = self.rect().adjusted(off, off, -off, -off)
+        rect_of = getattr(self._inner, "_image_rect", None)
+        r = rect_of() if rect_of else None
+        if r is None or r.width() < 40:
+            return area
+        tl = self._inner.mapTo(self, r.topLeft().toPoint())
+        return QRect(tl, r.size().toSize()).intersected(area)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)

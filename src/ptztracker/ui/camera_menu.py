@@ -121,7 +121,7 @@ class CameraMenu(QFrame):
         self.setFocusPolicy(Qt.NoFocus)
         self.setFixedWidth(WIDTH)
         self.setStyleSheet(
-            f"#cameraMenu {{ background: {_rgba(C.SURFACE, 0.94)}; border: 1px solid {C.LINE};"
+            f"#cameraMenu {{ background: {C.SURFACE}; border: 1px solid {C.LINE};"
             f" border-radius: {R_PANEL}px; }}"
         )
         lay = QVBoxLayout(self)

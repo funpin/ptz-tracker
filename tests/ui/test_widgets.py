@@ -323,3 +323,28 @@ def test_bottom_plates_do_not_overlap_in_narrow_frame(qtbot):
     f.resize(1200, 240)  # широко — снова рядом, на одной высоте
     qtbot.wait(20)
     assert left.geometry().bottom() == right.geometry().bottom()
+
+
+def test_plates_sit_on_picture_not_side_bars(qtbot):
+    """Ревью 2026-11-06: в режиме «1 камера» плашки висели на чёрных полях слева и справа от картинки."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtWidgets import QLabel, QWidget
+
+    from ptztracker.ui.widgets import VideoFrame
+
+    class Pic(QWidget):
+        def _image_rect(self):
+            return QRectF(100, 0, self.width() - 200, self.height())
+
+    inner = Pic()
+    f = VideoFrame(inner)
+    qtbot.addWidget(f)
+    tl, br = QLabel("Цель не выбрана"), QLabel("1280×720 · 25")
+    f.add_overlay(tl, "top-left")
+    f.add_overlay(br, "bottom-right")
+    f.resize(900, 400)
+    f.show()
+    f._place_tags()
+    left = inner.mapTo(f, inner.rect().topLeft()).x() + 100
+    assert tl.x() >= left
+    assert br.geometry().right() <= f.width() - f.BORDER - 100

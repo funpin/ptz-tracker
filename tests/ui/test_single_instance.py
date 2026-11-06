@@ -15,3 +15,13 @@ def test_second_copy_is_refused_and_first_hears_it(qtbot):
     again = claim(name)  # первая закрылась — можно снова
     assert again is not None
     again.close()
+
+
+def test_listen_failure_still_starts(qtbot, monkeypatch):
+    """Ревью 2026-11-06: не смогли занять имя — это не «уже запущена»: программа открывается."""
+    from PySide6.QtNetwork import QLocalServer
+
+    from ptztracker.ui import single_instance
+
+    monkeypatch.setattr(QLocalServer, "listen", lambda self, name: False)
+    assert single_instance.claim("ptztracker-test-listen-fail") is not None

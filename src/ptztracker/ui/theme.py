@@ -60,6 +60,7 @@ def _rgba(hex: str, alpha: float) -> str:
 
 # галочка выпадающего списка: свой рисунок вместо системного отсека (на Windows он выбивался из стиля)
 CHEVRON = (Path(__file__).resolve().parent / "icons" / "chevron-down.svg").as_posix()
+CHEVRON_UP = (Path(__file__).resolve().parent / "icons" / "chevron-up.svg").as_posix()
 
 
 def stylesheet() -> str:
@@ -118,6 +119,14 @@ QComboBox::drop-down {{ border: none; width: {SP[3]}px; subcontrol-origin: paddi
     subcontrol-position: right center; }}
 QComboBox::down-arrow {{ image: url({CHEVRON}); width: 10px; height: 10px; }}
 QComboBox::down-arrow:disabled {{ image: none; }}
+QSpinBox, QDoubleSpinBox {{ padding-right: {SP[3]}px; }}
+QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
+    subcontrol-origin: border; width: {SP[3]}px; border: none; background: transparent; }}
+QSpinBox::up-button, QDoubleSpinBox::up-button {{ subcontrol-position: top right; }}
+QSpinBox::down-button, QDoubleSpinBox::down-button {{ subcontrol-position: bottom right; }}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url({CHEVRON_UP}); width: 10px; height: 10px; }}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url({CHEVRON}); width: 10px; height: 10px; }}
+QSpinBox::up-arrow:disabled, QSpinBox::down-arrow:disabled {{ image: none; }}
 QComboBox QAbstractItemView {{ background: {C.RAISED}; border: 1px solid {C.LINE};
     selection-background-color: {C.RAISED_HI}; outline: 0; }}
 

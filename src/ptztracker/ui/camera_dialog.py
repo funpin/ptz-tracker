@@ -225,8 +225,7 @@ class CameraDialog(QDialog):
         self.test_button.setAutoDefault(False)
         self.test_result = QLabel("")
         self.test_result.setWordWrap(True)
-        self.show_pass = QPushButton("показать")
-        self.show_pass.setProperty("variant", "ghost")
+        self.show_pass = QPushButton("показать")  # обычная кнопка, как «Проверить связь»: ghost читался как подпись
         self.show_pass.setCheckable(True)
         self.show_pass.setAutoDefault(False)
         self.show_pass.toggled.connect(
@@ -405,6 +404,7 @@ class CameraDialog(QDialog):
             w.setVisible(not sim)
         for i in range(self._conn_form.rowCount()):
             self._conn_form.setRowVisible(i, not sim)
+        self._conn_form.setRowVisible(self.test_result, not sim and bool(self.test_result.text()))  # пустая — без зазора
         self._air_form.setRowVisible(self.atem_spin, not sim)
         self.more_button.setVisible(not sim)
         if sim:
@@ -427,6 +427,7 @@ class CameraDialog(QDialog):
     def _probe(self) -> None:
         self.test_result.setStyleSheet(f"color: {C.TEXT_DIM};")
         self.test_result.setText("Проверяю…")
+        self._conn_form.setRowVisible(self.test_result, True)
         QThreadPool.globalInstance().start(
             _ProbeTask(self.ip_edit.text(), self.user_edit.text() or None, self.pass_edit.text() or None, self._signals)
         )
@@ -436,6 +437,7 @@ class CameraDialog(QDialog):
         color = {"✔": C.LIME, "✖": C.FAULT}.get(msg[:1], C.LOST)
         self.test_result.setStyleSheet(f"color: {color};")
         self.test_result.setText(msg)
+        self._conn_form.setRowVisible(self.test_result, True)
 
     def result_config(self) -> CameraConfig:
         """Камера по полям диалога. Незатронутое (калибровка, поправка скорости, композиция, усилие, поток,

@@ -57,6 +57,7 @@ class PreviewWidget(QWidget):
     """Превью последнего кадра камеры с рамками людей; клик по человеку выбирает цель."""
 
     targetClicked = Signal(int)
+    imageSizeChanged = Signal()  # пришёл первый кадр или сменилось разрешение — плашки поверх видео к картинке
     # своя зона (control.zones): оператор тянет её мышью — точка лица (доли кадра) и масштаб зон
     zoneChanged = Signal(float, float, float)
     zoneCommitted = Signal()  # отпустил кнопку — можно сохранять
@@ -148,6 +149,10 @@ class PreviewWidget(QWidget):
         if key != self._an_seq:
             self._an_seq = key
             changed = True
+        size = None if self._image is None else (self._image.width(), self._image.height())
+        if size != getattr(self, "_shown_size", None):
+            self._shown_size = size
+            self.imageSizeChanged.emit()
         if changed:
             self.update()
 

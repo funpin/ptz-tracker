@@ -1112,6 +1112,8 @@ class MainWindow(QMainWindow):
         if other is not None and other != slot:  # до разборки клетки: отказ оставляет её как была
             raise ValueError(f"камера {cam.id} уже открыта в клетке {other + 1}")
         selected = slot == self.grid.selected
+        self._last_preset.pop(slot, None)  # пресеты и снимки — прежней камеры клетки, не новой
+        self._thumb_watch.pop(slot, None)
         if self.camera_menu.is_open and self._menu_slot() == slot:
             self.camera_menu.close_menu()  # до остановки сессии: ручной фокус получает ноль
         if selected:
@@ -1477,10 +1479,14 @@ class MainWindow(QMainWindow):
         self._capture_thumb_soon(slot, n)
 
     def _capture_thumb_soon(self, slot: int, n: int) -> None:
-        QTimer.singleShot(300, lambda: self._capture_thumb(slot, n))
-
-    def _capture_thumb(self, slot: int, n: int) -> None:
         c = self.grid.cells[slot]
+        cam_id = c.cfg.id if c is not None else None
+        QTimer.singleShot(300, lambda: self._capture_thumb(slot, n, cam_id))
+
+    def _capture_thumb(self, slot: int, n: int, cam_id: str | None = None) -> None:
+        c = self.grid.cells[slot]
+        if c is not None and cam_id is not None and c.cfg.id != cam_id:
+            return  # за 0,3 с камеру в клетке сменили — снимок не её
         frame = c.session.frames.latest() if c is not None else None
         if frame is None:
             return
@@ -2496,6 +2502,11 @@ class MainWindow(QMainWindow):
         return bool(m and m.is_open)
 
     def _on_menu_changed(self, _open: bool) -> None:
+        for i, c in enumerate(self.cells):  # меню закрывает плашки своей клетки, а не лежит поверх них
+            if i != self.mouse_slot:  # в режиме мыши цифрами потока распоряжается он
+                c.set_covered(_open and c.video_frame is self._menu_host)
+        if self.mouse_slot is None:
+            self.follow_panel.status_label.set_muted(_open and self._overlay_host is self._menu_host)
         if not _open and self._menu_pad is not None:
             self._menu_pad = None
             sel = self.selected_cell

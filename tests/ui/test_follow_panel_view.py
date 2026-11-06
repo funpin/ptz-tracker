@@ -51,3 +51,15 @@ def test_size_slider_has_marks(qtbot):
     p.resize(320, 200)
     p.show()
     assert len(p.size_slider.mark_xs()) == 3
+
+
+def test_calibration_note_is_a_link(qtbot):
+    """Ревью 2026-11-06: «⋯ →» в подсказке выглядело как потерянный текст — теперь ссылка «откалибровать»."""
+    from ptztracker.ui.follow_panel import FollowPanel
+
+    p = FollowPanel()
+    qtbot.addWidget(p)
+    p.set_calibrated(False)
+    assert "⋯" not in p.calib_label.text() and "откалибровать" in p.calib_label.text()
+    with qtbot.waitSignal(p.calibrateRequested, timeout=500):
+        p.calib_label.linkActivated.emit("calibrate")

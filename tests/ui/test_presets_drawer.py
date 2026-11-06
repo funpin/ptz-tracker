@@ -131,8 +131,20 @@ def test_recall_without_thumb_captures_when_camera_stops(qtbot, tmp_path):
     w.close()
 
 
+def test_new_camera_in_cell_does_not_inherit_preset_state(qtbot, tmp_path, monkeypatch):
+    """Ревью 2026-11-06: смена камеры в клетке — без подсветки и снимков прежней камеры."""
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    w = make(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: w.session.frames.latest() is not None, timeout=4000)
+    w.recall_preset(0, 5)
+    w.store_preset(0, 3)  # снимок — через 0,3 с
+    w.set_cell_camera(0, "sim3")
+    assert 0 not in w._last_preset and 0 not in w._thumb_watch
+    qtbot.wait(600)
+    assert 3 not in w.thumbs.load("sim3")
+    w.close()
 
-def test_no_scrollbar_wheel_scrolls(qtbot):
+
     from PySide6.QtCore import QPointF
     from PySide6.QtGui import QWheelEvent
 

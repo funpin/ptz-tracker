@@ -595,3 +595,17 @@ def test_long_menu_scrolls_and_shows_more_marks(qtbot):
     assert shown[-1] == "osd" and m._cursor == "osd"  # дошли до «Меню Panasonic»
     assert m.more_up.isVisibleTo(m) and not m.more_down.isVisibleTo(m)
     assert f"ещё {len(keys) - cm.MAX_ROWS}" in m.more_up.text()
+
+
+def test_open_menu_hides_plates_under_it(qtbot, tmp_path):
+    """Ревью 2026-11-06: меню просвечивало плашки «Цель не выбрана», подсказку и цифры потока."""
+    w, _b = make(qtbot, tmp_path)
+    cell = w.cells[w.grid.selected]
+    cell.set_info("1280×720 · 25")
+    w.camera_menu.open()
+    assert cell.target_bar.isHidden() and cell.info_label.isHidden()
+    assert w.follow_panel.status_label.muted
+    w.camera_menu.close_menu()
+    assert not cell.target_bar.isHidden() and not cell.info_label.isHidden()
+    assert not w.follow_panel.status_label.muted
+    w.close()

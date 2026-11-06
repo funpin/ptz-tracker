@@ -77,6 +77,7 @@ class CameraCell(QFrame):
         trow.addWidget(self.reset_target_btn)
         trow.addWidget(self.skeleton_check)
         self.video_frame.add_overlay(target_bar, "top-left")
+        self.target_bar = target_bar
         self.power_overlay = PowerOverlay()
         self.video_frame.add_overlay(self.power_overlay, "fill")
 
@@ -266,6 +267,12 @@ class CameraCell(QFrame):
             self.power_btn.setIcon(icon("power", C.LIME if power == "on" else C.TEXT_FAINT, 16))
             self.power_btn.setToolTip("Камера работает — перевести в режим ожидания…" if power == "on"
                                       else "Камера в режиме ожидания — включить")
+
+    def set_covered(self, on: bool) -> None:
+        """Поверх видео открыто меню быстрых настроек: плашки цели и потока прячутся, чтобы не просвечивать."""
+        self.target_bar.setVisible(not on)
+        self.info_muted = on
+        self.info_label.setVisible(bool(self.info_label.text()) and not on)
 
     def set_info(self, text: str) -> None:
         self.info_label.setText(text)

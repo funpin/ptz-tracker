@@ -143,7 +143,9 @@ class StripCard(QWidget):
                 p.drawRoundedRect(tile, 3, 3)
                 p.setPen(qcolor(fg))
                 p.drawText(tile, Qt.AlignCenter, str(row.slot + 1))
-                bar = QRectF(tile.right() + 5, y + lh / 2 - 2.5, r.width() - 68 - tile.right(), 5)
+                text = summary_clock_text(row)  # слово целиком («без анализа»), полоска — что осталось
+                tw = p.fontMetrics().horizontalAdvance(text)
+                bar = QRectF(tile.right() + 5, y + lh / 2 - 2.5, max(20.0, r.width() - tile.right() - tw - 20), 5)
                 p.setPen(Qt.NoPen)
                 p.setBrush(qcolor(C.RAISED))
                 p.drawRoundedRect(bar, 2, 2)
@@ -153,7 +155,7 @@ class StripCard(QWidget):
                 kind, sec = row.clock
                 p.setPen(qcolor({"air": C.PGM, "on": C.LIME, "lost": C.LOST}.get(kind, C.TEXT_FAINT)))
                 p.drawText(QRectF(bar.right() + 4, y, r.right() - bar.right() - 8, lh), Qt.AlignRight | Qt.AlignVCenter,
-                           summary_clock_text(row))
+                           text)
         elif it.service == "position":
             d = r.height() - 30
             for i, row in enumerate(rows):

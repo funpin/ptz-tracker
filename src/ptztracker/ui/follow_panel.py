@@ -103,6 +103,7 @@ class FollowPanel(QWidget):
         self._calibrated, self._note = True, None
         self.calib_label = QLabel("")
         self.calib_label.setWordWrap(True)
+        self.calib_label.linkActivated.connect(lambda _h: self.calibrateRequested.emit())  # «Откалибровать»
         self.calib_label.setStyleSheet(f"color: {C.LOST}; font-size: {FS_CAPTION}px;")
 
         lay = QVBoxLayout(self)
@@ -172,7 +173,8 @@ class FollowPanel(QWidget):
 
     def _show_calib_label(self) -> None:
         if not self._calibrated:
-            text = "Камера не откалибрована: ⋯ → Калибровка (2 мин)"
+            text = (f"Камера не откалибрована — <a href='calibrate' style='color: {C.LOST};'>"
+                    "откалибровать</a> (2 мин)")
             color = C.LOST  # без калибровки слежение хуже: предупреждение
         else:
             text = self._note or ""

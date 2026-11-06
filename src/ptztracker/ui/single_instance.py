@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import getpass
+import logging
 
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
+
+log = logging.getLogger(__name__)
 
 WAIT_MS = 300
 
@@ -33,4 +36,6 @@ def claim(name: str | None = None) -> QLocalServer | None:
         return None
     QLocalServer.removeServer(name)  # имя от упавшей копии (Unix-сокет остался) — освободить
     server = QLocalServer()
-    return server if server.listen(name) else None
+    if not server.listen(name):  # имя занять не вышло (права, сокет) — работаем без защиты, а не молча закрываемся
+        log.warning("Защита от второй копии не включилась: %s", server.errorString())
+    return server
