@@ -468,7 +468,7 @@ def test_refused_by_camera_says_full_auto(qtbot):
 def test_title_and_hint_fit(qtbot):
     m, _ = build(qtbot, FullSession())
     m.open()
-    assert m.title_label.text() == "Быстрые настройки" and "закрыть" in m.keys_label.text()
+    assert m.title_label.text() == "Быстрые настройки" and "закрыть" in m.keys_bar.text()
     m.nav(0, 1)  # баланс белого: самое длинное пояснение
     m.show()
     qtbot.wait(50)

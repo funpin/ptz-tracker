@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QBoxLayout, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ptztracker.camera import protocol as P
+from ptztracker.ui.hints import HintBar
 from ptztracker.ui.theme import FS_CAPTION, FS_TEXT, R_BUTTON, R_PANEL, SP, C, _rgba
 
 AUTOCLOSE_S = 10.0  # без нажатий меню закрывается само
@@ -139,7 +140,17 @@ class CameraMenu(QFrame):
         head.addWidget(self.title_label)
         head.addStretch(1)
         head.addWidget(self.keys_label)
+        # быстрые настройки: кнопки нарисованы, как в подсказках поверх видео (макет control-hints.html)
+        self.keys_bar = HintBar()
+        self.keys_bar.setStyleSheet("QFrame#hintBar { background: transparent; }")
+        self.keys_bar.layout().setContentsMargins(0, 0, 0, 0)
+        self.pad_hints = False  # меню открыли с геймпада — его кнопки
         lay.addLayout(head)
+        keys_row = QHBoxLayout()  # своей строкой под названием: в одну с ним кнопки не помещаются
+        keys_row.setContentsMargins(SP[2], 0, SP[2], 2)
+        keys_row.addWidget(self.keys_bar)
+        keys_row.addStretch(1)
+        lay.addLayout(keys_row)
         self.osd_mode = False
         self.on_air: Callable[[], bool] = lambda: False  # окно подставляет: камера меню сейчас в PGM
         self.on_power_on: Callable[[], None] = lambda: None  # окно подставляет: включить камеру меню
@@ -332,6 +343,10 @@ class CameraMenu(QFrame):
                   "pedestal": "Уровень чёрного", "detail": "Резкость", "osd": "Меню Panasonic на камере"}
         self.title_label.setText(TITLE_OSD if self.osd_mode else TITLE_QUICK)
         self.keys_label.setText(KEYS_OSD if self.osd_mode else KEYS_QUICK)
+        self.keys_label.setVisible(self.osd_mode)
+        self.keys_bar.set_hint("", [] if self.osd_mode else (
+            [("pad", "dpad_ud", "пункт"), ("pad", "dpad_lr", "значение"), ("pad", "circle", "закрыть")] if self.pad_hints
+            else [("key", "↑↓", "пункт"), ("key", "←→", "значение"), ("key", "M", "закрыть")]))  # Esc — стоп камер
         # меню Panasonic: узкая плашка слева — название и клавиши столбиком, без пояснения
         self.setFixedWidth(OSD_WIDTH if self.osd_mode else WIDTH)
         self._head.setDirection(QBoxLayout.TopToBottom if self.osd_mode else QBoxLayout.LeftToRight)

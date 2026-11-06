@@ -447,6 +447,7 @@ class MainWindow(QMainWindow):
             c.preview.zoneCommitted.connect(lambda s=i: self._save_zone(s))
             c.preview.zoneReset.connect(lambda s=i: self._on_zone(s, None, save=True))
             c.preview.zone_scale_of = lambda s=i: self._zone_scale(s)
+            c.preview.zoneHoverChanged.connect(lambda _h: self._update_hint_context())
             c.powerClicked.connect(self._cell_power)
             c.viewToggleRequested.connect(self._toggle_view_at)
         # пресеты — выдвижная панель под сеткой камер (кнопка «Пресеты» внизу или P); правая колонка не двигается
@@ -731,6 +732,7 @@ class MainWindow(QMainWindow):
     def _open_osd_menu(self) -> None:
         if not self.camera_menu.is_open:
             self.release_all_held()
+            self.camera_menu.pad_hints = False  # открыли клавишей или мышью — клавиши
             self.camera_menu.toggle()
 
     def _cell_power(self, slot: int) -> None:
@@ -1998,6 +2000,7 @@ class MainWindow(QMainWindow):
             self._remember_speed_scale(s, i)
             self._remember_camera_info(s)
             self._update_target_label(cell, s)
+        self._update_hint_context()
         self._update_cell_headers()
         for i, cell in enumerate(self.cells):
             cell.set_pads(self._cell_pads(i))  # заряд меняется сам по себе
@@ -2051,6 +2054,17 @@ class MainWindow(QMainWindow):
         else:
             self.analysis_pill.set(*analysis_pill(a.error, r.fps if r else None, r.infer_ms if r else None,
                                                   r.device if r else None))
+
+    def _update_hint_context(self) -> None:
+        """Подсказка внизу видео выбранной клетки: есть ли цель, ведёт ли камеру геймпад, мышь над зоной."""
+        sel = self.grid.selected
+        c = self.grid.cells[sel] if sel is not None else None
+        a = c.session.analyzer if c else None
+        r = a.latest() if a else None
+        tid = r.target_id if r is not None else None
+        pad = bool(sel is not None and self.pad_router.pads_on(sel))
+        hover = sel is not None and self.cells[sel].preview.zone_hovered()
+        self.follow_panel.set_hint_context(tid is not None, tid, pad, hover)
 
     @staticmethod
     def _update_target_label(cell: CameraCell, s: CameraSession | None) -> None:
@@ -2270,6 +2284,7 @@ class MainWindow(QMainWindow):
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     if not self.camera_menu.is_open:
                         self.release_all_held()
+                    self.camera_menu.pad_hints = False  # открыли клавишей или мышью — клавиши
                     self.camera_menu.toggle()
                 return True
             if self.camera_menu.is_open and key in _MENU_KEYS:
@@ -2776,6 +2791,7 @@ class MainWindow(QMainWindow):
         if c is None or self.camera_menu.is_open:
             return
         self._menu_pad = pad
+        self.camera_menu.pad_hints = True
         self._menu_to(self.cells[self.grid.cells.index(c)].video_frame)
         self.camera_menu.open()
 

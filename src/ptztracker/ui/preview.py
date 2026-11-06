@@ -47,6 +47,7 @@ class PreviewWidget(QWidget):
     zoneChanged = Signal(float, float, float)
     zoneCommitted = Signal()  # отпустил кнопку — можно сохранять
     zoneReset = Signal()  # двойной клик по зоне
+    zoneHoverChanged = Signal(bool)  # мышь над зоной — подсказка внизу видео показывает, как её тянуть
 
     click_guard: Callable[[], bool] | None = None  # False — клик не выбирает человека
     zone_scale_of: Callable[[], float] | None = None  # масштаб сохранённой зоны этой камеры (по умолчанию 1)
@@ -226,8 +227,11 @@ class PreviewWidget(QWidget):
                 return
         hover = self._zone_hit(pos)
         if hover != self._hover:
+            was = self._hover is not None
             self._hover = hover
             self.update()
+            if was != (hover is not None):
+                self.zoneHoverChanged.emit(hover is not None)
         if hover in ("nw", "se"):
             self.setCursor(Qt.SizeFDiagCursor)
         elif self._seen_track_at(pos):
@@ -254,10 +258,14 @@ class PreviewWidget(QWidget):
                 return
         super().mouseDoubleClickEvent(e)
 
+    def zone_hovered(self) -> bool:
+        return self._hover is not None or self._drag is not None
+
     def leaveEvent(self, e):  # noqa: N802
         if self._hover is not None:
             self._hover = None
             self.update()
+            self.zoneHoverChanged.emit(False)
         super().leaveEvent(e)
 
     def _select_at(self, pos: QPointF) -> None:
@@ -316,12 +324,9 @@ class PreviewWidget(QWidget):
         p.setPen(Qt.NoPen)
         p.setBrush(qcolor(C.ON))
         p.drawEllipse(pt, 4.5, 4.5)
-        if live:
-            if self._drag is not None:
-                a = self._follower.controller.composition.anchor
-                text = f"Лицо: {round(a[0] * 100)} % · {round(a[1] * 100)} %"
-            else:
-                text = "Тяните зону · за скобку — размер · двойной клик — сброс"
+        if self._drag is not None:  # как тянуть — в подсказке внизу видео; над зоной — где будет лицо
+            a = self._follower.controller.composition.anchor
+            text = f"Лицо: {round(a[0] * 100)} % · {round(a[1] * 100)} %"
             f = QFont(FONT_FAMILY)
             f.setPointSize(10)
             p.setFont(f)

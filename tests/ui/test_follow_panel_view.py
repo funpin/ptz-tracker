@@ -8,7 +8,9 @@ def test_set_view_updates_track_button_and_hint(qtbot):
     v = tracking_view(True, None, 1, "lost")
     p.set_view(v)
     assert p.follow_btn.text() == "ИЩУ ЦЕЛЬ"
-    assert p.status_label.text() == v.why
+    assert p.status_label.text().startswith("Цель потеряна — жду")  # коротко + кнопки, а не абзац
+    p.set_hint_context(has_target=True, target_id=1, pad=True, zone_hover=False)
+    assert ("pad", "touchpad", "стоп") in p.status_label.pairs
 
 
 def test_three_silhouettes_with_keys(qtbot):

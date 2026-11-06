@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ptztracker.control.composition import COMPOSITIONS
+from ptztracker.ui.hints import HintBar, hint_for
 from ptztracker.ui.state import TrackingView, tracking_view
 from ptztracker.ui.theme import FS_CAPTION, SP, C, qcolor
 from ptztracker.ui.widgets import SectionHeader, SilhouetteButton, TrackButton
@@ -62,13 +63,9 @@ class FollowPanel(QWidget):
         self.follow_btn = TrackButton()
         self.follow_btn.clicked.connect(lambda checked: self.followRequested.emit(checked))
         self.follow_btn.actionClicked.connect(self.calibrateRequested)
-        self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
-        self.status_label.setMaximumWidth(520)
-        self.status_label.setStyleSheet(
-            f"background: {C.SURFACE}; color: {C.TEXT}; border-radius: 6px; padding: 4px 8px;"
-            f" font-size: {FS_CAPTION}px;"
-        )
+        self.status_label = HintBar()  # подсказка управления поверх видео (окно ставит её внизу слева)
+        self._view: TrackingView | None = None
+        self._ctx = dict(has_target=False, target_id=None, pad=False, zone_hover=False)
 
         self.comp_group = QButtonGroup(self)
         self.comp_group.setExclusive(True)
@@ -122,9 +119,19 @@ class FollowPanel(QWidget):
     def set_view(self, v: TrackingView) -> None:
         self.follow_btn.set_view(v.kind, v.word, v.why, v.show_calibrate)
         self.follow_btn.setChecked(v.kind in ("on", "lost"))
-        self.status_label.setText(v.why)
-        self.status_label.setVisible(bool(v.why))
-        self.status_label.adjustSize()
+        self._view = v
+        self._show_hint_bar()
+
+    def set_hint_context(self, has_target: bool, target_id: int | None, pad: bool, zone_hover: bool) -> None:
+        """Что показать в подсказке: есть ли цель, управляет ли камерой геймпад, навели ли на зону."""
+        ctx = dict(has_target=has_target, target_id=target_id, pad=pad, zone_hover=zone_hover)
+        if ctx != self._ctx:
+            self._ctx = ctx
+            self._show_hint_bar()
+
+    def _show_hint_bar(self) -> None:
+        if self._view is not None:
+            self.status_label.set_hint(*hint_for(self._view.kind, self._view.why, **self._ctx))
 
     def set_state(self, enabled: bool, reason: str | None) -> None:
         self.set_view(tracking_view(enabled, reason, None, None))
@@ -132,8 +139,6 @@ class FollowPanel(QWidget):
     def show_hint(self, text: str) -> None:
         self.follow_btn.set_why(text)
         self.status_label.setText(text)
-        self.status_label.setVisible(bool(text))
-        self.status_label.adjustSize()
 
     def _pick(self, key: str) -> None:
         self._show_size(key)
