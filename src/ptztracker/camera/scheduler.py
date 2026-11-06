@@ -137,15 +137,26 @@ class CommandScheduler:
             log.debug("Режим наблюдения: команда %s не отправлена", cmd)
             return
         with self._cond:
-            if only_if_changed and self._st.last_sent.get(key) == cmd:
-                self._st.slots.pop(key, None)  # вернулись к уже отправленному — отменить ожидающую
+            prev = self._st.slots.get(key)
+            if prev is not None and prev.priority == Priority.EMERGENCY and prev.cmd == cmd:
+                return  # тот же аварийный стоп уже ждёт: не выкидывать и не понижать приоритет
+            if only_if_changed and self._last_known(key) == cmd:
+                self._st.slots.pop(key, None)  # вернулись к последнему известному коду — отменить ожидающую
                 return
             now = self._clock()
             expires = now + ttl if ttl is not None else None
-            prev = self._st.slots.get(key)
             self._st.slots[key] = _Item(cmd, priority, next(self._seq), key=key, expires=expires, submitted=now,
                                         waiting_since=prev.waiting_since if prev else now)
             self._cond.notify()
+
+    def _last_known(self, key: str) -> str | None:
+        """Код, в котором камера окажется после уже отправленного: команда в пути по этой ячейке, иначе последняя
+        подтверждённая. Зовётся под self._cond. Без команды в пути стоп, нажатый до ответа на движение, считался
+        бы повтором подтверждённого стопа и терялся."""
+        inflight = self._inflight
+        if inflight is not None and inflight.key == key:
+            return inflight.cmd
+        return self._st.last_sent.get(key)
 
     def add_sent_listener(self, fn: Callable[[dict], None]) -> None:
         """Слушать отправленные команды (вызывается из потока планировщика, вне его замка)."""

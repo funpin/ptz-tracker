@@ -1,4 +1,5 @@
 import threading
+from typing import Callable
 
 import pytest
 
@@ -23,9 +24,13 @@ class Recorder:
         self.ok: list[str] = []
         self.fail_next: list[Exception] = []
         self.fail_with = None  # cmd -> Exception | None: постоянная ошибка (камера в ожидании)
+        # cmd -> действие оператора, пока эта команда «в сети» (send зовётся вне замка планировщика)
+        self.during: dict[str, Callable[[], None]] = {}
 
     def __call__(self, cmd):
         self.calls.append(cmd)
+        if action := self.during.get(cmd):
+            action()
         if self.fail_next:
             raise self.fail_next.pop(0)
         if self.fail_with and (err := self.fail_with(cmd)):
@@ -68,6 +73,41 @@ def test_only_if_changed(env):
     clock.t += 1
     s.submit("pt", "#PTS6050", Priority.TRACKING)
     assert s.pump() is None
+
+
+@pytest.mark.parametrize("key, move, stop", [("pt", "#PTS6050", "#PTS5050"), ("zoom", "#Z70", "#Z50")])
+def test_release_while_move_in_flight_still_stops(env, key, move, stop):
+    s, clock, send = env
+    s.submit(key, stop, Priority.MANUAL); s.pump(); clock.t += 1          # камера стоит
+    send.during[move] = lambda: s.submit(key, stop, Priority.MANUAL)      # отпустил, пока движение в сети
+    s.submit(key, move, Priority.MANUAL); s.pump(); clock.t += 1
+    assert s.pump() == stop
+    assert send.ok[-1] == stop
+
+
+def test_esc_then_release_while_move_in_flight_keeps_emergency_stop(env):
+    s, clock, send = env
+    s.submit("pt", "#PTS5050", Priority.MANUAL); s.pump(); clock.t += 1
+
+    def esc_then_release():
+        s.emergency_stop()
+        s.submit("pt", "#PTS5050", Priority.MANUAL)
+
+    send.during["#PTS6050"] = esc_then_release
+    s.submit("pt", "#PTS6050", Priority.MANUAL); s.pump()
+    for _ in range(4):
+        clock.t += 0.131
+        s.pump()
+    assert send.ok.index("#PTS5050", 1) > send.ok.index("#PTS6050")
+    assert {"#Z50", "#F50"} <= set(send.ok)
+
+
+def test_same_cmd_as_inflight_not_resent(env):
+    s, clock, send = env
+    send.during["#PTS6050"] = lambda: s.submit("pt", "#PTS6050", Priority.TRACKING)
+    s.submit("pt", "#PTS6050", Priority.TRACKING); s.pump(); clock.t += 1
+    assert s.pump() is None
+    assert send.calls == ["#PTS6050"]
 
 
 def test_return_to_last_sent_cancels_pending(env):
