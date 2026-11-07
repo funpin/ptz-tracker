@@ -219,7 +219,7 @@ def test_image_state_read_and_set():
         s.set_gain(0x0B)
         s.set_wb(9)
         s.set_color_temp(0x20)
-        assert _wait(lambda: s.image.gain == 0x0B and s.image.wb == 9 and s.image.color_temp == 0x20, 1.5)
+        assert _wait(lambda: s.image.gain == 0x0B and s.image.wb == 9 and s.image.color_temp == 0x20, 5.0)
     finally:
         s.stop()
 
@@ -262,6 +262,7 @@ def test_iris_step_from_auto_switches_manual_without_jump():
         # шаг стоит в очереди за дюжиной стартовых запросов (по 130+ мс): на сервере сборки — больше 2 с
         assert _wait(lambda: any(c.startswith("#AXI") for c in s.sim.received), 5.0)
         assert s.sim.received.index("#D30") < next(i for i, c in enumerate(s.sim.received) if c.startswith("#AXI"))
+        assert _wait(lambda: s.sim.iris_pos != x)  # симулятор пишет команду в received раньше, чем её исполняет
         assert not s.sim.iris_auto
         assert 0 < s.sim.iris_pos - x <= 0x1000 // 16 + 1
     finally:
@@ -272,10 +273,13 @@ def test_iris_step_unknown_queries_then_applies():
     s = CameraSession(sim_cfg(), analysis=False)
     s.start()
     try:
+        # стартовые запросы (последние — QID и #GI) сначала: шаг ждёт ответа не дольше PENDING_STEP_TTL_S = 2 с,
+        # а на сервере сборки очередь старта сама длится ~2 с
+        assert _wait(lambda: s.model is not None and s.image.iris is not None, 5.0)
         s._image = type(s._image)()  # значение ещё неизвестно
         x = s.sim.iris_pos
         s.iris_step(-1)
-        assert _wait(lambda: s.sim.iris_pos < x, 5.0)  # за стартовыми запросами, как выше
+        assert _wait(lambda: s.sim.iris_pos < x)
     finally:
         s.stop()
 
@@ -303,17 +307,17 @@ def test_gain_step_clamps_and_goes_manual_from_auto():
     try:
         assert _wait(lambda: s.image.gain == 0x08)
         s.gain_step(+1)
-        assert _wait(lambda: s.image.gain == 0x0B and s.sim.gain_code == 0x0B, 1.5)
+        assert _wait(lambda: s.image.gain == 0x0B and s.sim.gain_code == 0x0B, 5.0)
         for _ in range(3):
             s.gain_step(-1)
-        assert _wait(lambda: s.sim.gain_code == 0x08, 1.5)
+        assert _wait(lambda: s.sim.gain_code == 0x08, 5.0)
         s.gain_step(-1)
         time.sleep(0.3)
         assert s.sim.gain_code == 0x08
         s.set_gain(P.GAIN_AUTO)
-        assert _wait(lambda: s.image.gain == P.GAIN_AUTO, 1.5)
+        assert _wait(lambda: s.image.gain == P.GAIN_AUTO, 5.0)
         s.gain_step(+1)
-        assert _wait(lambda: s.sim.gain_code == 0x08, 1.5)
+        assert _wait(lambda: s.sim.gain_code == 0x08, 5.0)
     finally:
         s.stop()
 
@@ -326,11 +330,11 @@ def test_iris_step_stale_cache_requeries():
     try:
         assert _wait(lambda: s.image.iris == s.sim.iris_pos)
         s.iris_step(+1)  # теперь кэш «ручной»
-        assert _wait(lambda: not s.sim.iris_auto, 1.5)
+        assert _wait(lambda: not s.sim.iris_auto, 5.0)
         time.sleep(1.2)  # кэш устарел
         s.sim.iris_pos = 0x900  # камера изменилась без нас
         assert s.iris_step(+1) is True
-        assert _wait(lambda: abs(s.sim.iris_pos - (0x900 + (P.LENS_MAX - P.LENS_MIN) // 16)) <= 1, 2.0)
+        assert _wait(lambda: abs(s.sim.iris_pos - (0x900 + (P.LENS_MAX - P.LENS_MIN) // 16)) <= 1, 5.0)
     finally:
         s.stop()
 
@@ -345,13 +349,13 @@ def test_gain_step_auto_without_manual_goes_to_0db(d):
     try:
         assert _wait(lambda: s.image.gain is not None)
         s.set_gain(P.GAIN_AUTO)
-        assert _wait(lambda: s.sim.gain_code == P.GAIN_AUTO and s.image.gain == P.GAIN_AUTO, 1.5)
+        assert _wait(lambda: s.sim.gain_code == P.GAIN_AUTO and s.image.gain == P.GAIN_AUTO, 5.0)
         s._last_manual_gain = None
         assert s.gain_step(d) is True
         assert s.image.gain == P.GAIN_CODES[0]
-        assert _wait(lambda: s.sim.gain_code == P.GAIN_CODES[0], 1.5)
+        assert _wait(lambda: s.sim.gain_code == P.GAIN_CODES[0], 5.0)
         assert s.gain_step(+1) is True  # дальше — обычные шаги
-        assert _wait(lambda: s.sim.gain_code == P.GAIN_CODES[1], 1.5)
+        assert _wait(lambda: s.sim.gain_code == P.GAIN_CODES[1], 5.0)
     finally:
         s.stop()
 
@@ -383,9 +387,9 @@ def test_gain_step_auto_with_manual_returns_to_it_without_step():
         s.set_gain(0x0B)
         assert _wait(lambda: s.sim.gain_code == 0x0B)
         s.set_gain(P.GAIN_AUTO)
-        assert _wait(lambda: s.image.gain == P.GAIN_AUTO, 1.5)
+        assert _wait(lambda: s.image.gain == P.GAIN_AUTO, 5.0)
         assert s.gain_step(+1) is True
-        assert _wait(lambda: s.sim.gain_code == 0x0B, 1.5)
+        assert _wait(lambda: s.sim.gain_code == 0x0B, 5.0)
     finally:
         s.stop()
 
@@ -414,12 +418,12 @@ def test_iris_step_after_camera_side_auto_resends_manual():
     try:
         assert _wait(lambda: s.image.iris is not None)
         s.iris_step(+1)
-        assert _wait(lambda: not s.sim.iris_auto, 1.5)
+        assert _wait(lambda: not s.sim.iris_auto, 5.0)
         time.sleep(1.2)
         s.sim.iris_auto = True  # оператор включил авто на пульте камеры
         n = len(s.sim.received)
         s.iris_step(+1)
-        assert _wait(lambda: any(c.startswith("#AXI") for c in list(s.sim.received)[n:]), 2.0)
+        assert _wait(lambda: any(c.startswith("#AXI") for c in list(s.sim.received)[n:]), 5.0)
         new = list(s.sim.received)[n:]
         assert "#D30" in new and new.index("#D30") < next(i for i, c in enumerate(new) if c.startswith("#AXI"))
     finally:
@@ -438,7 +442,7 @@ def test_gain_auto_without_manual_stale_cache_requeries():
         s._img_t["gain"] -= 5.0  # кэш устарел
         assert s.gain_step(+1) is True  # не отказ по старому AUTO: спрашиваем камеру
         assert "gain" in s._pending_steps or s.image.gain == 0x0B
-        assert _wait(lambda: s.sim.gain_code == 0x0B, 2.0)  # камера реально на 0x08 — не авто
+        assert _wait(lambda: s.sim.gain_code == 0x0B, 5.0)  # камера реально на 0x08 — не авто
     finally:
         s.stop()
 
@@ -503,7 +507,7 @@ def test_session_asks_model_on_connect_and_exposes_it():
     assert s.model is None and s.firmware is None
     s.start()
     try:
-        assert _wait(lambda: s.model == "AW-HE42", 2.0)
+        assert _wait(lambda: s.model == "AW-HE42", 5.0)
         assert s.sim.received.count("QID") == 1  # один раз, не на каждом пульсе
         time.sleep(2.2)
         assert s.sim.received.count("QID") == 1
@@ -521,7 +525,7 @@ def test_model_from_config_is_shown_before_the_answer_and_replaced_by_it():
     assert (s.model, s.firmware) == ("AW-HE40", "1.54")
     s.start()
     try:
-        assert _wait(lambda: s.model == "AW-HE42", 2.0)  # камера по тому же адресу другая — верим ответу
+        assert _wait(lambda: s.model == "AW-HE42", 5.0)  # камера по тому же адресу другая — верим ответу
         assert s.firmware == "1.54"
     finally:
         s.stop()
@@ -557,7 +561,7 @@ def test_changed_model_forgets_unsupported_features():
     s = CameraSession(cfg, analysis=False)
     s.start()
     try:
-        assert _wait(lambda: s.model == "AW-HE42", 2.0)
+        assert _wait(lambda: s.model == "AW-HE42", 5.0)
         assert s.camera_info().unsupported == ()
     finally:
         s.stop()
@@ -600,7 +604,7 @@ def test_er1_on_a_live_session_reaches_the_snapshot():
         orig = s.sim._dispatch
         s.sim._dispatch = lambda cmd: "ER1:QGU" if cmd == "QGU" else orig(cmd)
         s.refresh_image()
-        assert _wait(lambda: not s.supports("gain"), 2.0)
+        assert _wait(lambda: not s.supports("gain"), 5.0)
         assert s.supports("wb")
     finally:
         s.stop()
