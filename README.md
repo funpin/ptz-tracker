@@ -2,13 +2,13 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/logo-lockup-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="./docs/assets/logo-lockup-light.svg">
-    <img src="./docs/assets/logo-lockup-light.svg" alt="PTZ Tracker" width="360">
+    <img src="./docs/assets/logo-lockup-light.svg" alt="PTZ Tracker" width="240">
   </picture>
 </p>
 
 <p align="center">
   <strong>Камера сама ведёт докладчика. Оператор — в любой момент главный.</strong><br>
-  До четырёх PTZ-камер Panasonic AW-HE42 в одном окне: слежение, геймпады, пресеты, эфир от ATEM.
+  До четырёх PTZ-камер Panasonic в одном окне: слежение, геймпады, пресеты, эфир от ATEM.
 </p>
 
 <p align="center">
@@ -21,6 +21,7 @@
 <p align="center">
   <a href="https://github.com/funpin/ptz-tracker/releases/latest"><b>Скачать</b></a> ·
   <a href="docs/OPERATOR.md"><b>Руководство оператора</b></a> ·
+  <a href="#совместимость-с-камерами">Какие камеры</a> ·
   <a href="CHANGELOG.md">Что нового</a>
 </p>
 
@@ -95,6 +96,45 @@
 
 Подсказка внизу видео показывает кнопки того, чем вы управляете сейчас; полная справка с рисунками — F1.
 
+## Совместимость с камерами
+
+Программа говорит с камерой командами Panasonic по HTTP (`/cgi-bin/aw_ptz`, `/cgi-bin/aw_cam`) и берёт видео по MJPEG или RTSP. Panasonic описывает эти команды одним документом для целого ряда PTZ-камер, поэтому одни и те же команды понимают многие модели. На живых камерах проверены только две.
+
+| Модели | Статус | Что может не работать |
+|---|---|---|
+| **AW-HE42** | **Проверено** на живой камере: поворот, наклон, зум, слежение, калибровка, видео MJPEG и RTSP (2026-10) | Gain, баланс белого и питание на HE42 ещё не пробовали; по документации команды те же, что у HE40. |
+| **AW-HE40** | **Проверено** на живой камере (прошивка 1.54): калибровка, слежение, питание, gain, баланс белого (2026-10) | Быстрые скорости поворота на 2–17 % выше, чем у HE42, — калибровка это учитывает. |
+| AW-HE68, HE75 · AW-HE35, HE38, HE48, HE58, HE65, HE70 · AW-HN38, HN40, HN65, HN70 | **По документации.** У Panasonic это ряды HE42 и HE40 с теми же командами | Программа не знает этих моделей по имени и работает с ними как с HE42 (в журнале — пометка). Скорость поворота и объектив свои — **обязательно откалибруйте**. |
+| AW-UE70, UN70, UE65, UE63 · AW-UE150, UE155, UN145 · AW-HE130, HR140, HE120, HE60, HE50 | **По документации**: те же команды поворота, зума, фокуса, ириса, пресетов, питания | Калибровка обязательна. Коды gain, баланса белого, затвора и сцен могут отличаться — эти настройки могут не сработать. Адрес видео у этих моделей мы не сверяли. Если на камере включены логин и пароль — введите их в программе. |
+| AW-UE160, HE145, UE100, UE80, UE50, UE40, UE30, UE20, HE20, UE5, UE4, HE2 | **Не сверяли**: у этих моделей свои документы Panasonic | Основные команды, скорее всего, те же, но мы этого не проверяли. |
+
+**Как программа узнаёт камеру.** При подключении она спрашивает модель (`QID` → например `OID:AW-HE40`) и показывает её в окне «Камера». Неизвестную модель ведёт как HE42 и пишет об этом в журнал. Если камера отвечает «такой команды нет» на gain, баланс белого, цветовую температуру или питание, программа это запоминает и гасит эти кнопки. Логин и пароль камеры программа передаёт по Digest.
+
+Есть другая камера Panasonic? Запустите на ней «Диагностику камеры» и пришлите отчёт — добавим модель в таблицу.
+
+<details>
+<summary><b>Какие команды использует программа</b></summary>
+
+| Что | Команды |
+|---|---|
+| Поворот и наклон | `#PTS` (скорость 01–99, 50 — стоп), положение `#APC` |
+| Зум | `#Z` (скорость), `#AXZ` (555–FFF), положение `#GZ` |
+| Фокус | `#D1` (авто), `#F` (скорость), `#GF`, разовый автофокус `OSE:69:1` |
+| Ирис | `#D3` (авто), `#AXI`, `#GI` |
+| Пресеты | `#R` вызов, `#M` запись (00–99), скорость переезда `#UPVS` |
+| Питание и модель | `#O`, `#O0`, `#O1`, `QID` |
+| Изображение | gain `OGU`, баланс белого `OAW`, температура `OSD:B1`, затвор `OSH`, Synchro `OMS`, уровень чёрного `OTP`, резкость `ODT`, сцена `XSF`, меню камеры `DUS` |
+| Видео | MJPEG `http://<IP>/cgi-bin/mjpeg?resolution=640x360&framerate=25` (для слежения), RTSP `rtsp://<IP>/MediaInput/h264/stream_1` |
+
+Между командами — не меньше 130 мс, как требует Panasonic. Ответы с ошибкой: `ER1` — нет такой команды, `ER2` — камера занята или в режиме ожидания, `ER3` — значение вне диапазона.
+</details>
+
+**Источники.**
+- [Список документов Panasonic по протоколам PTZ-камер](https://eww.pass.panasonic.co.jp/pro-av/support/content/guide/EN/top.html) — отсюда видно, какие модели описаны общим документом, а какие отдельными.
+- [HD/4K Integrated Camera Interface Specifications, v1.12](https://eww.pass.panasonic.co.jp/pro-av/support/content/guide/DEF/HE50_120_IP/HDIntegratedCamera_InterfaceSpecifications-E.pdf) (Panasonic, 2020) — общий документ команд для HE42, HE40, UE70, UE150, HE130 и других. Там же перечислены ряды моделей с одинаковыми командами (стр. 6) и ответы `QID` (стр. 166).
+- [Supplement for Web Control](https://eww.pass.panasonic.co.jp/pro-av/support/content/guide/DEF/HE40_UE70_CGI/Supplement_for_Web_Control-UE70E.pdf) для HE42, HE68, UE70, HE40, HE65 — видео (MJPEG, RTSP) и веб-настройки.
+- Замеры живых HE42 и HE40 — §7 [спецификации проекта](docs/superpowers/specs/2026-10-19-ptz-tracker-design.md) и [`camera/he42.py`](src/ptztracker/camera/he42.py).
+
 ## Быстрый старт
 
 1. Скачайте сборку со страницы [последнего релиза](https://github.com/funpin/ptz-tracker/releases/latest): **Windows** — установщик или portable-zip, **macOS (Apple Silicon)** — DMG. При обновлении настройки сохраняются.
@@ -127,7 +167,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q -m "not slow" && .venv/bin/ruff check src tests
 ```
 
-`.exe` собирает `build.bat` или CI на Windows. Внешний вид — по [брендбуку](docs/BRANDBOOK.md); картинку окна пересобирает `python scripts/make_overview.py`, картинки руководства — `python scripts/shoot_guide.py`, анимации — `python scripts/make_animation.py`, схему геймпада — `python scripts/make_pad_map.py`. Ещё: [бэклог](docs/BACKLOG.md), [релизы](docs/RELEASING.md), [правила для агента](AGENTS.md), [участие](CONTRIBUTING.md).
+`.exe` собирает `build.bat` или CI на Windows. Внешний вид — по [брендбуку](docs/BRANDBOOK.md); картинку окна пересобирает `python scripts/make_overview.py`, картинки руководства — `python scripts/shoot_guide.py`, анимации — `python scripts/make_animation.py`, схему геймпада — `python scripts/make_pad_map.py`, логотип — `python scripts/make_logo.py` (нужен fonttools). Ещё: [бэклог](docs/BACKLOG.md), [релизы](docs/RELEASING.md), [правила для агента](AGENTS.md), [участие](CONTRIBUTING.md).
 </details>
 
 ## Лицензия
