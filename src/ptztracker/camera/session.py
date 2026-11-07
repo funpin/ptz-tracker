@@ -44,6 +44,7 @@ SIM_VIDEO_LATENCY_S = 0.15  # как MJPEG у живой камеры
 UNCALIBRATED_SAFETY = 1.3
 STEP_CACHE_S = 1.0  # столько живёт значение ириса/gain для шага без повторного опроса
 PENDING_STEP_TTL_S = 2.0  # шаг, ждущий ответа камеры, устаревает
+_BUSY_RE = re.compile(r"\ber2\b", re.IGNORECASE)  # ответ «занята»: планировщик повторит запрос
 PTZ_HISTORY_S = 30.0  # история положения для служебной клетки «графики»
 PTZ_POLL_MIN_S = 0.4  # опрос положения не чаще: свежий ответ (любого источника) — не спрашиваем
 
@@ -613,7 +614,8 @@ class CameraSession:
             if ok and cmd in (P.Q_PAN_TILT, P.Q_ZOOM):
                 self._on_ptz_reply(cmd, reply)
                 return
-            if not ok and cmd in (P.Q_IRIS, P.Q_GAIN):
+            if not ok and cmd in (P.Q_IRIS, P.Q_GAIN) and not _BUSY_RE.search(reply):
+                # er2 «занята» планировщик повторяет — шаг ждёт ответа повтора; на другой ошибке он не придёт
                 with self._step_lock:
                     self._pending_steps.pop("iris" if cmd == P.Q_IRIS else "gain", None)
             if cmd in (P.Q_POWER, P.POWER_ON, P.POWER_STANDBY):

@@ -122,6 +122,20 @@ def test_observe_only_session_sends_no_movement_or_stops():
 # --- питание и изображение ---
 
 
+def _long_step_ttl(monkeypatch) -> None:
+    """Шаг «по ответу камеры» не устаревает за время теста: на сервере сборки ответ стоит в очереди за стартовыми
+    и периодическими запросами дольше PENDING_STEP_TTL_S = 2 с (сам срок — docs/BACKLOG.md, «Сборка под Mac»)."""
+    from ptztracker.camera import session as session_mod
+
+    monkeypatch.setattr(session_mod, "PENDING_STEP_TTL_S", 10.0)
+
+
+def _started(s) -> bool:
+    """Стартовые запросы отвечены (последние — QID и #GI). Шаг, ждущий ответа камеры, живёт PENDING_STEP_TTL_S = 2 с
+    от нажатия, а на сервере сборки очередь старта сама длится ~2 с: шаг до её конца мог пропасть."""
+    return s.model is not None and s.image.iris is not None
+
+
 def _wait(pred, timeout=3.0):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -269,13 +283,12 @@ def test_iris_step_from_auto_switches_manual_without_jump():
         s.stop()
 
 
-def test_iris_step_unknown_queries_then_applies():
+def test_iris_step_unknown_queries_then_applies(monkeypatch):
+    _long_step_ttl(monkeypatch)
     s = CameraSession(sim_cfg(), analysis=False)
     s.start()
     try:
-        # стартовые запросы (последние — QID и #GI) сначала: шаг ждёт ответа не дольше PENDING_STEP_TTL_S = 2 с,
-        # а на сервере сборки очередь старта сама длится ~2 с
-        assert _wait(lambda: s.model is not None and s.image.iris is not None, 5.0)
+        assert _wait(lambda: _started(s), 5.0)
         s._image = type(s._image)()  # значение ещё неизвестно
         x = s.sim.iris_pos
         s.iris_step(-1)
@@ -360,7 +373,8 @@ def test_gain_step_auto_without_manual_goes_to_0db(d):
         s.stop()
 
 
-def test_gain_step_unknown_auto_without_manual_goes_to_0db_after_reply():
+def test_gain_step_unknown_auto_without_manual_goes_to_0db_after_reply(monkeypatch):
+    _long_step_ttl(monkeypatch)
     from ptztracker.camera import protocol as P
 
     s = CameraSession(sim_cfg(), analysis=False)
@@ -368,7 +382,7 @@ def test_gain_step_unknown_auto_without_manual_goes_to_0db_after_reply():
     try:
         assert _wait(lambda: s.image.gain is not None)
         s.set_gain(P.GAIN_AUTO)
-        assert _wait(lambda: s.sim.gain_code == P.GAIN_AUTO, 5.0)
+        assert _wait(lambda: s.sim.gain_code == P.GAIN_AUTO and _started(s), 5.0)
         s._image = type(s._image)()  # ещё не знаем, что на камере
         s._last_manual_gain = None
         assert s.gain_step(+1) is True
@@ -412,6 +426,31 @@ def test_pending_step_dropped_on_failed_query_standby_and_timeout():
     s.stop()
 
 
+def test_pending_step_survives_busy_reply_and_applies_on_retry(monkeypatch):
+    """er2 «занята» планировщик повторяет — шаг ждёт повтора, а не теряется (на сервере сборки так пропадал ирис)."""
+    _long_step_ttl(monkeypatch)
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: _started(s), 5.0)
+        orig, busy = s.sim._dispatch, []
+
+        def once_busy(cmd):
+            if cmd == "#GI" and not busy:
+                busy.append(cmd)
+                return "eR2:GI"
+            return orig(cmd)
+
+        s.sim._dispatch = once_busy
+        s._image = type(s._image)()  # значение ещё неизвестно
+        x = s.sim.iris_pos
+        s.iris_step(-1)
+        assert _wait(lambda: s.sim.iris_pos < x, 5.0)
+        assert busy == ["#GI"]
+    finally:
+        s.stop()
+
+
 def test_iris_step_after_camera_side_auto_resends_manual():
     s = CameraSession(sim_cfg(), analysis=False)
     s.start()
@@ -430,13 +469,14 @@ def test_iris_step_after_camera_side_auto_resends_manual():
         s.stop()
 
 
-def test_gain_auto_without_manual_stale_cache_requeries():
+def test_gain_auto_without_manual_stale_cache_requeries(monkeypatch):
+    _long_step_ttl(monkeypatch)
     from ptztracker.camera import protocol as P
 
     s = CameraSession(sim_cfg(), analysis=False)
     s.start()
     try:
-        assert _wait(lambda: s.image.gain == 0x08)
+        assert _wait(lambda: s.image.gain == 0x08 and _started(s), 5.0)
         s._last_manual_gain = None
         s._upd(gain=P.GAIN_AUTO)
         s._img_t["gain"] -= 5.0  # кэш устарел
