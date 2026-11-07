@@ -1,0 +1,37 @@
+name: Diag macOS 15
+on:
+  push:
+    branches: ["diag/macos15"]
+permissions:
+  contents: read
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2]
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ".[dev,build]"
+      - name: first try (no retry, for the count)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q -m "not slow" -rf || true
+      - name: as in release (retry failed once)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q -m "not slow" -rf --lf --lfnf=none || python -m pytest -q -m "not slow" -rf --lf
+      - run: pyinstaller packaging/ptztracker.spec --noconfirm
+      - name: Smoke test
+        run: |
+          "dist/PTZ Tracker.app/Contents/MacOS/PTZTracker" --version
+          QT_QPA_PLATFORM=offscreen "dist/PTZ Tracker.app/Contents/MacOS/PTZTracker" --lab record --ip sim --seconds 3 --out "$RUNNER_TEMP/lab"
+      - name: DMG
+        run: packaging/macos/make_dmg.sh 1.2.2
