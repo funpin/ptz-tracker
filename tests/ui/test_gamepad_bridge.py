@@ -480,11 +480,11 @@ def test_no_pygame_window_works(qtbot, tmp_path):
     assert not w.pad.available and not w.pad.connected
     sim = w.session.sim
     qtbot.keyPress(w, Qt.Key_Right)
-    qtbot.wait(400)
+    # стрелки по умолчанию — через кривую чувствительности (~1,3°/с); первая команда может получить er2,
+    # пока идут запросы запуска, и уйдёт повтором — держим клавишу до движения, а не фиксированное время
+    qtbot.waitUntil(lambda: sim.pan_deg > 0.2, timeout=5000)
     qtbot.keyRelease(w, Qt.Key_Right)
-    qtbot.wait(300)
-    assert sim.pan_deg > 0.2  # стрелки по умолчанию — через кривую чувствительности (~1,3°/с)
-    assert pts(sim)[-1] == "#PTS5050"
+    qtbot.waitUntil(lambda: pts(sim)[-1] == "#PTS5050", timeout=2000)
     w._sync_pad()
     w.emergency_stop()
     w.close()
