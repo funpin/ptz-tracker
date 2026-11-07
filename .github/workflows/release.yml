@@ -64,7 +64,7 @@ jobs:
 
   macos:
     needs: check
-    runs-on: macos-14 # Apple Silicon (arm64)
+    runs-on: macos-15 # Apple Silicon (arm64); macos-14 GitHub убрал (2026-11-06: «configuration is not supported»)
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

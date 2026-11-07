@@ -185,11 +185,10 @@ def test_opening_presets_grows_window_not_cameras(qtbot, tmp_path, monkeypatch):
     h0, cell0 = w.height(), w.grid_host.height()
     w.presets_btn.click()
     qtbot.waitUntil(lambda: w.height() > h0 + 50, timeout=2000)
-    qtbot.wait(100)
-    assert abs(w.grid_host.height() - cell0) <= 4
+    # раскладка доезжает за несколько витков событий; на медленном сервере сборки — дольше 100 мс
+    qtbot.waitUntil(lambda: abs(w.grid_host.height() - cell0) <= 4, timeout=2000)
     w.presets_drawer.chips[1].click()  # вторая строка
-    qtbot.wait(100)
-    assert abs(w.grid_host.height() - cell0) <= 4
+    qtbot.waitUntil(lambda: abs(w.grid_host.height() - cell0) <= 4, timeout=2000)
     w.presets_btn.click()
     qtbot.waitUntil(lambda: abs(w.height() - h0) <= 2, timeout=2000)
     w.close()

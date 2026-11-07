@@ -86,7 +86,8 @@ def test_cancel_button_enabled_whole_run_and_saves_nothing(qtbot):
     qtbot.waitUntil(lambda: "прервана" in d.result_label.text(), timeout=3000)
     assert saved == []
     assert "не сохран" in d.result_label.text()
-    assert d.close_button.isEnabled() and not d.cancel_button.isEnabled()
+    qtbot.waitUntil(d.close_button.isEnabled, timeout=3000)  # кнопки — по сигналу конца прогона, следом за текстом
+    assert not d.cancel_button.isEnabled()
 
 
 def test_closing_window_cancels_and_closes_when_runner_ends(qtbot):

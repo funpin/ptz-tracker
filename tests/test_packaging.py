@@ -58,7 +58,7 @@ def test_version_has_changelog_section_and_release_workflow():
 
     assert f"## [{__version__}]" in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     wf = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-    assert "windows-2022" in wf and "macos-14" in wf and "gh release create" in wf
+    assert "windows-2022" in wf and "runs-on: macos-15" in wf and "gh release create" in wf
 
 
 def test_mac_bundle_is_a_regular_app():
