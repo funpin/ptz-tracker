@@ -2,13 +2,13 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/logo-lockup-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="./docs/assets/logo-lockup-light.svg">
-    <img src="./docs/assets/logo-lockup-light.svg" alt="PTZ Tracker" width="360">
+    <img src="./docs/assets/logo-lockup-light.svg" alt="PTZ Tracker" width="240">
   </picture>
 </p>
 
 <p align="center">
   <strong>Камера сама ведёт докладчика. Оператор — в любой момент главный.</strong><br>
-  До четырёх PTZ-камер Panasonic AW-HE42 в одном окне: слежение, геймпады, пресеты, эфир от ATEM.
+  До четырёх PTZ-камер Panasonic в одном окне: слежение, геймпады, пресеты, эфир от ATEM.
 </p>
 
 <p align="center">
@@ -21,6 +21,7 @@
 <p align="center">
   <a href="https://github.com/funpin/ptz-tracker/releases/latest"><b>Скачать</b></a> ·
   <a href="docs/OPERATOR.md"><b>Руководство оператора</b></a> ·
+  <a href="docs/CAMERAS.md">Какие камеры</a> ·
   <a href="CHANGELOG.md">Что нового</a>
 </p>
 
@@ -95,6 +96,16 @@
 
 Подсказка внизу видео показывает кнопки того, чем вы управляете сейчас; полная справка с рисунками — F1.
 
+## Совместимость с камерами
+
+| Камеры | Статус |
+|---|---|
+| **AW-HE42, AW-HE40** | Проверено на живых камерах |
+| AW-HE68, HE75, HE38, HE48, HE58, HE65, HE70, HN-серия · AW-UE70, UE150, HE130 и другие из общего документа Panasonic | Должны работать по документации; калибровка обязательна |
+| AW-UE160, HE145, UE100, UE80/50/40, UE20, UE4, HE2 | Не сверяли |
+
+Полная таблица — что может не работать у каждой модели, какие команды использует программа и ссылки на документы Panasonic — в [docs/CAMERAS.md](docs/CAMERAS.md).
+
 ## Быстрый старт
 
 1. Скачайте сборку со страницы [последнего релиза](https://github.com/funpin/ptz-tracker/releases/latest): **Windows** — установщик или portable-zip, **macOS (Apple Silicon)** — DMG. При обновлении настройки сохраняются.
@@ -127,7 +138,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q -m "not slow" && .venv/bin/ruff check src tests
 ```
 
-`.exe` собирает `build.bat` или CI на Windows. Внешний вид — по [брендбуку](docs/BRANDBOOK.md); картинку окна пересобирает `python scripts/make_overview.py`, картинки руководства — `python scripts/shoot_guide.py`, анимации — `python scripts/make_animation.py`, схему геймпада — `python scripts/make_pad_map.py`. Ещё: [бэклог](docs/BACKLOG.md), [релизы](docs/RELEASING.md), [правила для агента](AGENTS.md), [участие](CONTRIBUTING.md).
+`.exe` собирает `build.bat` или CI на Windows. Внешний вид — по [брендбуку](docs/BRANDBOOK.md); картинку окна пересобирает `python scripts/make_overview.py`, картинки руководства — `python scripts/shoot_guide.py`, анимации — `python scripts/make_animation.py`, схему геймпада — `python scripts/make_pad_map.py`, логотип — `python scripts/make_logo.py` (нужен fonttools). Ещё: [бэклог](docs/BACKLOG.md), [релизы](docs/RELEASING.md), [правила для агента](AGENTS.md), [участие](CONTRIBUTING.md).
 </details>
 
 ## Лицензия
