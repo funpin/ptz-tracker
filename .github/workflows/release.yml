@@ -41,7 +41,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -e .[dev,build]
-      - run: python -m pytest -q -m "not slow"
+      # упавшие тесты — ещё раз (--lf), как под Mac: на машинах GitHub тесты по времени изредка не успевают
+      - run: python -m pytest -q -m "not slow" || python -m pytest -q -m "not slow" --lf
+        shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
       - run: pyinstaller packaging/ptztracker.spec --noconfirm

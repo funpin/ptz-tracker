@@ -14,5 +14,13 @@ trap 'rm -rf "$STAGE"' EXIT
 ditto "$APP" "$STAGE/PTZ Tracker.app"
 ln -s /Applications "$STAGE/Applications"
 rm -f "$OUT"
-hdiutil create -volname "PTZ Tracker ${VERSION}" -srcfolder "$STAGE" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$OUT" >/dev/null
-echo "$OUT"
+# hdiutil на машинах GitHub иногда отвечает «Resource busy» (образ держат службы macOS) — повторить через паузу
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -volname "PTZ Tracker ${VERSION}" -srcfolder "$STAGE" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$OUT" >/dev/null; then
+    echo "$OUT"
+    exit 0
+  fi
+  echo "hdiutil не создал образ (попытка $attempt из 5), повтор через 10 с" >&2
+  sleep 10
+done
+exit 1
