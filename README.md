@@ -24,10 +24,12 @@
   <a href="CHANGELOG.md">Что нового</a>
 </p>
 
-<p align="center"><img src="./docs/assets/overview.png" alt="Окно PTZ Tracker: две камеры, сводка, положение камер, пресеты" width="100%"></p>
+<p align="center"><img src="./docs/assets/overview.gif" alt="PTZ Tracker в работе: клик по докладчику, слежение, вид «1 камера» с наездом до пояса" width="100%"></p>
 
 <details>
-<summary><b>Что где в окне</b> — номера на картинке</summary>
+<summary><b>Что где в окне</b> — картинка с номерами</summary>
+
+<img src="./docs/assets/overview.png" alt="Окно PTZ Tracker с номерами элементов" width="100%">
 
 1. **TRACK** — слежение выбранной камеры (Пробел); квадратики — все камеры с анализом.
 2. **Журнал** — F9 сохраняет последние минуты работы для разбора.
@@ -63,7 +65,7 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="./docs/assets/guide/camera-tracking.png" alt="Слежение: камера ведёт докладчика"><br><sub><b>Слежение</b> — лаймовые уголки на цели, зону кадра тянут мышью</sub></td>
+    <td width="50%"><img src="./docs/assets/guide/tracking.gif" alt="Слежение: клик по человеку, Пробел — камера ведёт докладчика"><br><sub><b>Слежение</b> — лаймовые уголки на цели, зону кадра тянут мышью</sub></td>
     <td width="50%"><img src="./docs/assets/guide/quick-menu.png" alt="Быстрые настройки поверх видео"><br><sub><b>Быстрые настройки</b> (M) — фокус, баланс, ирис, затвор; в эфир не попадают</sub></td>
   </tr>
   <tr>
@@ -123,7 +125,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q -m "not slow" && .venv/bin/ruff check src tests
 ```
 
-`.exe` собирает `build.bat` или CI на Windows. Внешний вид — по [брендбуку](docs/BRANDBOOK.md); картинку окна пересобирает `python scripts/make_overview.py`, картинки руководства — `python scripts/shoot_guide.py`. Ещё: [бэклог](docs/BACKLOG.md), [релизы](docs/RELEASING.md), [правила для агента](AGENTS.md), [участие](CONTRIBUTING.md).
+`.exe` собирает `build.bat` или CI на Windows. Внешний вид — по [брендбуку](docs/BRANDBOOK.md); картинку окна пересобирает `python scripts/make_overview.py`, картинки руководства — `python scripts/shoot_guide.py`, анимации — `python scripts/make_animation.py`. Ещё: [бэклог](docs/BACKLOG.md), [релизы](docs/RELEASING.md), [правила для агента](AGENTS.md), [участие](CONTRIBUTING.md).
 </details>
 
 ## Лицензия
