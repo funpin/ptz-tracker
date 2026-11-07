@@ -22,6 +22,8 @@ def test_build_bat():
 def test_ci_workflow():
     text = (ROOT / ".github" / "workflows" / "windows-build.yml").read_text(encoding="utf-8")
     assert "jobs:" in text and "windows-2022" in text and "pyinstaller" in text
+    # быстрые тесты на машине Mac, как в Release: о ней узнаём до тега выпуска
+    assert "runs-on: macos-15" in text and "--lf" in text
 
 
 def operator_guide() -> str:

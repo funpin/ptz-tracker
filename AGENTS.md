@@ -25,7 +25,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python 3.12–3.1
 .venv/bin/python -m ptztracker --sim  # окно с двумя виртуальными камерами (sim1, sim2)
 ```
 
-`.exe` собирается только на Windows: `build.bat` или CI `.github/workflows/windows-build.yml`. На Mac `pyinstaller packaging/ptztracker.spec` годится лишь для проверки spec. Первый запуск свежей сборки длится 15–30 с — это не зависание.
+`.exe` собирается только на Windows: `build.bat` или CI `.github/workflows/windows-build.yml` (там же быстрые тесты на macOS 15). На Mac `pyinstaller packaging/ptztracker.spec` годится лишь для проверки spec. Первый запуск свежей сборки длится 15–30 с — это не зависание.
 
 ## Живая камера: как агенту с ней работать (Mac, шаг А)
 
