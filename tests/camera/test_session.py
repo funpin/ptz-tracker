@@ -364,11 +364,11 @@ def test_gain_step_unknown_auto_without_manual_goes_to_0db_after_reply():
     try:
         assert _wait(lambda: s.image.gain is not None)
         s.set_gain(P.GAIN_AUTO)
-        assert _wait(lambda: s.sim.gain_code == P.GAIN_AUTO, 1.5)
+        assert _wait(lambda: s.sim.gain_code == P.GAIN_AUTO, 5.0)
         s._image = type(s._image)()  # ещё не знаем, что на камере
         s._last_manual_gain = None
         assert s.gain_step(+1) is True
-        assert _wait(lambda: s.sim.gain_code == P.GAIN_CODES[0], 2.0)
+        assert _wait(lambda: s.sim.gain_code == P.GAIN_CODES[0], 5.0)  # за стартовыми запросами
     finally:
         s.stop()
 

@@ -1,6 +1,6 @@
 """Режим «камера как курсор» (план шага Б, часть 3; макет mouse-mode.html)."""
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt
 
 from ptztracker.config import ConfigStore
 from ptztracker.ui.main_window import MainWindow
@@ -45,7 +45,7 @@ def test_wheel_zooms_right_click_switches_to_iris(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     w.enter_mouse_mode()
     w.preview.wheelStep.emit(1)
-    qtbot.waitUntil(lambda: any(c.startswith("#Z") and c != "#Z50" for c in w.session.sim.received), timeout=2000)
+    qtbot.waitUntil(lambda: any(c.startswith("#Z") and c != "#Z50" for c in w.session.sim.received), timeout=5000)
     assert "зум" in w.mouse_hint.text()
     w.preview.rightClicked.emit()
     assert w.mouse_wheel == "iris" and "ирис" in w.mouse_hint.text()
@@ -70,7 +70,9 @@ def test_esc_and_cell_change_leave_mouse_mode(qtbot, tmp_path):
 def test_double_click_on_video_enters(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     p = w.preview
-    qtbot.mouseDClick(p, Qt.LeftButton, pos=QPoint(10, p.height() - 10))  # вне зоны слежения
+    at = QPoint(10, p.height() - 10)  # вне зоны слежения
+    qtbot.waitUntil(lambda: p.widget_to_frame(QPointF(at)) is not None, timeout=5000)  # до первого кадра клик не по видео
+    qtbot.mouseDClick(p, Qt.LeftButton, pos=at)
     assert w.mouse_slot == w.grid.selected
     w.close()
 

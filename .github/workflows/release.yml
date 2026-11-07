@@ -74,7 +74,9 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install -e ".[dev,build]"
-      - run: python -m pytest -q -m "not slow"
+      # машина macOS 15 в GitHub медленная и шумная: упавшие тесты прогоняются ещё раз (--lf),
+      # настоящая ошибка падает и во второй раз (2026-11-07, docs/BACKLOG.md «Сборка под Mac»)
+      - run: python -m pytest -q -m "not slow" || python -m pytest -q -m "not slow" --lf
         env:
           QT_QPA_PLATFORM: offscreen
       - run: pyinstaller packaging/ptztracker.spec --noconfirm

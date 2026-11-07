@@ -42,8 +42,7 @@ def test_overlay_hidden_when_power_unknown(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     orig = w.session.sim._dispatch
     w.session.sim._dispatch = lambda cmd: "ER1:O" if cmd == "#O" else orig(cmd)
-    qtbot.wait(2600)
-    assert w.session.power == "unknown"
+    qtbot.waitUntil(lambda: w.session.power == "unknown", timeout=8000)  # пульс раз в 2 с, за стартовыми запросами
     assert not w.power_overlay.isVisible()
     w.close()
 
