@@ -78,6 +78,8 @@
 
 ## Управление
 
+<p align="center"><img src="./docs/assets/gamepad.png" alt="Геймпад DualSense: что делает каждая кнопка" width="100%"></p>
+
 | | Клавиатура и мышь | Геймпад |
 |---|---|---|
 | Поворот и наклон | стрелки / WASD, Shift — быстрее | левый стик |
@@ -125,7 +127,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q -m "not slow" && .venv/bin/ruff check src tests
 ```
 
-`.exe` собирает `build.bat` или CI на Windows. Внешний вид — по [брендбуку](docs/BRANDBOOK.md); картинку окна пересобирает `python scripts/make_overview.py`, картинки руководства — `python scripts/shoot_guide.py`, анимации — `python scripts/make_animation.py`. Ещё: [бэклог](docs/BACKLOG.md), [релизы](docs/RELEASING.md), [правила для агента](AGENTS.md), [участие](CONTRIBUTING.md).
+`.exe` собирает `build.bat` или CI на Windows. Внешний вид — по [брендбуку](docs/BRANDBOOK.md); картинку окна пересобирает `python scripts/make_overview.py`, картинки руководства — `python scripts/shoot_guide.py`, анимации — `python scripts/make_animation.py`, схему геймпада — `python scripts/make_pad_map.py`. Ещё: [бэклог](docs/BACKLOG.md), [релизы](docs/RELEASING.md), [правила для агента](AGENTS.md), [участие](CONTRIBUTING.md).
 </details>
 
 ## Лицензия
