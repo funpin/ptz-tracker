@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import socketserver
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,12 +16,21 @@ log = logging.getLogger(__name__)
 PHYSICS_HZ = 100
 
 
+class _Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def server_bind(self) -> None:
+        # HTTPServer спрашивает у системы имя хоста (getfqdn); на macOS 15 в CI это 35 с на запуск
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = str(self.server_address[0]), int(self.server_address[1])
+
+
 class SimHttpServer:
     def __init__(self, sim: SimPtz, host: str = "127.0.0.1", port: int = 0):
         self.sim = sim
         self._host = host
         self._port = port
-        self._httpd: ThreadingHTTPServer | None = None
+        self._httpd: _Server | None = None
         self._threads: list[threading.Thread] = []
         self._running = threading.Event()
 
@@ -50,8 +60,7 @@ class SimHttpServer:
             def log_message(self, fmt, *args):
                 log.debug("sim http: " + fmt, *args)
 
-        self._httpd = ThreadingHTTPServer((self._host, self._port), Handler)
-        self._httpd.daemon_threads = True
+        self._httpd = _Server((self._host, self._port), Handler)
         self._running.set()
         self._threads = [
             threading.Thread(target=self._httpd.serve_forever, name="sim-http", daemon=True),

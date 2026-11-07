@@ -259,7 +259,8 @@ def test_iris_step_from_auto_switches_manual_without_jump():
         x = s.sim.iris_pos
         assert s.sim.iris_auto
         s.iris_step(+1)
-        assert _wait(lambda: any(c.startswith("#AXI") for c in s.sim.received), 1.5)
+        # шаг стоит в очереди за дюжиной стартовых запросов (по 130+ мс): на сервере сборки — больше 2 с
+        assert _wait(lambda: any(c.startswith("#AXI") for c in s.sim.received), 5.0)
         assert s.sim.received.index("#D30") < next(i for i, c in enumerate(s.sim.received) if c.startswith("#AXI"))
         assert not s.sim.iris_auto
         assert 0 < s.sim.iris_pos - x <= 0x1000 // 16 + 1
@@ -274,7 +275,7 @@ def test_iris_step_unknown_queries_then_applies():
         s._image = type(s._image)()  # значение ещё неизвестно
         x = s.sim.iris_pos
         s.iris_step(-1)
-        assert _wait(lambda: s.sim.iris_pos < x, 2.0)
+        assert _wait(lambda: s.sim.iris_pos < x, 5.0)  # за стартовыми запросами, как выше
     finally:
         s.stop()
 
@@ -609,7 +610,7 @@ def test_recording_meta_has_live_model():
     s = CameraSession(sim_cfg(), analysis=False)
     s.start()
     try:
-        assert _wait(lambda: s.model is not None, 2.0)
+        assert _wait(lambda: s.model is not None, 5.0)  # QID — в конце стартовых запросов
         assert s.recording_meta()["camera_model"] == "AW-HE42"
     finally:
         s.stop()

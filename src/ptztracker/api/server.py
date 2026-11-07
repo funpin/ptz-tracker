@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import os
+import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Protocol
@@ -125,6 +126,11 @@ class _Server(ThreadingHTTPServer):
         self.backend = backend
         self.token = token.encode()
         super().__init__((HOST, port), _Handler)
+
+    def server_bind(self) -> None:
+        # HTTPServer спрашивает у системы имя хоста (getfqdn); без обратного DNS это до 35 с на запуск
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = str(self.server_address[0]), int(self.server_address[1])
 
 
 class _Handler(BaseHTTPRequestHandler):

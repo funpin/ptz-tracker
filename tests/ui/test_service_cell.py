@@ -197,9 +197,9 @@ def test_top_row_fits_frame_when_bottom_is_service(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     for size in ((1640, 850), (1920, 1001)):
         w.resize(*size)
-        qtbot.wait(300)
         top = w.cells[0]
-        assert abs(_picture_h(top) - _picture_w(top) * 9 / 16) <= 2, size
+        # раскладка доезжает за несколько витков событий; на медленном сервере сборки — дольше 300 мс
+        qtbot.waitUntil(lambda c=top: abs(_picture_h(c) - _picture_w(c) * 9 / 16) <= 2, timeout=3000)
         assert w.cells[2].height() > top.height() * 0.6, size  # «Положение камер» остаётся читаемым
     w.close()
 

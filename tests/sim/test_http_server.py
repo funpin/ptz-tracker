@@ -38,3 +38,19 @@ def test_unknown_path_404():
         assert r.status_code == 404
     finally:
         srv.stop()
+
+
+def test_start_does_not_ask_host_name(monkeypatch):
+    # http.server спрашивает у системы имя хоста; на macOS 15 в CI это 35 с на каждый запуск симулятора
+    import socket
+
+    def slow_lookup(*a):
+        raise AssertionError("getfqdn при старте сервера")
+
+    monkeypatch.setattr(socket, "getfqdn", slow_lookup)
+    srv = SimHttpServer(SimPtz())
+    srv.start()
+    try:
+        assert CameraClient(srv.url_host).send("#O") == "p1"
+    finally:
+        srv.stop()

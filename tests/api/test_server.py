@@ -508,3 +508,17 @@ def test_menu_opened_from_pad_blocks_agent_on_pad_camera_only(qtbot, tmp_path):
     assert code == 200
     w.camera_menu.close_menu()
     w.close()
+
+
+def test_start_does_not_ask_host_name(monkeypatch):
+    # http.server спрашивает у системы имя хоста; без обратного DNS это до 35 с — окно ждало бы API
+    def slow_lookup(*a):
+        raise AssertionError("getfqdn при старте сервера")
+
+    monkeypatch.setattr(socket, "getfqdn", slow_lookup)
+    srv = ApiServer(FakeBackend(), "tok-123", 0)
+    srv.start()
+    try:
+        assert call(srv.port, "/status", token="tok-123")[0] == 200
+    finally:
+        srv.stop()
