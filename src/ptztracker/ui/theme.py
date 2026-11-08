@@ -24,6 +24,7 @@ class C:
     REMOTE = TEXT  # пульт
     FAULT = "#EF4444"  # раскачка, стоп
     PGM = "#E8202A"  # Tally: эфир (сплошной)
+    REC = "#FF3B30"  # запись видео: точка; у эфира — сплошная плитка и рамка
     PVW = "#2FB65E"  # Tally: превью (только контуром — не путать с лаймом)
     OK = TEXT  # значки верхней панели: «всё в порядке»
 
@@ -42,6 +43,7 @@ def load_fonts() -> str:
         _fonts_loaded = True
     return FONT_FAMILY
 FS_CAPTION, FS_TEXT, FS_BUTTON, FS_STATE = 12, 13, 15, 24  # px
+REC_BLINK_S = 0.6  # мигание точки записи
 H_BUTTON, H_CHOICE, H_STOP, H_STATE = 34, 40, 42, 118  # px
 SP = (4, 8, 12, 16, 24)
 R_BUTTON, R_PANEL, R_TAG = 8, 10, 5

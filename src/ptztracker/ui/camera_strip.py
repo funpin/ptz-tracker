@@ -11,7 +11,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QHBoxLayout, QWidget
 
-from ptztracker.ui.theme import FS_CAPTION, R_TAG, SP, C, qcolor
+from ptztracker.ui.theme import FS_CAPTION, R_TAG, REC_BLINK_S, SP, C, qcolor
 
 STRIP_H = 64  # высота полоски; карточка камеры — 16:9 по высоте
 CARD_W = round(STRIP_H * 16 / 9)
@@ -27,6 +27,7 @@ class StripItem:
     image: QImage | None
     service: str | None = None  # плитка служебного вида из свободной клетки: summary | position | graphs
     rows: list = field(default_factory=list)  # ServiceRow — для мини-вида
+    recording: bool = False  # идёт запись видео: мигающая точка в углу снимка
 
 
 def summary_clock_text(row) -> str:
@@ -57,6 +58,10 @@ class StripCard(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip(f"{item.name} — показать крупно" if item.service
                         else f"Камера {item.slot + 1}: {item.name} — сделать большой")
+
+    @staticmethod
+    def rec_dot_center(width: int) -> tuple[int, int]:
+        return width - 12, 13
 
     def mousePressEvent(self, e):  # noqa: N802
         if e.button() == Qt.LeftButton:
@@ -98,6 +103,10 @@ class StripCard(QWidget):
         p.setFont(f)
         p.setPen(qcolor(fg))
         p.drawText(tile, Qt.AlignCenter, str(it.slot + 1))
+        if it.recording and int(time.monotonic() / REC_BLINK_S) % 2 == 0:
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(C.REC))
+            p.drawEllipse(QPointF(*self.rec_dot_center(self.width())), 4, 4)
         # имя — внизу на тёмной подложке
         f.setBold(False)
         p.setFont(f)

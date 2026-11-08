@@ -39,3 +39,23 @@ def test_graphs_tile_draws_lines(qtbot):
                and abs(img.pixelColor(x, y).red() - lime.red()) < 20
                and abs(img.pixelColor(x, y).blue() - lime.blue()) < 30)
     assert hits > 20  # лаймовые линии графика есть
+
+
+def test_recording_camera_has_dot(qtbot, monkeypatch):
+    from PySide6.QtGui import QImage
+
+    from ptztracker.ui import camera_strip as cs
+    from ptztracker.ui.camera_strip import StripCard, StripItem
+    from ptztracker.ui.theme import C
+
+    monkeypatch.setattr(cs.time, "monotonic", lambda: 0.0)
+    img = QImage(128, 72, QImage.Format_RGB888)
+    img.fill(0)
+    off = StripCard(StripItem(0, "Сцена", None, img))
+    on = StripCard(StripItem(0, "Сцена", None, img, recording=True))
+    for card in (off, on):
+        qtbot.addWidget(card)
+        card.resize(128, 72)
+    x, y = on.rec_dot_center(on.width())
+    assert on.grab().toImage().pixelColor(x, y).name().upper() == C.REC
+    assert off.grab().toImage().pixelColor(x, y).name().upper() != C.REC

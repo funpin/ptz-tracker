@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time
+from functools import partial
 from pathlib import Path
 from typing import Callable
 
@@ -135,6 +136,7 @@ from ptztracker.ui.widgets import (
 )
 from ptztracker.updates import CHECK_INTERVAL_S, RELEASE_PAGE, UpdateChecker, UpdateInfo, is_newer
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
+from ptztracker.videorec.controller import VideoController
 
 log = logging.getLogger(__name__)
 
@@ -157,6 +159,7 @@ _HOTKEYS = [
     ("Пробел", "слежение"), ("1–9", "пресет выбранной камеры; Shift + цифра — записать (спросит)"),
     ("W A S D", "поворот, пока держите (как стрелки); с Shift — быстрее"), ("← → ↑ ↓", "поворот; с Shift — быстрее"),
     ("+ −", "зум"), ("Z X C", "кадр: пояс, рост, общий"), ("Esc", "стоп"),
+    ("R", "запись видео выбранной камеры: начать / остановить"),
     ("F9", "сохранить момент"), ("M", "быстрые настройки (меню поверх видео)"), ("P", "панель пресетов"),
     ("G", "4 камеры ↔ 1 камера крупно"),
     ("Tab", "управление мышью: ведёте — едет, колесо — зум (ПКМ — ирис), ЛКМ — взять человека; Tab — выйти"),
@@ -234,6 +237,8 @@ class MainWindow(QMainWindow):
         self._sim_cams = sim_cameras() if use_sim else []
         self.grid = CameraGrid(self._make_session)
         self.cells: list[CameraCell] = [CameraCell(i) for i in range(GRID_SLOTS)]
+        for i, cell in enumerate(self.cells):
+            cell.preview.rec_clicked.connect(partial(self.toggle_video, i))
         self.grid.selected = 0
         # окно владеет (Qt-родитель — окно, иначе их связи держали бы окно в памяти и после закрытия),
         # клетки только показывают
@@ -658,6 +663,8 @@ class MainWindow(QMainWindow):
         self._unsupported_shown: tuple = ()
         self.system_load = SystemLoad()
         self.system_load.start()
+        self.video = VideoController(self.cfg, self._video_sessions)
+        self.video.disk.start()
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._update_status)
         self._status_timer.start(500)
@@ -984,7 +991,8 @@ class MainWindow(QMainWindow):
                 continue
             fr = c.session.frames.latest()
             img = self._strip_image(fr) if fr is not None else None
-            items.append(StripItem(i, c.cfg.name, self._tally_per[i][1], img))
+            items.append(StripItem(i, c.cfg.name, self._tally_per[i][1], img,
+                                   recording=c.session.video_state().active))
         rows = self._service["summary"]._rows
         for kind in KINDS:  # служебные виды из свободных клеток — плитками после камер
             slot = self._service_slot.get(kind)
@@ -2069,8 +2077,29 @@ class MainWindow(QMainWindow):
             "Выключите Full Auto: быстрые настройки (M) → Меню Panasonic на камере → Scene.",
             int(REFUSED_SHOW_S * 1000) + 1000)
 
+    def _video_sessions(self) -> list[tuple[int, CameraSession]]:
+        return [(i, c.session) for i, c in enumerate(self.grid.cells) if c is not None]
+
+    def toggle_video(self, slot: int) -> None:
+        c = self.grid.cells[slot]
+        if c is None:
+            return
+        refusal = self.video.toggle(c.session)
+        if refusal:
+            self.statusBar().showMessage(refusal, 8000)
+        self._refresh_video()
+
+    def _refresh_video(self) -> None:
+        for i, cell in enumerate(self.cells):
+            c = self.grid.cells[i]
+            cell.preview.set_rec(c.session.video_state() if c else None)
+        _summary, messages = self.video.tick()
+        for m in messages:
+            self.statusBar().showMessage(m, 8000)
+
     def _update_status(self) -> None:
         self.load_meter.set_snapshot(self.system_load.snapshot())
+        self._refresh_video()
         self._warn_refused()
         self._poll_update_check()
         self._refresh_manual_speed()
@@ -2387,6 +2416,10 @@ class MainWindow(QMainWindow):
             if key == Qt.Key_P:
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
                     self.presets_btn.toggle()
+                return True
+            if key == Qt.Key_R:  # запись видео: не ручное действие, флажки и слежение не трогает
+                if et == QEvent.KeyPress and not event.isAutoRepeat() and self.grid.selected is not None:
+                    self.toggle_video(self.grid.selected)
                 return True
             if key == Qt.Key_G:
                 if et == QEvent.KeyPress and not event.isAutoRepeat():
@@ -3168,6 +3201,7 @@ class MainWindow(QMainWindow):
 
     def _prepare_close(self) -> None:
         self.system_load.stop()
+        self.video.disk.stop()
         if self._api:
             self._api.stop()
             self._api = None

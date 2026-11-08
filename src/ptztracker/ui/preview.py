@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import time
 from typing import Callable
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ptztracker.control.zones import Zone
 from ptztracker.ui.state import no_video_text
-from ptztracker.ui.theme import FONT_FAMILY, C, qcolor
+from ptztracker.ui.theme import FONT_FAMILY, FS_CAPTION, R_TAG, REC_BLINK_S, SP, C, qcolor
 from ptztracker.ui.widgets import paint_brackets
 from ptztracker.video.frames import FrameSource
+from ptztracker.videorec.controller import format_clock
+from ptztracker.videorec.recorder import RecState
 from ptztracker.vision.types import (
     KP_L_ANKLE,
     KP_L_HIP,
@@ -53,6 +56,9 @@ SKELETON = [
 KP_MIN_CONF = 0.3
 
 
+REC_MARGIN, REC_H, REC_PAD_X, REC_DOT = 10, 24, 8, 8
+
+
 class PreviewWidget(QWidget):
     """Превью последнего кадра камеры с рамками людей; клик по человеку выбирает цель."""
 
@@ -68,6 +74,7 @@ class PreviewWidget(QWidget):
     wheelStep = Signal(int)  # +1 — колесо от себя
     leftClicked = Signal()
     rightClicked = Signal()
+    rec_clicked = Signal()  # кнопка или плашка записи в углу видео
     doubleClicked = Signal()  # двойной клик по видео вне зоны — войти в режим мыши
 
     click_guard: Callable[[], bool] | None = None  # False — клик не выбирает человека
@@ -93,6 +100,9 @@ class PreviewWidget(QWidget):
         self._hover: str | None = None
         self.mouse_mode = False
         self._mouse_pt: QPointF | None = None
+        self._rec: RecState | None = None  # None — камеры нет, кнопки записи нет
+        self._rec_mouse: QPointF | None = None
+        self._rec_key = None  # что нарисовано: перерисовать, когда сменилось
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(33)
@@ -153,8 +163,78 @@ class PreviewWidget(QWidget):
         if size != getattr(self, "_shown_size", None):
             self._shown_size = size
             self.imageSizeChanged.emit()
-        if changed:
+        if changed or self._rec_view_changed():
             self.update()
+
+    # --- запись видео ---------------------------------------------------
+
+    def set_rec(self, state: RecState | None) -> None:
+        self._rec = state
+        if self._rec_view_changed():
+            self.update()
+
+    def _rec_view_changed(self) -> bool:
+        key = (self.rec_text() if self._rec is not None else None, self._rec_blink())
+        changed, self._rec_key = key != self._rec_key, key
+        return changed
+
+    @staticmethod
+    def _rec_blink() -> bool:
+        return int(time.monotonic() / REC_BLINK_S) % 2 == 0
+
+    def _rec_visible(self) -> bool:
+        if self._rec is None:
+            return False
+        return self._rec.active or (self._rec_mouse is not None and not self.mouse_mode)
+
+    def _rec_font(self) -> QFont:
+        f = QFont(FONT_FAMILY)
+        f.setPixelSize(FS_CAPTION)
+        f.setBold(True)
+        return f
+
+    def _rec_plate(self, text: str) -> QRectF:
+        w = QFontMetricsF(self._rec_font()).horizontalAdvance(text) + REC_PAD_X * 2 + REC_DOT + SP[0]
+        area = self._image_rect() or QRectF(self.rect())
+        return QRectF(area.right() - w - REC_MARGIN, area.top() + REC_MARGIN, w, REC_H)
+
+    def rec_rect(self) -> QRectF | None:
+        return self._rec_plate(self.rec_text()) if self._rec_visible() else None
+
+    def rec_text(self) -> str:
+        s = self._rec
+        if s is None or not s.active:
+            return "Запись · R"
+        if self._rec_hovered(s):
+            return "■ Стоп"
+        return f"REC {format_clock(s.elapsed_s)}" if s.signal else "REC · нет сигнала"
+
+    def _rec_hovered(self, s: RecState) -> bool:
+        if self._rec_mouse is None or self.mouse_mode or not s.active:
+            return False
+        stop_w = self._rec_plate(f"REC {format_clock(s.elapsed_s)}")  # место плашки не зависит от наведения
+        return stop_w.contains(self._rec_mouse)
+
+    def _rec_hit(self, pos: QPointF) -> bool:
+        r = None if self.mouse_mode else self.rec_rect()
+        return r is not None and r.contains(pos)
+
+    def _paint_rec(self, p: QPainter) -> None:
+        r = self.rec_rect()
+        if r is None:
+            return
+        text = self.rec_text()
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(qcolor(C.BG, 214))
+        p.drawRoundedRect(r, R_TAG + 1, R_TAG + 1)
+        stopping = text == "■ Стоп"
+        if not stopping and (self._rec_blink() or not self._rec.active):
+            p.setBrush(qcolor(C.REC))
+            p.drawEllipse(QPointF(r.left() + REC_PAD_X + REC_DOT / 2, r.center().y()), REC_DOT / 2, REC_DOT / 2)
+        p.setFont(self._rec_font())
+        p.setPen(qcolor(C.REC if stopping else C.TEXT))
+        p.drawText(r.adjusted(REC_PAD_X + REC_DOT + SP[0], 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, text)
 
     # --- геометрия ------------------------------------------------------
 
@@ -250,6 +330,9 @@ class PreviewWidget(QWidget):
             return
         if e.button() != Qt.LeftButton:
             return
+        if self._rec_hit(e.position()):
+            self.rec_clicked.emit()
+            return
         if self.click_guard is not None and not self.click_guard():
             return
         pos = e.position()
@@ -265,6 +348,9 @@ class PreviewWidget(QWidget):
 
     def mouseMoveEvent(self, e):  # noqa: N802
         pos = e.position()
+        self._rec_mouse = pos
+        if self._rec_view_changed():
+            self.update()
         if self.mouse_mode:
             self._mouse_mode_move(pos)
             return
@@ -310,7 +396,7 @@ class PreviewWidget(QWidget):
         self.update()
 
     def mouseDoubleClickEvent(self, e):  # noqa: N802
-        if self.mouse_mode or e.button() != Qt.LeftButton:
+        if self.mouse_mode or e.button() != Qt.LeftButton or self._rec_hit(e.position()):
             return
         if self.click_guard is not None and not self.click_guard():
             return
@@ -324,6 +410,9 @@ class PreviewWidget(QWidget):
         return self._hover is not None or self._drag is not None
 
     def leaveEvent(self, e):  # noqa: N802
+        self._rec_mouse = None
+        if self._rec_view_changed():
+            self.update()
         if self.mouse_mode:  # указатель ушёл с видео — камера стоит
             self._mouse_pt = None
             self.mouseVector.emit(0.0, 0.0)
@@ -357,6 +446,7 @@ class PreviewWidget(QWidget):
             p.setRenderHint(QPainter.SmoothPixmapTransform)
             p.drawImage(self._image_rect(), self._image)
             self._paint_overlay(p)
+            self._paint_rec(p)
             return
         p.setPen(qcolor(C.TEXT_DIM))
         f = QFont(FONT_FAMILY)
@@ -367,6 +457,7 @@ class PreviewWidget(QWidget):
         else:
             text = "Камера не выбрана"
         p.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, text)
+        self._paint_rec(p)
 
     def _paint_zones(self, p: QPainter) -> None:
         """Зона слежения — знаком программы (макет zone-look.html): мягкая зона — две встречные скобки,

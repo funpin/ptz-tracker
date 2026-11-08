@@ -97,3 +97,108 @@ def test_status_shows_analysis(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     qtbot.waitUntil(lambda: "Анализ" in w.analysis_pill.toolTip() and "к/с" in w.analysis_pill.text(), timeout=3000)
     w.close()
+
+
+# --- запись видео: кнопка и плашка в углу ---
+
+
+def rec_preview(qtbot):
+    p = PreviewWidget()
+    qtbot.addWidget(p)
+    p.resize(800, 450)
+    p.show()
+    p.set_source(StillSource())
+    qtbot.waitUntil(p.has_frame, timeout=2000)
+    return p
+
+
+def test_start_chip_appears_only_under_mouse(qtbot):
+    from PySide6.QtCore import QPoint
+
+    from ptztracker.videorec.recorder import IDLE
+
+    p = rec_preview(qtbot)
+    p.set_rec(IDLE)
+    assert p.rec_rect() is None
+    qtbot.mouseMove(p, QPoint(100, 100))
+    qtbot.waitUntil(lambda: p.rec_rect() is not None, timeout=1000)
+    assert p.rec_text() == "Запись · R"
+
+
+def test_no_chip_without_camera(qtbot):
+    from PySide6.QtCore import QPoint
+
+    p = rec_preview(qtbot)
+    p.set_rec(None)
+    qtbot.mouseMove(p, QPoint(100, 100))
+    qtbot.wait(50)
+    assert p.rec_rect() is None
+
+
+def test_click_on_chip_records_and_does_not_select(qtbot):
+    from PySide6.QtCore import QPoint
+
+    from ptztracker.videorec.recorder import RecState
+
+    p = rec_preview(qtbot)
+    p.set_rec(RecState(active=True, elapsed_s=754))
+    clicks, selected = [], []
+    p.rec_clicked.connect(lambda: clicks.append(1))
+    p.targetClicked.connect(selected.append)
+    guard = []
+    p.click_guard = lambda: guard.append(1) or True
+    c = p.rec_rect().center()
+    qtbot.mouseClick(p, Qt.LeftButton, pos=QPoint(int(c.x()), int(c.y())))
+    assert clicks == [1] and selected == [] and guard == []
+
+
+def test_mouse_mode_does_not_catch_chip(qtbot):
+    from PySide6.QtCore import QPoint
+
+    from ptztracker.videorec.recorder import RecState
+
+    p = rec_preview(qtbot)
+    p.set_rec(RecState(active=True, elapsed_s=5))
+    c = p.rec_rect().center()
+    p.set_mouse_mode(True)
+    clicks, left = [], []
+    p.rec_clicked.connect(lambda: clicks.append(1))
+    p.leftClicked.connect(lambda: left.append(1))
+    qtbot.mouseClick(p, Qt.LeftButton, pos=QPoint(int(c.x()), int(c.y())))
+    assert clicks == [] and left == [1]
+
+
+def test_double_click_on_chip_does_not_enter_mouse_mode(qtbot):
+    from PySide6.QtCore import QPoint
+
+    from ptztracker.videorec.recorder import RecState
+
+    p = rec_preview(qtbot)
+    p.set_rec(RecState(active=True, elapsed_s=5))
+    entered = []
+    p.doubleClicked.connect(lambda: entered.append(1))
+    c = p.rec_rect().center()
+    qtbot.mouseDClick(p, Qt.LeftButton, pos=QPoint(int(c.x()), int(c.y())))
+    assert entered == []
+
+
+def test_rec_text_states(qtbot):
+    from ptztracker.videorec.recorder import RecState
+
+    p = rec_preview(qtbot)
+    p.set_rec(RecState(active=True, elapsed_s=754))
+    assert p.rec_text() == "REC 12:34"
+    p.set_rec(RecState(active=True, signal=False, elapsed_s=754))
+    assert p.rec_text() == "REC · нет сигнала"
+
+
+def test_stop_text_under_mouse(qtbot):
+    from PySide6.QtCore import QPoint
+
+    from ptztracker.videorec.recorder import RecState
+
+    p = rec_preview(qtbot)
+    p.set_rec(RecState(active=True, elapsed_s=754))
+    c = p.rec_rect().center()
+    qtbot.mouseMove(p, QPoint(int(c.x()), int(c.y())))
+    qtbot.waitUntil(lambda: p.rec_text() == "■ Стоп", timeout=1000)
