@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QDialog,
     QFileDialog,
     QFrame,
@@ -21,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from ptztracker.config import AppConfig, video_dir
 from ptztracker.ui.recording_dialog import friendly_path
-from ptztracker.ui.theme import FS_CAPTION, R_PANEL, SP, C
+from ptztracker.ui.theme import FS_CAPTION, R_BUTTON, R_PANEL, SP, C
 from ptztracker.videorec.controller import format_gb, format_left
 from ptztracker.videorec.disk import RATE_CAMERA_BPS, RATE_LIGHT_BPS, DiskInfo, disk_info, is_fat32
 from ptztracker.videorec.writer import FAT32_SPLIT_BYTES, file_stem
@@ -38,6 +39,36 @@ class _DiskTask(QRunnable):
 
     def run(self):
         self.signals.done.emit(self.token, disk_info(self.folder))
+
+
+class _ModeCard(QFrame):
+    """Вариант записи: рамка белая у выбранного, клик по всей карточке выбирает."""
+
+    def __init__(self, title: str, hint: str):
+        super().__init__()
+        self.setObjectName("modeCard")
+        self.radio = QRadioButton(title)
+        note = QLabel(hint)
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px; background: transparent;")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(SP[2], SP[1], SP[2], SP[1])
+        lay.setSpacing(0)
+        lay.addWidget(self.radio)
+        lay.addWidget(note)
+
+    def sync(self) -> None:
+        on = self.radio.isChecked()
+        self.setProperty("selected", on)
+        self.setStyleSheet(
+            f"QFrame#modeCard {{ border: 1px solid {C.TEXT if on else C.LINE}; border-radius: {R_BUTTON}px; }}"
+            f" QRadioButton::indicator:checked {{ background: {C.LIME}; border: 3px solid {C.SURFACE};"
+            f" border-radius: 7px; width: 8px; height: 8px; }}"
+            " QRadioButton { background: transparent; }")
+
+    def mousePressEvent(self, e):  # noqa: N802
+        self.radio.setChecked(True)
+        super().mousePressEvent(e)
 
 
 def _section(text: str) -> QLabel:
@@ -82,6 +113,7 @@ class VideoDialog(QDialog):
 
         self.disk_title = QLabel()
         self.disk_title.setStyleSheet("font-weight: 600;")
+        self.disk_title.setMinimumHeight(self.disk_title.fontMetrics().height() + 2)
         self.disk_kind = QLabel()
         self.disk_kind.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
         self.disk_bar = QProgressBar()
@@ -92,6 +124,8 @@ class VideoDialog(QDialog):
             f" QProgressBar::chunk {{ background: {C.GREY}; border-radius: 3px; }}")
         self.disk_text = QLabel()
         self.disk_text.setWordWrap(True)
+        # ответ о диске приходит позже: место под две строки — сразу, иначе карточка сжата
+        self.disk_text.setMinimumHeight(self.disk_text.fontMetrics().lineSpacing() * 2 + 8)
         self.disk_warning = QLabel()
         self.disk_warning.setWordWrap(True)
         self.disk_warning.setStyleSheet(f"color: {C.LOST};")
@@ -110,10 +144,17 @@ class VideoDialog(QDialog):
         card.addWidget(self.disk_text)
         card.addWidget(self.disk_warning)
 
-        self.mode_camera = QRadioButton("Как отдаёт камера — H.264 в полном качестве, без пережатия")
-        self.mode_light = QRadioButton("Лёгкий файл · 3000 кбит/с, 25p — для архива, нагружает компьютер")
+        self.camera_card = _ModeCard("Как отдаёт камера",
+                                     "H.264 в полном качестве, без пережатия. Процессор почти не нагружает.")
+        self.light_card = _ModeCard("Лёгкий файл · 3000 кбит/с, 25p",
+                                    "Пережимает поток. Удобно для архива, нагружает компьютер.")
+        self.mode_camera, self.mode_light = self.camera_card.radio, self.light_card.radio
+        self._modes = QButtonGroup(self)  # карточки — разные родители, сами взаимно не исключаются
+        self._modes.addButton(self.mode_camera)
+        self._modes.addButton(self.mode_light)
         (self.mode_light if cfg.video_mode == "light" else self.mode_camera).setChecked(True)
-        self.mode_camera.toggled.connect(lambda _on: self._render_disk())
+        self.mode_camera.toggled.connect(self._on_mode)
+        self._on_mode()
 
         stem = file_stem(camera_name, datetime.now())
         self.example = QLabel(f"{stem}.mp4")
@@ -136,10 +177,15 @@ class VideoDialog(QDialog):
         lay.setContentsMargins(SP[3], SP[3], SP[3], SP[3])
         lay.setSpacing(SP[2])
         for item in (about, _section("КУДА СОХРАНЯТЬ"), folder_row, self.disk_card, _section("ЧТО ЗАПИСЫВАТЬ"),
-                     self.mode_camera, self.mode_light, _section("ИМЯ ФАЙЛА"), self.example, foot):
+                     self.camera_card, self.light_card, _section("ИМЯ ФАЙЛА"), self.example, foot):
             (lay.addLayout if isinstance(item, QHBoxLayout) else lay.addWidget)(item)
         self.setMinimumWidth(540)
         self.choose_folder(self._folder, initial=True)
+
+    def _on_mode(self, *_) -> None:
+        self.camera_card.sync()
+        self.light_card.sync()
+        self._render_disk()
 
     def _style_card(self, bad: bool) -> None:
         self.disk_card.setProperty("bad", bad)
@@ -161,6 +207,8 @@ class VideoDialog(QDialog):
         if token == self._token:
             self._info = info
             self._render_disk()
+            self.layout().activate()
+            self.adjustSize()  # ответ приходит после показа окна: иначе текст карточки обрезан
 
     def _rate(self) -> float:
         return RATE_LIGHT_BPS if self.mode_light.isChecked() else RATE_CAMERA_BPS

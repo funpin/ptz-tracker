@@ -123,3 +123,23 @@ def test_window_menu_opens_dialog(qtbot, tmp_path, monkeypatch):
     w.video_settings_action.trigger()
     assert len(seen) == 1
     w.close()
+
+
+def test_disk_text_is_not_clipped_after_answer_arrives(qtbot, monkeypatch):
+    d = make(qtbot, monkeypatch, DiskInfo(True, 412 * GB, 1000 * GB, "E:", "Samsung T7", True, "exFAT"))
+    d.show()
+    qtbot.waitExposed(d)
+    qtbot.wait(50)
+    lines = d.disk_text.fontMetrics().lineSpacing()
+    assert d.disk_text.height() >= 2 * lines and d.disk_title.height() >= d.disk_title.fontMetrics().height()
+
+
+def test_mode_cards_select_by_click_anywhere(qtbot, monkeypatch):
+    from PySide6.QtCore import QPoint, Qt
+
+    d = make(qtbot, monkeypatch)
+    d.show()
+    assert d.mode_camera.isChecked() and d.light_card.property("selected") is False
+    qtbot.mouseClick(d.light_card, Qt.LeftButton, pos=QPoint(200, 30))
+    assert d.mode_light.isChecked() and d.light_card.property("selected") is True
+    assert d.camera_card.property("selected") is False

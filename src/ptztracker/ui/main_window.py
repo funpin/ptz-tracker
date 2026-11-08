@@ -538,6 +538,7 @@ class MainWindow(QMainWindow):
         # строка состояния: слева сообщения; справа видео и анализ выбранной камеры | Пресеты, Справка | версия.
         # Подписей клавиш нет — всё в справке F1
         sb = MessageStatusBar()
+        sb.setContentsMargins(SP[1], 0, 0, 0)  # скруглённая строка записи не упирается в край окна
         self.setStatusBar(sb)
         sb.setSizeGripEnabled(False)
         self.presets_btn = KeyButton("Пресеты", "P")

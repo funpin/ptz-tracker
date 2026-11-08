@@ -14,6 +14,7 @@
 | `sim/` | Виртуальная AW-HE42: та же HTTP-команда, динамика по замерам (°/с по коду, разгон, зум), синтетическая сцена с разметкой. Кадр по умолчанию проективный (`projection.py`): задник и пол в 3D, человек на своей глубине, поворот pan/tilt, пинхол с углом обзора по зуму, бочка k1; ключевые точки проходят ту же проекцию. `SyntheticStage(projection="flat")` — прежний плоский сдвиг панорамы | `SimPtz`, `SimHttpServer`, `SimFrameSource`, `SyntheticStage`, `projection` |
 | `diagnostics/` | Диагностика на площадке → zip-отчёт; общий замер скорости | `run_diagnostics`, `checks`, `probe` |
 | `recorder/` | Чёрный ящик: последние минуты кадров и событий, zip-снимки, чтение и повтор эпизодов | `BlackBox`, `NullRecorder`, `Episode`, `replay_controller`, `replay_analysis` |
+| `videorec/`, `system_load.py` | Запись видео камер в файл (MP4 фрагментами) и нагрузка на компьютер | `VideoRecorder`, `VideoController`, `DiskWatch`, `SystemLoad` |
 | `api/` | Локальный HTTP-API для агента (только 127.0.0.1, токен) | `ApiServer`, `WindowBackend`, `QtInvoker` |
 | `lab.py` | Команды без окна `--lab record\|follow\|calibrate` для агента | `run_lab` |
 | `ui/` | Окна Qt: главное окно, превью с рамками и зонами, панели. `theme.py` — единственный источник цветов (держит `test_no_hardcoded_colors`) и основных размеров; `widgets.py` — общие элементы (`TrackButton`, `StatusPill` — значки верхней панели, `PowerOverlay` — кнопка питания поверх видео, `KeyButton`, `VideoFrame` с рамкой Tally и накладками); `icons.py` + `icons/*.svg` — свои иконки, перекрашиваются под состояние; `state.py` — чистые функции «что показать» (`tracking_view`, `tally_chip`, `video_pill`, `analysis_pill`, `atem_pill`, `power_view`, `no_video_text`). Все редкие действия — в одном меню ☰ внутри окна (меню «Сервис» в строке macOS нет); F9 ловит фильтр клавиш окна; `atem_dialog.py` — настройки ATEM; `agent_panel.py` — флажки разрешений агенту; `replay_window.py` — просмотр записи | `MainWindow`, `PreviewWidget`, `FollowPanel`, `TrackButton`, `AtemDialog`, `AgentPanel`, `ReplayWindow` |
@@ -81,6 +82,16 @@
 - **Повтор.** `python -m ptztracker --replay файл.zip` — по умолчанию через регулятор (`replay_controller`): записанные такты заново идут через `FramingController`, коды совпадают с записанными (проверено: 0 расхождений на 675 тактах); с другой калибровкой, композицией или `effort` видно, что изменилось бы. Выводит сводку и PNG-графики (`--out`). `--mode analysis` прогоняет сохранённые кадры через детектор и `PersonTracker` и сравнивает цель «было/стало»; `--view` открывает `ReplayWindow`. Задержка видео берётся из события `follow on`.
 - **Сдвиг картинки для трекера.** `Analyzer.motion` = `Follower.picture_motion` (замок слежения, зовёт поток анализа; слежение выключено — сдвига нет) → `FramingController.image_motion(t0, t1)`: (ratio зума, сдвиг x, сдвиг y) в долях кадра по моделям `CameraDynamics`. `PersonTracker` сдвигает предсказанные рамки; цель, потерянная ≤ 0,5 с назад, переходит на новый трек на своём месте (событие `target`, `how` = `adopt_place`).
 - **Эпизод-тест.** `tests/data/episodes/sim_walk_30s.zip` и `tests/recorder/test_stored_episode.py`. Плохие эпизоды с площадки кладутся рядом и становятся тестами.
+
+## Запись видео (`videorec/`) и нагрузка (`system_load.py`)
+
+- `videorec/recorder.py` — `VideoRecorder`, один на `CameraSession`, свой поток. Живая камера — своё RTSP-подключение к `h264_1`, пакеты копируются без декодирования; поток нельзя скопировать — переход на `libx264`. Симулятор — кадры `session.frames` через `libx264`.
+- `videorec/writer.py` — MP4 фрагментами (`frag_keyframe+empty_moov+default_base_moof`): файл читается после сбоя. На FAT32 — части по ключевым кадрам.
+- `videorec/disk.py` — диск папки (`DiskWatch`, раз в 5 с в фоне); том по пути, поэтому вынутый диск не считается по родительскому.
+- `videorec/controller.py` — `VideoController` без Qt: старт и стоп, запас места, автостоп, сводка и разовые сообщения; окно читает её по таймеру 500 мс.
+- `ui/status_bar.py` — своя строка состояния: родной `showMessage` прячет виджеты слева. Вызовы `statusBar().showMessage(текст, мс, error=True)`.
+- `system_load.py` — снимок CPU, GPU, RAM в фоне; GPU: PDH на Windows, `ioreg` на Mac (без доли процесса).
+- Запись только читает камеру: ни команд, ни снятия флажков, ни выключения слежения.
 
 ## API для агента (`api/`, `ui/agent_panel.py`)
 
