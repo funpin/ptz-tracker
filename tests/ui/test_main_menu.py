@@ -23,7 +23,7 @@ def test_groups_without_submenus(qtbot, tmp_path):
     acts = w.main_menu_btn.menu().actions()
     assert all(a.menu() is None for a in acts)
     heads = [a.text() for a in acts if isinstance(a, QWidgetAction) and not isinstance(a.data(), MenuRow)]
-    assert heads == ["Камеры", "Подключения", "Журнал для разбора", "Программа"]
+    assert heads == ["Камеры", "Подключения", "Запись видео", "Журнал для разбора", "Программа"]
     r = rows(w)
     for t in ("Добавить камеру…", "ATEM…", "Геймпады…", "Агент…", "Сохранить последние 5 минут", "Открыть журнал…",
               "Камер с анализом", "Проверять обновления", "Справка и клавиши"):

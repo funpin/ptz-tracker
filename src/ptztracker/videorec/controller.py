@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,10 +103,10 @@ class VideoController:
                 self.toggle(s)
 
     def wait_closed(self, timeout: float = CLOSE_WAIT_S) -> None:
+        deadline = time.monotonic() + timeout
         for _, s in self._sessions():
             if s.video:
-                s.video.wait_closed(timeout)
-                timeout = 0.0
+                s.video.wait_closed(max(0.0, deadline - time.monotonic()))
 
     def _release_folder(self) -> None:
         if not self.any_active():

@@ -596,6 +596,8 @@ class MainWindow(QMainWindow):
         self.open_replay_action.triggered.connect(self._choose_replay)
         self.rec_settings_action = QAction("Настройки журнала…", self)
         self.rec_settings_action.triggered.connect(self._recording_settings)
+        self.video_settings_action = QAction("Запись видео…", self)
+        self.video_settings_action.triggered.connect(self._video_settings)
         box_menu = QMenu(self)
         for act in (self.save_moment_action, self.open_replay_action, self.rec_settings_action):
             box_menu.addAction(act)
@@ -631,6 +633,8 @@ class MainWindow(QMainWindow):
         mm.add(self.atem_action, "atem", self._atem_menu_status)
         mm.add(self.pads_action, "gamepad", self._pads_menu_status)
         mm.add(self.agent_action, "robot", self._agent_menu_status)
+        mm.section("Запись видео")
+        mm.add(self.video_settings_action, "folder")
         mm.section("Журнал для разбора")
         mm.add(self.save_moment_action, "record")
         mm.add(self.open_replay_action, "folder")
@@ -1953,6 +1957,16 @@ class MainWindow(QMainWindow):
         w.show()
         return w
 
+    def _video_settings(self) -> None:
+        from ptztracker.ui.video_dialog import VideoDialog
+
+        session = self.session
+        d = VideoDialog(self.cfg, session.cfg.name if session else "Камера", parent=self)
+        if d.exec():
+            d.apply()
+            self._save()
+            self.video.disk.refresh()
+
     def _recording_settings(self) -> None:
         from ptztracker.ui.recording_dialog import RecordingDialog
 
@@ -3211,7 +3225,16 @@ class MainWindow(QMainWindow):
             self.release_all_held()
         super().changeEvent(e)
 
+    def _confirm_close_with_video(self) -> bool:
+        ans = QMessageBox.question(self, "Запись видео", "Идёт запись видео. Остановить её и выйти?")
+        return ans == QMessageBox.Yes
+
     def closeEvent(self, e):  # noqa: N802
+        if self.video.any_active() and not self._confirm_close_with_video():
+            e.ignore()
+            return
+        self.video.stop_all()
+        self.video.wait_closed()
         try:
             self._prepare_close()
         except Exception:  # сбой подготовки не отменяет стоп камер

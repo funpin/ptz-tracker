@@ -102,3 +102,32 @@ def test_refusal_goes_to_status_line(qtbot, tmp_path):
     press(w, Qt.Key_R, "r")
     assert not w.session.video_state().active and "не подключён" in w.statusBar().currentMessage()
     w.close()
+
+
+def test_close_while_recording_can_be_cancelled(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    press(w, Qt.Key_R, "r")
+    asked = []
+    w._confirm_close_with_video = lambda: asked.append(1) or False
+    assert w.close() is False
+    assert asked == [1] and w.session.video_state().active and all(c is not None for c in w.grid.cells[:1])
+    w._confirm_close_with_video = lambda: True
+    assert w.close() is True
+
+
+def test_close_without_recording_does_not_ask(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    w._confirm_close_with_video = lambda: (_ for _ in ()).throw(AssertionError("не должен спрашивать"))
+    assert w.close() is True
+
+
+def test_close_finishes_file_within_two_seconds(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    press(w, Qt.Key_R, "r")
+    session = w.session
+    qtbot.waitUntil(lambda: session.video_state().bytes_total > 0, timeout=5000)
+    w._confirm_close_with_video = lambda: True
+    t0 = time.monotonic()
+    w.close()
+    assert time.monotonic() - t0 < 6.0
+    assert session.video.wait_closed(0.1) and session.video_state().paths[0].stat().st_size > 0
