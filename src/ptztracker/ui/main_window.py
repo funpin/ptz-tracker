@@ -92,6 +92,7 @@ from ptztracker.multicam.grid import CameraGrid, Cell
 from ptztracker.multicam.pads import PadFeedback, PadMove, PadRouter
 from ptztracker.multicam.timeline import StateTimeline
 from ptztracker.multicam.velocity import MixerSource
+from ptztracker.system_load import SystemLoad
 from ptztracker.tally import atem_input_of
 from ptztracker.tally.atem import AtemTally
 from ptztracker.ui.agent_panel import AgentPanel, revokes_agent
@@ -107,6 +108,7 @@ from ptztracker.ui.hints import HintBar
 from ptztracker.ui.hotkeys_dialog import HotkeysDialog, fmt_remaining
 from ptztracker.ui.icons import icon
 from ptztracker.ui.keys import digit_of, logical_key
+from ptztracker.ui.load_meter import LoadMeter
 from ptztracker.ui.main_menu import MainMenu
 from ptztracker.ui.manual_controls import STICK_MIN, ManualControls
 from ptztracker.ui.presets_drawer import DrawerRow, PresetsDrawer
@@ -380,6 +382,9 @@ class MainWindow(QMainWindow):
         self.view_grid_btn.setChecked(True)
         self.view_grid_btn.clicked.connect(lambda: self.set_single_view(False))
         self.view_one_btn.clicked.connect(lambda: self.set_single_view(True))
+        self.load_meter = LoadMeter()
+        tl.addWidget(self.load_meter)
+        tl.addSpacing(SP[2])
         tl.addWidget(seg)
         tl.addSpacing(SP[1])
         for w in (self.atem_pill, self.top_pads, self.blackbox_btn, self.agent_badge):
@@ -651,6 +656,8 @@ class MainWindow(QMainWindow):
         self._recalib_hinted: set[str] = set()  # камеры, которым подсказка «откалибруйте заново» уже показана в этот запуск
         self._recalib_hint_for: str | None = None  # камера, у которой подсказка видна в нынешнем подключении
         self._unsupported_shown: tuple = ()
+        self.system_load = SystemLoad()
+        self.system_load.start()
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._update_status)
         self._status_timer.start(500)
@@ -2063,6 +2070,7 @@ class MainWindow(QMainWindow):
             int(REFUSED_SHOW_S * 1000) + 1000)
 
     def _update_status(self) -> None:
+        self.load_meter.set_snapshot(self.system_load.snapshot())
         self._warn_refused()
         self._poll_update_check()
         self._refresh_manual_speed()
@@ -2169,6 +2177,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_top"):
             return  # ещё строится окно
         pills = (self.atem_pill,)
+        self.load_meter.show()
         for p in pills:
             p.set_compact(False)
         avail = self.width() - 2 * SP[1]
@@ -2176,6 +2185,7 @@ class MainWindow(QMainWindow):
             if self._top.sizeHint().width() <= avail:
                 break
             p.set_compact(True)
+        self.load_meter.setVisible(self._top.sizeHint().width() <= avail)
 
     def _menu_button(self, icon_name: str, tooltip: str) -> StatusPill:
         b = StatusPill(icon_name, "", "neutral")
@@ -3157,6 +3167,7 @@ class MainWindow(QMainWindow):
         super().closeEvent(e)
 
     def _prepare_close(self) -> None:
+        self.system_load.stop()
         if self._api:
             self._api.stop()
             self._api = None

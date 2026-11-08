@@ -19,6 +19,7 @@ dependencies = [
     "keyring>=25",
     "pygame-ce>=2.5",
     "platformdirs>=4",
+    "psutil>=5.9",
     "onnxruntime-directml>=1.20; sys_platform == 'win32'",
     "onnxruntime>=1.20; sys_platform != 'win32'",
 ]
