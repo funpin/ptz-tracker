@@ -74,6 +74,9 @@ class AppConfig:
     record_buffer_s: int = 300
     record_to_disk: bool = False  # постоянная запись на диск (~450 МБ/час)
     record_dir: str = ""  # пусто — «Записи PTZ Tracker» на рабочем столе
+    # запись видео камер в файл (videorec), отдельно от чёрного ящика
+    video_dir: str = ""  # пусто — «Записи камер» на рабочем столе
+    video_mode: str = "camera"  # "camera" — как отдаёт камера | "light" — 3000 кбит/с, 25p
     # локальный API для агента (только 127.0.0.1); токен создаётся при первом запуске, агент читает его отсюда
     api_enabled: bool = True
     api_port: int = 8765
@@ -129,6 +132,8 @@ DEFAULT_TILT_SPEED = 60  # кадр 16:9 по высоте ≈ 56 % ширины
 DEFAULT_GEAR = 6  # 34 °/с: середина хода — как у 1.1 на полной скорости, без рывка у упора
 
 RECORD_DIR_NAME = "Записи PTZ Tracker"
+VIDEO_DIR_NAME = "Записи камер"
+VIDEO_MODES = ("camera", "light")
 RECORD_BUFFER_MIN_S, RECORD_BUFFER_MAX_S = 60, 900  # в окне настроек — от 1 до 15 минут
 
 
@@ -137,6 +142,13 @@ def record_dir(cfg: AppConfig) -> Path:
     if cfg.record_dir:
         return Path(cfg.record_dir).expanduser()
     return Path(platformdirs.user_desktop_dir()) / RECORD_DIR_NAME
+
+
+def video_dir(cfg: AppConfig) -> Path:
+    """Папка видео камер: из настроек или «Записи камер» на рабочем столе."""
+    if cfg.video_dir:
+        return Path(cfg.video_dir).expanduser()
+    return Path(platformdirs.user_desktop_dir()) / VIDEO_DIR_NAME
 
 
 def default_config() -> AppConfig:
@@ -321,6 +333,13 @@ def ensure_api_token(cfg: AppConfig) -> bool:
     return True
 
 
+def _fix_video_settings(cfg: AppConfig) -> None:
+    if not isinstance(cfg.video_dir, str):
+        cfg.video_dir = ""
+    if cfg.video_mode not in VIDEO_MODES:
+        cfg.video_mode = "camera"
+
+
 class ConfigStore:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -349,6 +368,7 @@ class ConfigStore:
         if not cfg.cameras:
             cfg.cameras = default_config().cameras
         _fix_record_settings(cfg)
+        _fix_video_settings(cfg)
         _fix_api_settings(cfg)
         _fix_grid(cfg)
         _fix_update_settings(cfg)

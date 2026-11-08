@@ -28,7 +28,8 @@ from ptztracker.camera.speed import velocity_to_code
 from ptztracker.config import AppConfig, CameraConfig, get_password, record_dir
 from ptztracker.recorder import NullRecorder, Recorder, safe_event
 from ptztracker.video.frames import FrameSource
-from ptztracker.video.rtsp import RtspSource, stream_urls
+from ptztracker.video.rtsp import RtspSource, stream_url, stream_urls, with_credentials
+from ptztracker.videorec.recorder import IDLE, RecState, VideoRecorder
 
 log = logging.getLogger(__name__)
 
@@ -129,6 +130,7 @@ class CameraSession:
         self._password = password
         self.app_cfg = app_cfg or AppConfig()
         self.recorder: Recorder = NullRecorder()
+        self.video: VideoRecorder | None = None  # запись видео в файл; сбой записи камеру не трогает
         self.scene_path = scene_path
         self._scene = scene  # для тестов: готовая сцена симулятора
         self._sim_latency = SIM_VIDEO_LATENCY_S if sim_latency is None else sim_latency
@@ -255,6 +257,8 @@ class CameraSession:
         таймаутах, дорабатывают в фоне (они daemon и сами завершатся).
         """
         self._hb_stop.set()
+        if self.video:
+            self._guarded("запись видео", self.video.stop)
         if self.limit_watch:
             self._guarded("упоры", self.limit_watch.stop)
             self.limit_watch = None
@@ -275,6 +279,35 @@ class CameraSession:
         rec, self.recorder = self.recorder, NullRecorder()
         # close() дописывает постоянную запись на диск — в фоне, чтобы окно не ждало
         threading.Thread(target=rec.close, name="blackbox-close", daemon=True).start()
+
+    def start_video(self, folder: Path, mode: str, split_bytes: int | None) -> None:
+        """Начать запись видео в файл. Только читает камеру: команд не шлёт, слежение и флажки не трогает."""
+        if self.video and self.video.is_running:
+            return
+        source = {"frames": self.frames} if self.sim is not None else {"url": self._video_url}
+        self.video = VideoRecorder(self.cfg.name, folder, mode, split_bytes=split_bytes, **source)
+        self.video.start()
+
+    def stop_video(self) -> None:
+        if self.video:
+            self.video.stop()
+
+    def video_state(self) -> RecState:
+        return self.video.snapshot() if self.video else IDLE
+
+    def video_note(self) -> str | None:
+        return self.video.take_note() if self.video else None
+
+    def _video_url(self) -> str:
+        """Вызывается из потока записи: хранилище паролей может отвечать долго."""
+        if self.cfg.rtsp_url and self.cfg.rtsp_url.startswith("rtsp://"):
+            url = self.cfg.rtsp_url
+        else:
+            url = stream_url(self.cfg.ip, "h264_1")
+        password = self._password
+        if password is None and self.cfg.username:
+            password = get_password(self.cfg.id)
+        return with_credentials(url, self.cfg.username, password)
 
     @staticmethod
     def _guarded(what: str, step: Callable[..., object], **kw) -> None:

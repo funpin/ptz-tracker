@@ -848,3 +848,57 @@ def test_stop_sends_stops_even_if_preparation_fails(part):
     if real is not None:
         real.stop()
     assert "#PTS5050" in s.sim.received and "#Z50" in s.sim.received
+
+
+def test_video_records_without_sending_camera_commands(tmp_path):
+    s = CameraSession(sim_cfg())
+    s.start()
+    try:
+        assert _wait(lambda: s.frames.latest() is not None)
+        moves = lambda: [c for c in s.sim.received if c.startswith(("#PTS", "#Z", "#APS", "#R", "#M"))]  # noqa: E731
+        before = list(moves())
+        s.start_video(tmp_path, "camera", None)
+        assert s.video_state().active
+        assert _wait(lambda: s.video_state().bytes_total > 0)
+        assert moves() == before
+        s.stop_video()
+        assert not s.video_state().active
+    finally:
+        s.stop()
+
+
+def test_session_stop_stops_video(tmp_path):
+    s = CameraSession(sim_cfg())
+    s.start()
+    assert _wait(lambda: s.frames.latest() is not None)
+    s.start_video(tmp_path, "camera", None)
+    assert _wait(lambda: s.video_state().bytes_total > 0)
+    s.stop()
+    assert not s.video_state().active and s.video.wait_closed(5.0)
+
+
+def test_second_start_does_not_create_second_recorder(tmp_path):
+    s = CameraSession(sim_cfg())
+    s.start()
+    try:
+        assert _wait(lambda: s.frames.latest() is not None)
+        s.start_video(tmp_path, "camera", None)
+        first = s.video
+        s.start_video(tmp_path, "camera", None)
+        assert s.video is first
+        s.stop_video()
+    finally:
+        s.stop()
+
+
+def test_live_camera_records_h264_with_password_only_inside():
+    cfg = CameraConfig(id="r", name="Сцена", ip="10.0.0.5", username="u")
+    s = CameraSession(cfg, analysis=False, password="секрет")
+    assert s._video_url().startswith("rtsp://u:")
+    assert s._video_url().endswith("10.0.0.5/MediaInput/h264/stream_1")
+
+
+def test_custom_rtsp_address_is_used_for_video():
+    cfg = CameraConfig(id="r", name="Сцена", ip="10.0.0.5", rtsp_url="rtsp://10.0.0.5/my")
+    assert CameraSession(cfg, analysis=False)._video_url() == "rtsp://10.0.0.5/my"
+

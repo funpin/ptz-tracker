@@ -489,3 +489,28 @@ def test_pad_tilt_settings_roundtrip_and_bad_values(tmp_path):
     cfg = ConfigStore(p).load()
     assert cfg.pad_tilt_sensitivity == {"a": 100}
     assert cfg.pad_tilt_speed == {"a": TILT_SPEED_MIN, "b": 100, "d": 70}
+
+
+def test_video_settings_round_trip(tmp_path):
+    from ptztracker.config import AppConfig, ConfigStore, video_dir
+
+    store = ConfigStore(tmp_path / "c.json")
+    store.save(AppConfig(video_dir=str(tmp_path / "Записи"), video_mode="light"))
+    got = store.load()
+    assert got.video_mode == "light" and video_dir(got) == tmp_path / "Записи"
+
+
+def test_unknown_video_mode_falls_back(tmp_path):
+    import json
+
+    from ptztracker.config import ConfigStore
+
+    (tmp_path / "c.json").write_text(json.dumps({"video_mode": "что-то"}), encoding="utf-8")
+    assert ConfigStore(tmp_path / "c.json").load().video_mode == "camera"
+
+
+def test_default_video_folder_is_separate_from_blackbox():
+    from ptztracker.config import AppConfig, record_dir, video_dir
+
+    assert video_dir(AppConfig()).name == "Записи камер" and video_dir(AppConfig()) != record_dir(AppConfig())
+

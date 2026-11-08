@@ -110,6 +110,7 @@ class DiskWatch:
         self._lock = threading.Lock()
         self._info: DiskInfo | None = None
         self._stop = threading.Event()
+        self._wake = threading.Event()
 
     def start(self) -> None:
         self._stop.clear()
@@ -117,6 +118,11 @@ class DiskWatch:
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
+
+    def refresh(self) -> None:
+        """Папку сменили: посчитать сейчас, не дожидаясь следующего опроса."""
+        self._wake.set()
 
     def snapshot(self) -> DiskInfo | None:
         with self._lock:
@@ -127,4 +133,5 @@ class DiskWatch:
             info = disk_info(self._folder())
             with self._lock:
                 self._info = info
-            self._stop.wait(self.interval_s)
+            self._wake.wait(self.interval_s)
+            self._wake.clear()
