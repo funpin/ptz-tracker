@@ -149,6 +149,17 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         for i, cell in enumerate(self.cells):
             cell.preview.rec_clicked.connect(partial(self.toggle_video, i))
         self.grid.selected = 0
+        self._build_cells(atem_port)
+        self._build_gamepads(gamepad_backend, gamepad_hub)
+        stream_menu = self._build_top_bar()
+        grid_host, side_col = self._build_side_panel()
+        self._build_central(store, grid_host, side_col)
+        self._build_status_bar()
+        self._build_menus(stream_menu)
+        self._start_services()
+
+    def _build_cells(self, atem_port):
+        """Клетки сетки и их сигналы, сетка камер, ATEM."""
         # окно владеет (Qt-родитель — окно, иначе их связи держали бы окно в памяти и после закрытия),
         # клетки только показывают
         self._service = {k: ServiceCell(k, self) for k in KINDS}
@@ -186,6 +197,9 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         self._atem_port = atem_port
         self.atem: AtemTally | None = None
         self._tally_shown: tuple | None = None
+
+    def _build_gamepads(self, gamepad_backend, gamepad_hub):
+        """Геймпады: мост, опрос, маршрутизатор."""
         # геймпад: свой поток опроса; без SDL/устройства мост ничего не делает. Mapper читает camera_menu.is_open.
         self._pad_multi: MultiPadThread | None = None
         self._bridges: list[GamepadBridge] = []  # по индексам хаба; self.pad — первый
@@ -213,6 +227,9 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
 
         self.controls = ManualControls()
         self.follow_panel = FollowPanel()
+
+    def _build_top_bar(self):
+        """Верхняя строка; возвращает меню видеопотока для ⋯ клетки."""
 
         # верхняя строка: знак; то, что важно в эфире (ATEM, геймпады, журнал, агент); меню ☰; TRACK.
         # Всё про одну камеру — в шапке её клетки; видео и анализ выбранной — внизу слева
@@ -314,6 +331,10 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         for c in self.cells:
             c.preview.setMinimumSize(240, 135)  # четыре превью в одном окне
         self.camera_menu = CameraMenu(self._menu_session, self.controls)
+        return stream_menu
+
+    def _build_side_panel(self):
+        """Правая колонка и плашки поверх видео."""
         # виртуальную камеру нельзя принять за живую: плашка «СИМУЛЯТОР» в шапке клетки
         self._tally_per: list[tuple[int, str | None, bool]] = [(0, None, False)] * GRID_SLOTS
         self.camera_menu.openChanged.connect(self._on_menu_changed)
@@ -405,6 +426,10 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
             c.preview.doubleClicked.connect(lambda s=i: self.enter_mouse_mode() if s == self.grid.selected else None)
             c.powerClicked.connect(self._cell_power)
             c.viewToggleRequested.connect(self._toggle_view_at)
+        return grid_host, side_col
+
+    def _build_central(self, store, grid_host, side_col):
+        """Центр окна: сетка, панель пресетов, полоска «1 камера», правая колонка."""
         # пресеты — выдвижная панель под сеткой камер (кнопка «Пресеты» внизу или P); правая колонка не двигается
         self.thumbs = PresetThumbs(store.path.parent / "presets")
         self._thumb_cache: dict[str, dict] = {}
@@ -442,6 +467,9 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         hl.addWidget(side_col)
         self.setCentralWidget(central)
 
+    def _build_status_bar(self):
+        """Нижняя строка."""
+
         # строка состояния: слева сообщения; справа видео и анализ выбранной камеры | Пресеты, Справка | версия.
         # Подписей клавиш нет — всё в справке F1
         sb = MessageStatusBar()
@@ -477,6 +505,9 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         sb.addWidget(self.rec_pill)
         sb.addWidget(self.show_folder_btn)
         sb.attach_message_label()
+
+    def _build_menus(self, stream_menu):
+        """Действия и меню ☰."""
 
         # одно меню ☰ в окне — одинаково на Mac и Windows; меню «Сервис» в строке macOS нет.
         # Строки ☰ — заместители этих действий (ui/main_menu.py): группы, значки, состояние справа, без подменю
@@ -575,6 +606,9 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         self._follow_timer.timeout.connect(self._sync_pad)
         self._follow_timer.start(100)
         self._view_shown: TrackingView | None = None
+
+    def _start_services(self):
+        """API агента, таймеры, фоновые службы."""
         # API агента: оператор сам включил/выключил слежение (пробел, кнопка) — слежение теперь его
         self.on_operator_follow: Callable[[bool], None] | None = None
 
