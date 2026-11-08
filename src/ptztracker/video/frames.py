@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
+import cv2
 import numpy as np
+
+
+def write_jpeg(path: Path, image: np.ndarray, quality: int = 95) -> None:
+    """Сохранить кадр в JPEG. cv2.imwrite на Windows молча не пишет по путям с кириллицей."""
+    ok, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    if not ok:
+        raise RuntimeError("cv2.imencode вернул ошибку")
+    path.write_bytes(buf.tobytes())
 
 
 @dataclass(frozen=True)

@@ -2825,9 +2825,7 @@ class MainWindow(QMainWindow):
         c = self._cell_of_pad(pad)
         if c is None:
             return
-        c.gate.revoke()
-        c.mixer.clear_all()
-        c.session.emergency_stop()
+        self.grid.stop_cell(c)
         if c.session.limit_watch:
             c.session.limit_watch.set_demand(0.0, 0.0, 0.0)
         if self.camera_menu.is_open and self._menu_session() is c.session:
@@ -3150,6 +3148,15 @@ class MainWindow(QMainWindow):
         super().changeEvent(e)
 
     def closeEvent(self, e):  # noqa: N802
+        try:
+            self._prepare_close()
+        except Exception:  # сбой подготовки не отменяет стоп камер
+            log.exception("Закрытие окна: подготовка прервалась")
+        self.grid.close_all()
+        self._save()
+        super().closeEvent(e)
+
+    def _prepare_close(self) -> None:
         if self._api:
             self._api.stop()
             self._api = None
@@ -3171,6 +3178,3 @@ class MainWindow(QMainWindow):
         self.release_all_held()
         for d in list(self._cell_dialogs.values()):
             d.reject()
-        self.grid.close_all()
-        self._save()
-        super().closeEvent(e)

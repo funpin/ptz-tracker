@@ -161,6 +161,8 @@ class _ProbeTask(QRunnable):
             msg = f"✖ Нет связи: {e}"
         except (CameraError, ValueError) as e:
             msg = f"? Камера ответила, но непонятно: {e}"
+        except Exception as e:  # кнопка не должна остаться на «Проверяю…» (например, httpx.InvalidURL)
+            msg = f"✖ Не удалось проверить: {e}"
         finally:
             client.close()
         self.signals.done.emit(msg)

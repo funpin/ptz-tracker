@@ -15,6 +15,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ptztracker.video.frames import write_jpeg
+
 log = logging.getLogger(__name__)
 THUMB_SIZE = (320, 180)  # 16:9, хватает карточке 150 px на экране с запасом под Retina
 
@@ -66,7 +68,7 @@ class PresetThumbs:
             d = self._dir(cam_id)
             d.mkdir(parents=True, exist_ok=True)
             small = cv2.resize(image, THUMB_SIZE, interpolation=cv2.INTER_AREA)
-            cv2.imwrite(str(d / f"{n}.jpg"), small, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            write_jpeg(d / f"{n}.jpg", small, quality=85)
             data = self._index(cam_id)
             entry = data.get(str(n)) if isinstance(data.get(str(n)), dict) else {}
             entry["pan"] = pan

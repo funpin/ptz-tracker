@@ -421,3 +421,31 @@ def test_hint_follows_last_used_device(qtbot, tmp_path):
     qtbot.mouseClick(w.cells[0].preview, Qt.LeftButton, pos=QPoint(5, 5))
     assert w.last_input == "kb"
     w.close()
+
+
+def test_pad_stop_reaches_camera_even_if_preparation_fails(qtbot, tmp_path):
+    w, _ = make(qtbot, tmp_path)
+    w.pad_connected()
+    cell = w.grid.cells[0]
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    cell.gate.revoke = boom
+    cell.mixer.clear_all = boom
+    w.pad_stop(1)
+    qtbot.waitUntil(lambda: bool(pts(w, 0)) and pts(w, 0)[-1] == "#PTS5050", timeout=2000)
+    w.close()
+
+
+def test_close_window_stops_cameras_even_if_preparation_fails(qtbot, tmp_path):
+    w, _ = make(qtbot, tmp_path)
+    sim = w.grid.cells[0].session.sim
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    w._pad_stop_motion = boom
+    w.close()
+    assert all(c is None for c in w.grid.cells)
+    assert "#PTS5050" in sim.received

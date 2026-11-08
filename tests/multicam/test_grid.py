@@ -227,3 +227,28 @@ def test_emergency_stop_all_survives_failing_gate(grid, monkeypatch):
     grid.emergency_stop_all()
     monkeypatch.undo()  # фикстура grid закрывается раньше monkeypatch: close_all вызвал бы boom
     assert wait_for(lambda: pts(a)[-1] == "#PTS5050" and pts(b)[-1] == "#PTS5050")
+
+
+@pytest.mark.parametrize("part", ["gate.revoke", "mixer.clear_all"])
+def test_close_stops_camera_even_if_preparation_fails(grid, part):
+    a = grid.open(0, sim_cfg(0), False)
+    sim = a.session.sim
+    assert wait_for(lambda: a.session.online)  # пока камера не на связи, стопов не ждут (CameraSession.stop)
+    holder, name = part.split(".")
+    setattr(getattr(a, holder), name, boom)
+    grid.close(0)
+    assert grid.cells[0] is None
+    assert wait_for(lambda: "#PTS5050" in sim.received)
+
+
+@pytest.mark.parametrize("part", ["gate.revoke", "mixer.clear_all"])
+def test_close_all_stops_every_camera_even_if_one_preparation_fails(part):
+    g = CameraGrid(make)
+    a = g.open(0, sim_cfg(0), False)
+    b = g.open(1, sim_cfg(1), False)
+    assert wait_for(lambda: a.session.online and b.session.online)
+    holder, name = part.split(".")
+    setattr(getattr(a, holder), name, boom)
+    g.close_all()
+    assert g.cells == [None] * len(g.cells)
+    assert "#PTS5050" in a.session.sim.received and "#PTS5050" in b.session.sim.received

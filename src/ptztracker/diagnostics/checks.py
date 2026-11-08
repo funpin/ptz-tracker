@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Literal
 
-import cv2
 import httpx
 
 from ptztracker.camera import protocol as P
@@ -22,7 +21,7 @@ from ptztracker.camera.client import AuthRequired, CameraClient, CameraUnreachab
 from ptztracker.diagnostics.motion import estimate_scale, wait_for_motion
 from ptztracker.diagnostics.notify import NotificationListener
 from ptztracker.diagnostics.probe import Pacer, probe_run
-from ptztracker.video.frames import FrameSource
+from ptztracker.video.frames import FrameSource, write_jpeg
 from ptztracker.video.rtsp import RtspSource, rtsp_candidates, stream_url, with_credentials
 
 log = logging.getLogger(__name__)
@@ -147,7 +146,7 @@ def check_rtsp(ctx: DiagContext, st: dict) -> CheckResult:
                 height=first.image.shape[0],
                 fps=round((last.seq - s0) / FPS_WINDOW_S, 1) if last else 0.0,
             )
-            cv2.imwrite(str(frames_dir / f"{n}.jpg"), first.image)
+            write_jpeg(frames_dir / f"{n}.jpg", first.image)
             key = url.replace(":554/", "/")  # тот же поток на явном порту 554 — не отдельный поток
             if best is None:
                 best = (url, src)

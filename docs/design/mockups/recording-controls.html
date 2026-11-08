@@ -1,0 +1,192 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Запись видео и нагрузка</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A;--lost:#F0A020;--fault:#EF4444;--pgm:#E8202A;--pvw:#2FB65E;--rec:#FF3B30}
+*{box-sizing:border-box}
+body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;font-size:13px;font-variant-numeric:tabular-nums}
+#page{width:1680px;padding:18px 20px 40px;transform-origin:0 0}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:26px 0 8px}
+.sub{color:var(--dim);margin:0 0 12px;line-height:1.5;max-width:1200px}
+.bar{display:flex;gap:18px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{all:unset;cursor:pointer;padding:7px 13px;color:var(--dim);background:var(--raised);border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}.seg button.on{background:var(--white);color:var(--bg);font-weight:600}
+.lbl{color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+#win{position:relative;width:1640px;height:850px;background:var(--bg);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
+.top{height:50px;display:flex;align-items:center;padding:0 14px;border-bottom:1px solid var(--line);gap:18px;flex:none}
+.logo b{font-weight:800}.logo span{font-weight:400;letter-spacing:.22em;font-size:11px;color:var(--dim)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;background:var(--raised);border:1px solid var(--line);border-radius:8px;color:var(--white);cursor:pointer;white-space:nowrap;user-select:none}
+.btn:hover{background:var(--raised-hi)}
+.kb{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;font-size:10.5px;color:var(--dim)}
+.main{flex:1;display:flex;gap:10px;padding:10px;min-height:0}
+.grid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:10px;min-width:0}
+.cell{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:0 6px 6px;display:flex;flex-direction:column;min-height:0}
+.cell.sel{border-color:var(--white)}
+.hd{height:36px;display:flex;align-items:center;gap:7px;padding:0 4px;font-weight:600;flex:none}
+.n{width:22px;height:22px;border-radius:5px;background:var(--raised-hi);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.n.pgm{background:var(--pgm)}.n.pvw{background:var(--pvw)}
+.tag{font-size:10px;font-weight:700;border-radius:4px;padding:2px 6px;border:1px solid var(--line);color:var(--faint)}
+.tag.pgm{color:#fff;background:var(--pgm);border-color:var(--pgm)}.tag.pvw{color:var(--pvw);border-color:var(--pvw)}.tag.on{color:var(--bg);background:var(--lime);border-color:var(--lime)}
+.vid{flex:1;border-radius:6px;position:relative;background:linear-gradient(180deg,#4f5866,#3e434c 55%,#4d3c2e 56%,#3a2d22);overflow:hidden}
+.cell.pgm .vid{outline:3px solid var(--pgm);outline-offset:-3px}
+.ov{position:absolute;font-size:12px;background:rgba(23,25,29,.84);border-radius:6px;padding:4px 8px;display:flex;gap:6px;align-items:center}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--rec);flex:none;animation:b 1.2s infinite}@keyframes b{50%{opacity:.25}}
+.rec{right:10px;top:10px;font-weight:600;cursor:pointer;user-select:none;min-width:92px;justify-content:center}
+.rec .stop{display:none;color:var(--rec)}.rec:hover .t{display:none}.rec:hover .dot{display:none}.rec:hover .stop{display:inline}
+.start{right:10px;top:10px;cursor:pointer;display:none;user-select:none;border:1px solid var(--line)}
+.start i{width:8px;height:8px;border-radius:50%;background:var(--rec)}
+.start:hover{background:var(--raised-hi)}
+body.vA .vid:hover .start{display:flex}
+.side{width:300px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;flex:none}
+.ph{flex:1;color:var(--faint);display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.5}
+.stopb{height:42px;border:1px solid var(--fault);color:var(--fault);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700}
+.sb{height:34px;background:var(--surface);border-top:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 10px;color:var(--dim);flex:none;position:relative}
+.pill{display:none;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:3px 11px;color:var(--white);cursor:pointer;user-select:none}
+.pill.warn{border-color:var(--lost);color:var(--lost)}.pill.crit{border-color:var(--fault);color:var(--fault)}
+#barBtn{display:none}body.vB #barBtn{display:inline-flex}
+#barBtn.on{border-color:var(--white)}#barBtn i{width:8px;height:8px;border-radius:50%;background:var(--rec)}
+.menu{display:none;position:absolute;left:10px;bottom:40px;width:330px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;z-index:5}
+.menu.open{display:block}
+.mi{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px}.mi:hover{background:var(--raised)}
+.mi .r{margin-left:auto;color:var(--rec);cursor:pointer}.sep{height:1px;background:var(--line);margin:4px 0}
+.co{position:absolute;width:24px;height:24px;border-radius:50%;background:var(--lime);color:var(--bg);font-weight:800;display:flex;align-items:center;justify-content:center;z-index:9;box-shadow:0 0 0 2px var(--bg)}
+.co.hit,.lg.hit .num{outline:3px solid var(--white)}
+.lgs{display:grid;grid-template-columns:1fr 1fr;gap:8px 28px;margin-top:14px;max-width:1640px}
+.lg{display:flex;gap:10px;line-height:1.45;color:var(--dim)}.lg b{color:var(--white)}
+.num{flex:none;width:24px;height:24px;border-radius:50%;background:var(--lime);color:var(--bg);font-weight:800;display:flex;align-items:center;justify-content:center}
+.two{display:grid;grid-template-columns:540px 1fr;gap:28px;align-items:start}
+.dlg{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px}
+.dlg h3{margin:0 0 3px;font-size:16px}.dlg p{margin:0 0 14px;color:var(--dim);line-height:1.45}
+.row{margin-bottom:14px}.row .lbl{display:block;margin-bottom:6px}
+.field{display:flex;align-items:center;gap:8px;height:34px;background:var(--raised);border:1px solid var(--line);border-radius:8px;padding:0 10px}
+.opt{display:flex;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer;line-height:1.4}
+.opt.on{border-color:var(--white)}.opt small{color:var(--faint);display:block;font-size:12px}
+.rd{width:14px;height:14px;border-radius:50%;border:1px solid var(--grey);flex:none;margin-top:2px}.opt.on .rd{background:var(--lime);border-color:var(--lime);box-shadow:inset 0 0 0 3px var(--surface)}
+.foot{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}.foot .btn{height:34px;padding:0 14px}
+.load{display:flex;gap:16px;align-items:center;cursor:default;position:relative;padding:4px 8px;border-radius:8px}
+.load:hover{background:var(--raised)}
+.m{display:flex;flex-direction:column;line-height:1.15;min-width:58px}
+.m .a{font-weight:600}.m .a span{color:var(--faint);font-weight:600;font-size:11px;letter-spacing:.04em;margin-right:4px}
+.m .p{color:var(--faint);font-size:11px}
+.m.warn .a{color:var(--lost)}.m.crit .a{color:var(--fault)}
+.inline{display:none;gap:12px}.inline .x{color:var(--dim)}.inline .x b{color:var(--white);font-weight:600}.inline .x.warn b{color:var(--lost)}.inline .x.crit b{color:var(--fault)}
+body.lbottom .inline{display:inline-flex}body.lbottom #loadTop{display:none}
+.pop{display:none;position:absolute;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;width:430px;z-index:8;color:var(--white)}
+.pop table{width:100%;border-collapse:collapse}.pop th{font-size:11px;color:var(--faint);font-weight:600;text-align:right;padding:0 0 6px 10px}.pop th:first-child{text-align:left;padding-left:0}
+.pop td{padding:6px 0 6px 10px;text-align:right;border-top:1px solid var(--line)}.pop td:first-child{text-align:left;padding-left:0;font-weight:600}.pop td small{display:block;color:var(--faint);font-size:12px;font-weight:400}
+.pop p{margin:8px 0 0;color:var(--faint);font-size:12px;line-height:1.4}
+#loadTop:hover #popT{display:block;top:44px;right:0}
+.inline:hover #popB{display:block;bottom:30px;right:0}.inline{position:relative}
+.disk{border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:6px}.disk.bad{border-color:var(--fault)}
+.disk .h{display:flex;gap:8px;align-items:baseline;font-weight:600}.disk .h span{color:var(--faint);font-weight:400;font-size:12px}
+.track{height:6px;border-radius:3px;background:var(--raised-hi);margin:8px 0;overflow:hidden}.track i{display:block;height:100%;background:var(--grey)}
+.disk .s{color:var(--dim);line-height:1.45}.disk .w{color:var(--lost);margin-top:6px;line-height:1.4}.disk.bad .s{color:var(--fault)}
+ul.q{margin:0;padding-left:18px;color:var(--dim);line-height:1.6}ul.q b{color:var(--white)}
+</style></head><body class="vA"><div id="page">
+<h1>Запись видео и показ нагрузки</h1>
+<p class="sub">Индикацию вы уже выбрали: плашка «REC» в углу видео и строка внизу слева. Кнопка на видео одобрена. Новое в этой версии: папка с подсчётом места именно на её диске (ниже, в настройках) и нагрузка на компьютер (<b>4</b> на окне). Окно живое: наведите мышь на видео, нажмите запись, наведите на цифры нагрузки.</p>
+<div class="bar">
+<span class="lbl">Нагрузка</span><div class="seg" id="segL"><button data-l="top" class="on">А · вверху (советую)</button><button data-l="bottom">Б · внизу</button></div>
+<div class="seg" id="segH"><button data-h="0" class="on">Обычная</button><button data-h="1">Высокая</button></div>
+<span class="lbl">Места на диске</span><div class="seg" id="segS"><button data-s="ok" class="on">Много</button><button data-s="warn">Меньше 20 мин</button><button data-s="crit">Меньше 5 мин</button></div>
+<button class="btn" id="demo">Показать: идёт запись камер 1 и 3</button>
+</div>
+
+<div id="win">
+<div class="top"><span class="logo"><b>PTZ</b> <span>TRACKER</span></span><span style="margin-left:auto"></span><div class="load" id="loadTop"><div class="m" id="mC"></div><div class="m" id="mG"></div><div class="m" id="mR"></div><div class="pop" id="popT"></div></div><span class="btn">▦ 4</span><span class="btn">Журнал</span><span class="btn">☰</span><span class="btn" style="font-weight:700">TRACK OFF</span></div>
+<div class="main">
+ <div class="grid" id="grid"></div>
+ <div class="side"><div style="font-weight:600;display:flex;gap:8px;align-items:center"><span class="n">1</span>Сцена</div><div class="ph">Правая панель<br>без изменений</div><div class="stopb">СТОП КАМЕРЫ</div></div>
+</div>
+<div class="sb"><span class="pill" id="pill"></span><span id="msg" style="color:var(--dim)"></span><span style="margin-left:auto"></span><span>1920×1080 · 25</span><span>15 к/с</span><span class="inline" id="loadB"><span class="x" id="iC"></span><span class="x" id="iG"></span><span class="x" id="iR"></span><div class="pop" id="popB"></div></span><span class="btn" id="barBtn"><i></i><span id="barTxt">Запись</span> <span class="kb">R</span></span><span class="btn">Пресеты <span class="kb">P</span></span><span class="btn">Справка <span class="kb">F1</span></span><span style="color:var(--faint)">v1.3</span>
+ <div class="menu" id="menu"></div></div>
+<span class="co" data-c="1" style="left:526px;top:104px">1</span>
+<span class="co" data-c="2" style="left:2px;top:788px">2</span>
+<span class="co" data-c="4" style="left:1040px;top:13px">4</span>
+</div>
+
+<div class="lgs">
+<div class="lg" data-c="1"><span class="num">1</span><div><b>Начать запись — на самом видео.</b> Наведите мышь на клетку: в углу появляется «● Запись», на том же месте, где потом будет REC. Клавиша <b>R</b> — запись выбранной камеры. Пока мыши нет, кнопки не видно и эфирная картинка не загружена лишним.</div></div>
+<div class="lg" data-c="2"><span class="num">2</span><div><b>Строка внизу слева</b> — как вы выбрали: какие камеры пишутся, сколько времени, объём и запас места. Клик — меню: остановить отдельную камеру или все, открыть папку.</div></div>
+<div class="lg" data-c="1"><span class="num">1</span><div><b>Остановить</b> — наведите на REC, плашка станет «■ Стоп», клик останавливает только эту камеру. Случайно не сработает: плашка меняется только под мышью. Esc запись <b>не</b> останавливает: Esc — это стоп камеры, а запись эфира должна идти дальше.</div></div>
+<div class="lg" data-c="4"><span class="num">4</span><div><b>Нагрузка.</b> Сверху — сколько занято всего, снизу — сколько из этого даёт PTZ Tracker. Обновляется раз в секунду. Больше 85 % — оранжевым, больше 95 % — красным. Наведите мышь — таблица с подробностями. В верхней строке посередине всегда пусто, поэтому ничего не сдвигается и хватает места на две строки.</div></div>
+</div>
+
+<h2>Настройки: ☰ → «Запись видео…»</h2>
+<div class="two">
+<div class="dlg"><h3>Запись видео</h3><p>Видео камеры в файл, отдельно от журнала F9. Запись не влияет на управление и слежение.</p>
+<div class="row"><span class="lbl">Куда сохранять</span>
+<div class="seg" id="segD" style="margin-bottom:8px"><button data-d="int" class="on">Внутренний</button><button data-d="ext">Внешний SSD</button><button data-d="fat">Флешка FAT32</button><button data-d="off">Диск вынут</button></div>
+<div style="display:flex;gap:6px"><div class="field" style="flex:1" id="path"></div><span class="btn" style="height:34px">Изменить…</span><span class="btn" style="height:34px">Открыть</span></div>
+<div class="disk" id="disk"></div></div>
+<div class="row"><span class="lbl">Что записывать</span>
+<div class="opt on"><span class="rd"></span><div>Как отдаёт камера<small>H.264 в полном качестве, без пережатия. Процессор почти не нагружает.</small></div></div>
+<div class="opt"><span class="rd"></span><div>Лёгкий файл · 3000 кбит/с, 25p<small>Камера или программа пережимает поток. Удобно для архива, нагружает компьютер.</small></div></div></div>
+<div class="row"><span class="lbl">Имя файла</span><div class="field" style="color:var(--dim)">Сцена_2026-11-08_20-35.mp4</div></div>
+<div class="foot"><span class="btn">Отмена</span><span class="btn" style="border-color:var(--white)">Сохранить</span></div></div>
+<div><h2 style="margin-top:0">Что заложено в этот вариант (скажите, если не так)</h2><ul class="q">
+<li><b>Одна папка на все камеры,</b> в имени файла — название камеры. Запас считается по диску, на котором лежит эта папка, и обновляется во время записи.</li>
+<li><b>Диск вынули во время записи:</b> запись останавливается, сообщение красным, записанное до этого момента остаётся на диске. На вынутый диск запись не начнётся: программа скажет почему.</li>
+<li><b>Звука нет</b> — пишется только картинка камеры.</li>
+<li><b>Без наложений:</b> рамки слежения, REC и подписи в файл не попадают — чистый поток камеры.</li>
+<li><b>Файл не теряется при сбое.</b> Если программа упадёт или выключат свет, записанное до этого момента останется читаемым.</li>
+<li><b>Обрыв связи с камерой:</b> запись продолжается в новый файл, как только камера вернётся, и программа об этом пишет.</li>
+<li><b>Место кончается:</b> при запасе меньше ~1 минуты запись останавливается сама, файл закрывается корректно.</li>
+<li><b>Выход из программы при идущей записи</b> — переспросит.</li></ul></div></div>
+</div>
+<script>
+const cams=[{n:1,name:'Сцена',cls:'pgm',tag:'PGM'},{n:2,name:'Зал',cls:'pvw',tag:'PVW'},{n:3,name:'Общий',cls:'',tag:''},{n:4,name:'Кафедра',cls:'',tag:''}];
+const on=new Set();let sec=754,space='ok',sel=1,diskId='int',high=false;
+const RATE=11.5; // ГБ в час на камеру, 25 Мбит/с
+const disks={int:{path:'Рабочий стол / Записи камер',l:'C:',name:'Системный диск',kind:'внутренний · NTFS',free:180,total:512},
+ ext:{path:'E: Samsung T7 / Записи камер',l:'E:',name:'Samsung T7',kind:'съёмный · exFAT',free:412,total:1000},
+ fat:{path:'F: USB DISK / Записи',l:'F:',name:'USB DISK',kind:'съёмный · FAT32',free:48,total:64,w:'FAT32 не хранит файлы больше 4 ГБ. Запись сама делится на части примерно по 20 минут, без пропусков между ними.'},
+ off:{path:'E: Samsung T7 / Записи камер',l:'E:',off:1}};
+const H=m=>{const h=Math.floor(m/60);return h?h+' ч'+(m%60&&h<10?' '+m%60+' мин':''):m+' мин'};
+const gb=x=>String(Math.round(x));
+function drawDisk(){const d=disks[diskId],e=document.getElementById('disk');document.getElementById('path').textContent=d.path;
+ if(d.off){e.className='disk bad';e.innerHTML='<div class="s">Диск E: не подключён. Подключите его или выберите другую папку — иначе запись не начнётся.</div>';return}
+ e.className='disk';e.innerHTML=`<div class="h">${d.name} (${d.l}) <span>${d.kind}</span></div><div class="track"><i style="width:${100-d.free/d.total*100}%"></i></div><div class="s">Свободно ${gb(d.free)} ГБ из ${d.total>=1000?'1 ТБ':d.total+' ГБ'}. Хватит примерно: одна камера — ${H(Math.floor(d.free/RATE*60))}, четыре — ${H(Math.floor(d.free/RATE/4*60))}.</div>${d.w?`<div class="w">${d.w}</div>`:''}`}
+let L={c:[34,12],g:[52,41],r:[41,9]};
+const cl=v=>v>95?'crit':v>85?'warn':'';
+function drawLoad(){const K={c:'CPU',g:'GPU',r:'RAM'};
+ for(const k of 'cgr'){const[a,p]=L[k],C=k.toUpperCase();
+  const m=document.getElementById('m'+C);m.className='m '+cl(a);m.innerHTML=`<div class="a"><span>${K[k]}</span>${a} %</div><div class="p">PTZ ${p} %</div>`;
+  const i=document.getElementById('i'+C);i.className='x '+cl(a);i.innerHTML=`${K[k]} <b>${a} %</b> · ${p}`}
+ const html=`<table><tr><th></th><th>Всего</th><th>PTZ Tracker</th></tr><tr><td>Процессор<small>Core i5, 12 потоков</small></td><td>${L.c[0]} %</td><td>${L.c[1]} %</td></tr><tr><td>Видеокарта<small>GTX 1650 · память 2,1 из 4 ГБ</small></td><td>${L.g[0]} %</td><td>${L.g[1]} %</td></tr><tr><td>Память<small>${(16*L.r[0]/100).toFixed(1).replace('.',',')} из 16 ГБ · PTZ ${(16*L.r[1]/100).toFixed(1).replace('.',',')} ГБ</small></td><td>${L.r[0]} %</td><td>${L.r[1]} %</td></tr></table><p>Проценты — от всего компьютера: 12 % процессора значит 12 % всей его мощности, а не одного ядра.</p>`;
+ document.getElementById('popT').innerHTML=html;document.getElementById('popB').innerHTML=html}
+function jit(){const b=high?{c:[92,61],g:[97,88],r:[71,14]}:{c:[34,12],g:[52,41],r:[41,9]};for(const k of 'cgr'){const[a,p]=b[k],d=k=='r'?0:Math.round(Math.random()*4-2);L[k]=[Math.min(100,a+d),Math.max(1,p+(k=='r'?0:Math.round(d/2)))]}drawLoad()}
+const fmt=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+function draw(){
+ document.getElementById('grid').innerHTML=cams.map(c=>`<div class="cell ${c.cls} ${c.n==sel?'sel':''}" data-n="${c.n}"><div class="hd"><span class="n ${c.cls}">${c.n}</span>${c.name}<span style="margin-left:auto"></span>${c.tag?`<span class="tag ${c.cls}">${c.tag}</span>`:''}<span class="tag ${c.n==1?'on':''}">${c.n==1?'ВЕДУ':'ВЫКЛ'}</span><span style="color:var(--lime)">⏻</span><span style="color:var(--faint)">⋯</span></div><div class="vid"><div class="ov" style="left:10px;top:10px">${c.n==1?'Цель выбрана':'Цель не выбрана'}</div>${on.has(c.n)?`<div class="ov rec" data-t="${c.n}"><span class="dot"></span><span class="t">REC ${fmt(sec)}</span><span class="stop">■ Стоп</span></div>`:`<div class="ov start" data-t="${c.n}"><i></i>Запись <span class="kb">R</span></div>`}<div class="ov" style="right:10px;bottom:10px">1920×1080 · 25</div></div></div>`).join('');
+ const p=document.getElementById('pill'),m=document.getElementById('menu'),msg=document.getElementById('msg');
+ const list=[...on].sort().join(', ');
+ p.style.display=on.size?'inline-flex':'none';p.className='pill '+(space=='ok'?'':space);
+ const d=disks[diskId],n=Math.max(1,on.size),mins=space=='warn'?18:space=='crit'?4:Math.floor((d.free||0)/RATE/n*60),fg=space=='ok'?(d.free||0):mins/60*RATE*n;
+ const free=`на ${d.l} свободно ${fg>=10?gb(fg):fg.toFixed(1).replace('.',',')} ГБ (~${H(mins)})`;
+ p.innerHTML=`<span class="dot"></span>Запись: ${list} · ${fmt(sec)} · ${(sec*on.size*0.0032).toFixed(1).replace('.',',')} ГБ · ${free}`;
+ msg.textContent=on.size&&space=='crit'?'Мало места: запись скоро остановится сама':'';msg.style.color='var(--fault)';
+ m.innerHTML=[...on].sort().map(n=>`<div class="mi"><span class="n">${n}</span>${cams[n-1].name}<span style="color:var(--faint)">${fmt(sec)}</span><span class="r" data-t="${n}">■ Стоп</span></div>`).join('')+`<div class="sep"></div><div class="mi" data-all="1" style="cursor:pointer">■ Остановить все</div><div class="mi">Открыть папку</div>`;
+ if(!on.size)m.classList.remove('open');
+ const b=document.getElementById('barBtn');b.classList.toggle('on',on.has(sel));document.getElementById('barTxt').textContent=on.has(sel)?'Стоп записи':'Запись';
+}
+function toggle(n){if(!on.has(n)&&disks[diskId].off){const m=document.getElementById('msg');m.textContent='Запись не начата: диск E: не подключён. ☰ → Запись видео…';m.style.color='var(--fault)';return}on.has(n)?on.delete(n):on.add(n);draw()}
+document.addEventListener('click',e=>{const t=e.target.closest('[data-t]');
+ if(t){toggle(+t.dataset.t);return}
+ if(e.target.closest('[data-all]')){on.clear();draw();return}
+ if(e.target.closest('#pill')){document.getElementById('menu').classList.toggle('open');return}
+ if(e.target.closest('#barBtn')){toggle(sel);return}
+ if(e.target.closest('#demo')){on.clear();on.add(1);on.add(3);draw();return}
+ const c=e.target.closest('.cell');if(c){sel=+c.dataset.n;draw()}});
+document.addEventListener('keydown',e=>{if(e.key.toLowerCase()=='r'||e.key.toLowerCase()=='к')toggle(sel)});
+document.querySelectorAll('#segL button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#segL button').forEach(x=>x.classList.remove('on'));b.classList.add('on');document.body.className='vA'+(b.dataset.l=='bottom'?' lbottom':'')});
+document.querySelectorAll('#segH button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#segH button').forEach(x=>x.classList.remove('on'));b.classList.add('on');high=b.dataset.h=='1';jit()});
+document.querySelectorAll('#segD button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#segD button').forEach(x=>x.classList.remove('on'));b.classList.add('on');diskId=b.dataset.d;if(disks[diskId].off)on.clear();drawDisk();draw()});
+setInterval(jit,1000);
+document.querySelectorAll('#segS button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#segS button').forEach(x=>x.classList.remove('on'));b.classList.add('on');space=b.dataset.s;draw()});
+document.querySelectorAll('.opt').forEach(o=>o.onclick=()=>{document.querySelectorAll('.opt').forEach(x=>x.classList.remove('on'));o.classList.add('on')});
+document.querySelectorAll('.lg').forEach(l=>{const h=v=>{document.querySelectorAll(`.co[data-c="${l.dataset.c}"]`).forEach(c=>c.classList.toggle('hit',v));l.classList.toggle('hit',v)};l.onmouseenter=()=>h(true);l.onmouseleave=()=>h(false)});
+setInterval(()=>{if(on.size){sec++;document.querySelectorAll('.t').forEach(t=>t.textContent='REC '+fmt(sec));const p=document.getElementById('pill');if(p&&!document.getElementById('menu').classList.contains('open'))draw()}},1000);
+function fit(){const s=Math.min(1,innerWidth/1680),p=document.getElementById('page');p.style.transform=`scale(${s})`;document.body.style.height=p.offsetHeight*s+'px'}
+addEventListener('resize',fit);drawDisk();drawLoad();draw();fit();
+</script></body></html>

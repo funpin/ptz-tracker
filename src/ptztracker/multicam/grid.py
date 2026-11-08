@@ -55,8 +55,7 @@ class CameraGrid:
         cell = self.cells[slot]
         if cell is None:
             return
-        cell.gate.revoke()
-        cell.mixer.clear_all()
+        self._disarm(cell)
         self.cells[slot] = None
         self._emergency_one(cell)  # стоп — в очередь сразу; остановка потоков — в фоне, окно не ждёт сеть
         threading.Thread(target=self._stop_one, args=(cell,), name="grid-close", daemon=True).start()
@@ -66,8 +65,7 @@ class CameraGrid:
         cells = [c for c in self.cells if c is not None]
         self.cells = [None] * GRID_SLOTS
         for c in cells:
-            c.gate.revoke()
-            c.mixer.clear_all()
+            self._disarm(c)
         for c in cells:  # стопы — в очередь сразу, до медленной остановки потоков
             self._emergency_one(c)
         threads = []
@@ -91,6 +89,23 @@ class CameraGrid:
             log.exception("Не удалось остановить камеру %s", camera_id)
 
     @staticmethod
+    def _disarm(cell: Cell) -> None:
+        """Снять разрешения и обнулить источники; сбой не отменяет стопы (ни этой камеры, ни других)."""
+        try:
+            cell.gate.revoke()
+        except Exception:
+            log.exception("Стоп: не снято разрешение агента камеры %s", cell.cfg.id)
+        try:
+            cell.mixer.clear_all()
+        except Exception:
+            log.exception("Стоп: не обнулены источники камеры %s", cell.cfg.id)
+
+    def stop_cell(self, cell: Cell) -> None:
+        """Стоп одной камеры (тачпад геймпада): разрешения, источники, затем аварийный стоп."""
+        self._disarm(cell)
+        self._emergency_one(cell)
+
+    @staticmethod
     def _emergency_one(cell: Cell) -> None:
         try:
             cell.session.emergency_stop()
@@ -106,15 +121,8 @@ class CameraGrid:
     def emergency_stop_all(self) -> None:
         """Все камеры: сначала снять разрешения и обнулить источники, затем стопы; сбой одной не мешает другим."""
         cells = [c for c in self.cells if c is not None]
-        for c in cells:  # сбой подготовки одной камеры не отменяет стопы (ни её, ни чужие)
-            try:
-                c.gate.revoke()
-            except Exception:
-                log.exception("Аварийный стоп: не снято разрешение агента камеры %s", c.cfg.id)
-            try:
-                c.mixer.clear_all()
-            except Exception:
-                log.exception("Аварийный стоп: не обнулены источники камеры %s", c.cfg.id)
+        for c in cells:
+            self._disarm(c)
         for c in cells:
             self._emergency_one(c)
 

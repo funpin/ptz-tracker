@@ -43,3 +43,13 @@ def test_broken_index_is_ignored(tmp_path):
     for f in tmp_path.rglob("index.json"):
         f.write_text("{oops")
     assert PresetThumbs(tmp_path).load("cam-a") == {}
+
+
+def test_save_does_not_depend_on_imwrite(tmp_path, monkeypatch):
+    """На Windows cv2.imwrite молча не пишет по путям с кириллицей (папка пользователя)."""
+    import cv2
+
+    monkeypatch.setattr(cv2, "imwrite", lambda *a, **k: False)
+    t = PresetThumbs(tmp_path / "Камеры")
+    t.save("cam-a", 1, np.zeros((360, 640, 3), np.uint8), pan=None)
+    assert t.load("cam-a")[1].image is not None

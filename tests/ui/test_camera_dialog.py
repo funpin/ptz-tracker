@@ -333,3 +333,27 @@ def test_password_can_be_shown(qtbot):
     qtbot.addWidget(d)
     d.show_pass.click()
     assert d.pass_edit.echoMode() == QLineEdit.Normal
+
+
+def test_probe_reports_unexpected_error(qtbot, monkeypatch):
+    """Неожиданная ошибка не оставляет кнопку на «Проверяю…»: ответ приходит всегда."""
+    import httpx
+
+    from ptztracker.ui import camera_dialog as cd
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def send(self, cmd):
+            raise httpx.InvalidURL("bad host")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cd, "CameraClient", Client)
+    signals = cd._Signals()
+    got = []
+    signals.done.connect(got.append)
+    cd._ProbeTask("h h", "u", "p", signals).run()
+    assert len(got) == 1 and got[0].startswith("✖")

@@ -1,4 +1,5 @@
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -833,3 +834,17 @@ def test_emergency_stop_sent_even_if_follower_raises():
     finally:
         s.follower = None
         s.stop()
+
+
+@pytest.mark.parametrize("part", ["limit_watch", "follower", "analyzer"])
+def test_stop_sends_stops_even_if_preparation_fails(part):
+    """Сбой подготовительного шага не отменяет стоп камеры и не оставляет видео работать."""
+    s = CameraSession(sim_cfg())
+    s.start()
+    assert _wait(lambda: s.online)  # пока камера не на связи, стопов не ждут
+    real = getattr(s, part)
+    setattr(s, part, SimpleNamespace(stop=boom))
+    s.stop()
+    if real is not None:
+        real.stop()
+    assert "#PTS5050" in s.sim.received and "#Z50" in s.sim.received

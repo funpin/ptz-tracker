@@ -256,12 +256,12 @@ class CameraSession:
         """
         self._hb_stop.set()
         if self.limit_watch:
-            self.limit_watch.stop()
+            self._guarded("упоры", self.limit_watch.stop)
             self.limit_watch = None
         if self.follower:
-            self.follower.stop()
+            self._guarded("слежение", self.follower.stop)
         if self.analyzer:
-            self.analyzer.stop(timeout=0.2)  # поток daemon: если он в середине распознавания — доработает сам
+            self._guarded("анализ", self.analyzer.stop, timeout=0.2)  # поток daemon: если он в середине распознавания — доработает сам
         if self.scheduler:
             if not self.observe_only:  # наблюдатель камерой не управляет — и не останавливает её
                 self.scheduler.emergency_stop()
@@ -269,12 +269,20 @@ class CameraSession:
                     self.scheduler.wait_emergency(STOP_FLUSH_S)
             self.scheduler.stop(timeout=0.2)
         if self.frames:
-            self.frames.stop(timeout=0.0)
+            self._guarded("видео", self.frames.stop, timeout=0.0)
         if self._server:
-            self._server.stop()
+            self._guarded("сервер симулятора", self._server.stop)
         rec, self.recorder = self.recorder, NullRecorder()
         # close() дописывает постоянную запись на диск — в фоне, чтобы окно не ждало
         threading.Thread(target=rec.close, name="blackbox-close", daemon=True).start()
+
+    @staticmethod
+    def _guarded(what: str, step: Callable[..., object], **kw) -> None:
+        """Шаг остановки: сбой не отменяет следующие шаги и стоп камеры."""
+        try:
+            step(**kw)
+        except Exception:
+            log.exception("Остановка камеры: сбой (%s)", what)
 
     def quiet_for_calibration(self) -> None:
         """Выключить слежение и приостановить фоновые опросы (пульс, положение камеры) на время калибровки.
