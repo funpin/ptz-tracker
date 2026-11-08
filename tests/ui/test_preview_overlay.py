@@ -221,3 +221,16 @@ def test_plate_does_not_shrink_under_the_mouse(qtbot):
     p.targetClicked.connect(selected.append)
     qtbot.mouseClick(p, Qt.LeftButton, pos=left)
     assert clicks == [1] and selected == []
+
+
+def test_degraded_recording_has_orange_dot(qtbot):
+    from ptztracker.ui.theme import C
+    from ptztracker.videorec.recorder import RecState
+
+    p = rec_preview(qtbot)
+    p.set_rec(RecState(active=True, elapsed_s=5))
+    assert p.rec_dot_color() == C.REC
+    p.set_rec(RecState(active=True, elapsed_s=5, degraded=True))
+    assert p.rec_dot_color() == C.LOST
+    assert p.rec_text() == "REC 00:05"
+

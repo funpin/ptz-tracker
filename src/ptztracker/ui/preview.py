@@ -212,6 +212,9 @@ class PreviewWidget(QWidget):
         s = self._rec
         return "■ Стоп" if s is not None and self._rec_hovered(s) else self._rec_steady_text()
 
+    def rec_dot_color(self) -> str:
+        return C.LOST if self._rec is not None and self._rec.degraded else C.REC
+
     def _rec_hovered(self, s: RecState) -> bool:
         if self._rec_mouse is None or self.mouse_mode or not s.active:
             return False
@@ -232,7 +235,7 @@ class PreviewWidget(QWidget):
         p.drawRoundedRect(r, R_TAG + 1, R_TAG + 1)
         stopping = text == "■ Стоп"
         if not stopping and (self._rec_blink() or not self._rec.active):
-            p.setBrush(qcolor(C.REC))
+            p.setBrush(qcolor(self.rec_dot_color()))
             p.drawEllipse(QPointF(r.left() + REC_PAD_X + REC_DOT / 2, r.center().y()), REC_DOT / 2, REC_DOT / 2)
         p.setFont(self._rec_font())
         p.setPen(qcolor(C.REC if stopping else C.TEXT))

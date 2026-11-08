@@ -1,0 +1,87 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Куда перенести нагрузку</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A;--lost:#F0A020;--fault:#EF4444;--pgm:#E8202A;--pvw:#2FB65E;--rec:#FF3B30}
+*{box-sizing:border-box}
+body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;font-size:13px;font-variant-numeric:tabular-nums}
+#page{width:1680px;padding:18px 20px 40px;transform-origin:0 0}
+h1{font-size:20px;margin:0 0 4px}.sub{color:var(--dim);margin:0 0 12px;line-height:1.5;max-width:1250px}
+.bar{display:flex;gap:18px;align-items:center;margin-bottom:12px}.lbl{color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}.seg button{all:unset;cursor:pointer;padding:7px 13px;color:var(--dim);background:var(--raised);border-right:1px solid var(--line)}.seg button:last-child{border-right:0}.seg button.on{background:var(--white);color:var(--bg);font-weight:600}
+#win{position:relative;width:1640px;height:850px;background:var(--bg);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
+.top{height:50px;display:flex;align-items:center;padding:0 12px;border-bottom:1px solid var(--line);gap:12px;flex:none;white-space:nowrap}
+.logo b{font-weight:800}.logo span{font-weight:400;letter-spacing:.22em;font-size:11px;color:var(--dim)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;background:var(--raised);border:1px solid var(--line);border-radius:8px;color:var(--white);white-space:nowrap}
+.pill{display:inline-flex;align-items:center;gap:6px;color:var(--dim);white-space:nowrap}.lamp{width:7px;height:7px;border-radius:50%;background:var(--pvw)}
+.pad{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:5px;padding:2px 5px}
+.track{height:34px;padding:0 12px;border:1px solid var(--line);border-radius:8px;display:inline-flex;align-items:center;font-weight:700;background:var(--lime);color:var(--bg)}
+.main{flex:1;display:flex;gap:10px;padding:10px;min-height:0}
+.grid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:10px;min-width:0}
+.cell{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:0 6px 6px;display:flex;flex-direction:column;min-height:0}.cell.sel{border-color:var(--white)}
+.hd{height:36px;display:flex;align-items:center;gap:7px;padding:0 4px;font-weight:600;flex:none}
+.n{width:22px;height:22px;border-radius:5px;background:var(--raised-hi);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none}.n.pgm{background:var(--pgm)}.n.pvw{background:var(--pvw)}
+.tag{font-size:10px;font-weight:700;border-radius:4px;padding:2px 6px;border:1px solid var(--line);color:var(--faint)}.tag.pgm{color:#fff;background:var(--pgm);border-color:var(--pgm)}.tag.pvw{color:var(--pvw);border-color:var(--pvw)}.tag.on{color:var(--bg);background:var(--lime);border-color:var(--lime)}
+.vid{flex:1;border-radius:6px;position:relative;background:linear-gradient(180deg,#4f5866,#3e434c 55%,#4d3c2e 56%,#3a2d22)}.cell.pgm .vid{outline:3px solid var(--pgm);outline-offset:-3px}
+.ov{position:absolute;font-size:12px;background:rgba(23,25,29,.84);border-radius:6px;padding:4px 8px;display:flex;gap:6px;align-items:center}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--rec);flex:none;animation:b 1.2s infinite}@keyframes b{50%{opacity:.25}}
+.side{width:356px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px;display:flex;flex-direction:column;flex:none}
+.shead{height:30px;display:flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap}.shead .name{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ph{flex:1;color:var(--faint);display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.5}
+.stopb{height:42px;border:1px solid var(--fault);color:var(--fault);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700}
+.sb{height:34px;background:var(--surface);border-top:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 10px;color:var(--dim);flex:none;white-space:nowrap}
+.rec{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:3px 11px;color:var(--white);flex:none}
+.msg{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--fault)}
+.kb{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;font-size:10.5px;color:var(--dim)}
+.load{position:relative;display:none;align-items:center;cursor:default;border-radius:6px;padding:2px 6px}.load:hover{background:var(--raised)}
+body.vA #loadA,body.vB #loadB,body.vC #loadC{display:inline-flex}
+body.vA .dup{display:none}
+.x{margin-right:12px;color:var(--faint)}.x:last-of-type{margin-right:0}.x b{color:var(--white);font-weight:600}.x.warn b{color:var(--lost)}.x.crit b{color:var(--fault)}
+#loadB .x{margin-right:10px}
+#loadC{gap:4px;height:34px;padding:2px 7px}
+.b{width:9px;height:26px;background:var(--raised-hi);border-radius:2px;position:relative;overflow:hidden}.b i{position:absolute;left:0;right:0;bottom:0;background:var(--grey)}.b u{position:absolute;left:0;right:0;bottom:0;background:var(--white)}.b.warn i{background:var(--lost)}.b.crit i{background:var(--fault)}
+.pop{display:none;position:absolute;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;width:400px;z-index:8;color:var(--white);white-space:normal}.load:hover .pop{display:block}
+#loadA .pop{right:0;bottom:30px}#loadB .pop{right:0;top:30px}#loadC .pop{right:0;top:40px}
+table{width:100%;border-collapse:collapse}th{font-size:11px;color:var(--faint);font-weight:600;text-align:right;padding:0 0 6px 10px}th:first-child{text-align:left}td{padding:6px 0 6px 10px;text-align:right;border-top:1px solid var(--line)}td:first-child{text-align:left;padding-left:0;font-weight:600}td small{display:block;color:var(--faint);font-size:12px;font-weight:400}
+.co{position:absolute;width:24px;height:24px;border-radius:50%;background:var(--lime);color:var(--bg);font-weight:800;display:none;align-items:center;justify-content:center;z-index:9;box-shadow:0 0 0 2px var(--bg)}
+body.vA .co.a,body.vB .co.b1,body.vC .co.c{display:flex}
+.opts{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:16px}.opt{border:1px solid var(--line);border-radius:10px;padding:14px;line-height:1.5;color:var(--dim);cursor:pointer}.opt.on{border-color:var(--white)}.opt h3{margin:0 0 6px;font-size:15px;color:var(--white)}.best{font-size:10px;font-weight:700;color:var(--bg);background:var(--lime);padding:1px 6px;border-radius:4px;margin-left:6px}
+.opt p{margin:6px 0 0}.opt em{font-style:normal;color:var(--white)}
+</style></head><body class="vA"><div id="page">
+<h1>Куда перенести нагрузку</h1>
+<p class="sub">Окно ниже показано в худшем случае: шапка забита (ATEM, четыре геймпада, журнал, агент, новая версия), снизу идёт запись всех камер с длинным сообщением. Переключайте варианты, наведите мышь на цифры — появится таблица «Всего / PTZ Tracker».</p>
+<div class="bar"><span class="lbl">Вариант</span><div class="seg" id="segV"><button data-v="A" class="on">1 · Внизу вместо дублей</button><button data-v="B">2 · Над правой колонкой</button><button data-v="C">3 · Столбики в шапке</button></div>
+<span class="lbl">Нагрузка</span><div class="seg" id="segH"><button data-h="0">Обычная</button><button data-h="1" class="on">Высокая</button></div></div>
+<div id="win">
+<div class="top"><span class="logo"><b>PTZ</b> <span>TRACKER</span></span><span style="margin-left:auto"></span>
+<span class="load" id="loadC"><span class="b" id="bC"></span><span class="b" id="bG"></span><span class="b" id="bR"></span><div class="pop"></div></span>
+<span class="btn">▦ 4</span><span class="pill"><span class="lamp"></span>ATEM · 10.0.0.20</span><span class="pill" style="color:var(--lime)">Доступна 1.4.0</span>
+<span class="pad">🎮1 ▮</span><span class="pad">🎮2 ▮</span><span class="pad">🎮3 ▯</span><span class="pad">🎮4 ▮</span><span class="pill">Журнал · 5 мин</span><span class="pill">Агент · 2</span><span class="btn">☰</span><span class="track">TRACK ON&nbsp;&nbsp;1 2 3 4</span></div>
+<div class="main"><div class="grid" id="grid"></div>
+<div class="side"><div class="shead"><span class="n pgm">1</span><span class="name">Сцена — левая</span><span style="margin-left:auto"></span><span class="load" id="loadB"><span class="x" data-k="c" data-short="1"></span><span class="x" data-k="g" data-short="1"></span><span class="x" data-k="r" data-short="1"></span><div class="pop"></div></span></div><div class="ph">Правая панель<br>без изменений</div><div class="stopb">СТОП КАМЕРЫ</div></div></div>
+<div class="sb"><span class="rec"><span class="dot"></span>Запись: 1, 2, 3, 4 · 1:12:34 · 48,2 ГБ · на Samsung T7 свободно 412 ГБ (~9 ч)</span><span class="msg">Камера «Кафедра»: нет сигнала, запись продолжится, когда она вернётся</span>
+<span class="dup">1920×1080 · 25</span><span class="dup">15 к/с</span>
+<span class="load" id="loadA"><span class="x" data-k="c"></span><span class="x" data-k="g"></span><span class="x" data-k="r"></span><div class="pop"></div></span>
+<span class="btn">Пресеты <span class="kb">P</span></span><span class="btn">Справка <span class="kb">F1</span></span><span style="color:var(--faint)">v1.3.0 by funpin.ru &amp; Claude</span></div>
+<span class="co a" style="left:1000px;top:793px">1</span><span class="co b1" style="left:1270px;top:64px">2</span><span class="co c" style="left:918px;top:13px">3</span>
+</div>
+<div class="opts">
+<div class="opt" data-v="A"><h3>1 · В нижней строке<span class="best">советую</span></h3>На месте «1920×1080 · 25» и «15 к/с»: эти числа и так есть в углу каждого видео.<p><em>Плюс:</em> шапка свободна, цифры и доля PTZ видны всегда, технические показатели собраны в одном месте.</p><p><em>Минус:</em> строке сообщений остаётся меньше места: при записи длинный текст обрежется, полный — при наведении.</p></div>
+<div class="opt" data-v="B"><h3>2 · Над правой колонкой</h3>Справа от номера и имени выбранной камеры, где сейчас пусто.<p><em>Плюс:</em> шапка и нижняя строка не меняются вообще.</p><p><em>Минус:</em> общая нагрузка оказывается в панели одной камеры; долгое имя камеры обрежется; доля PTZ только при наведении.</p></div>
+<div class="opt" data-v="C"><h3>3 · Столбики в шапке</h3>Три тонких столбика CPU, GPU, RAM шириной 40 px: серый — всего, белый — доля PTZ, оранжевый или красный — перегрузка.<p><em>Плюс:</em> почти не занимает места, перегрузка видна издалека.</p><p><em>Минус:</em> точные цифры только при наведении.</p></div>
+</div></div>
+<script>
+const cams=[['Сцена — левая','pgm','PGM'],['Зал','pvw','PVW'],['Общий','',''],['Кафедра','','']];
+document.getElementById('grid').innerHTML=cams.map((c,i)=>`<div class="cell ${c[1]} ${i?'':'sel'}"><div class="hd"><span class="n ${c[1]}">${i+1}</span>${c[0]}<span style="margin-left:auto"></span>${c[2]?`<span class="tag ${c[1]}">${c[2]}</span>`:''}<span class="tag on">ВЕДУ</span><span style="color:var(--lime)">⏻</span><span style="color:var(--faint)">⋯</span></div><div class="vid"><div class="ov" style="left:10px;top:10px">Цель выбрана</div><div class="ov" style="right:10px;top:10px"><span class="dot"></span>REC 1:12:34</div><div class="ov" style="right:10px;bottom:10px">1920×1080 · 25 · анализ 15</div></div></div>`).join('');
+let high=true;const N={c:'CPU',g:'GPU',r:'RAM'};
+const cl=v=>v>95?'crit':v>85?'warn':'';
+function draw(){const L=high?{c:[92,61],g:[97,88],r:[71,14]}:{c:[34,12],g:[52,41],r:[41,9]};
+ document.querySelectorAll('.x').forEach(e=>{const[a,p]=L[e.dataset.k];e.className='x '+cl(a);e.innerHTML=e.dataset.short?`${N[e.dataset.k]} <b>${a}</b>`:`${N[e.dataset.k]} <b>${a} %</b> · PTZ ${p}`});
+ for(const k of 'cgr'){const[a,p]=L[k],b=document.getElementById('b'+k.toUpperCase());b.className='b '+cl(a);b.innerHTML=`<i style="height:${a}%"></i><u style="height:${p}%"></u>`}
+ const html=`<table><tr><th></th><th>Всего</th><th>PTZ Tracker</th></tr><tr><td>Процессор<small>12 потоков</small></td><td>${L.c[0]} %</td><td>${L.c[1]} %</td></tr><tr><td>Видеокарта</td><td>${L.g[0]} %</td><td>${L.g[1]} %</td></tr><tr><td>Память<small>${(16*L.r[0]/100).toFixed(1).replace('.',',')} из 16 ГБ</small></td><td>${L.r[0]} %</td><td>${L.r[1]} %</td></tr></table>`;
+ document.querySelectorAll('.pop').forEach(p=>p.innerHTML=html)}
+function pick(v){document.body.className='v'+v;document.querySelectorAll('#segV button').forEach(b=>b.classList.toggle('on',b.dataset.v==v));document.querySelectorAll('.opt').forEach(o=>o.classList.toggle('on',o.dataset.v==v))}
+document.querySelectorAll('#segV button,.opt').forEach(b=>b.onclick=()=>pick(b.dataset.v));
+document.querySelectorAll('#segH button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#segH button').forEach(x=>x.classList.remove('on'));b.classList.add('on');high=b.dataset.h=='1';draw()});
+function fit(){const s=Math.min(1,innerWidth/1680),p=document.getElementById('page');p.style.transform=`scale(${s})`;document.body.style.height=p.offsetHeight*s+'px'}
+addEventListener('resize',fit);draw();pick('A');fit();
+</script></body></html>

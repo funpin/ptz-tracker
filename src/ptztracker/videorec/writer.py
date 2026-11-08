@@ -106,9 +106,10 @@ class EncodeWriter(_Segments):
     """Кодирование кадров в H.264: «Лёгкий файл» и симулятор."""
 
     def __init__(self, folder: Path, stem: str, width: int, height: int, fps: int = 25,
-                 bit_rate: int | None = None, split_bytes: int | None = None):
+                 bit_rate: int | None = None, split_bytes: int | None = None, max_rate: int | None = None):
         super().__init__(folder, stem, split_bytes)
         self.width, self.height, self.fps, self.bit_rate = width, height, fps, bit_rate
+        self.max_rate = max_rate
         self._stream = None
         self._t0: float | None = None
         self._last_pts = -1
@@ -119,6 +120,8 @@ class EncodeWriter(_Segments):
         s.width, s.height, s.pix_fmt = self.width, self.height, "yuv420p"
         s.time_base = s.codec_context.time_base = _MS  # иначе кадры чаще 1/fps получают один и тот же dts
         s.options = {"preset": "veryfast", "g": str(self.fps), "bf": "0"}
+        if self.max_rate:  # средний битрейт — bit_rate; на движении до max_rate, буфер на полсекунды
+            s.options |= {"maxrate": str(self.max_rate), "bufsize": str(self.max_rate // 2)}
         if self.bit_rate:
             s.bit_rate = self.bit_rate
         self._stream = s

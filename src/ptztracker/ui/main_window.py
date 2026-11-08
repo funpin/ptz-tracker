@@ -313,9 +313,6 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         self.view_grid_btn.setChecked(True)
         self.view_grid_btn.clicked.connect(lambda: self.set_single_view(False))
         self.view_one_btn.clicked.connect(lambda: self.set_single_view(True))
-        self.load_meter = LoadMeter()
-        tl.addWidget(self.load_meter)
-        tl.addSpacing(SP[2])
         tl.addWidget(seg)
         tl.addSpacing(SP[1])
         for w in (self.atem_pill, self.top_pads, self.blackbox_btn, self.agent_badge):
@@ -491,7 +488,8 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         self.credit_label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
         # отступ справа: в окне со скруглёнными углами подпись не упирается в край
         self.credit_label.setContentsMargins(0, 0, SP[2], 0)
-        for wd in (self.video_pill, self.analysis_pill, _vline(), self.presets_btn, self.help_btn, _vline(),
+        self.load_meter = LoadMeter()
+        for wd in (self.video_pill, self.analysis_pill, self.load_meter, _vline(), self.presets_btn, self.help_btn, _vline(),
                    self.version_label, self.credit_label):
             sb.addPermanentWidget(wd)
         # чёрный ящик: «Показать в папке» после F9 — слева в строке состояния

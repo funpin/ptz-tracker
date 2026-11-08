@@ -21,7 +21,8 @@ from ptztracker.videorec.writer import CopyWriter, EncodeWriter, file_stem
 log = logging.getLogger(__name__)
 
 RETRY_DELAYS_S = (2, 5, 10)  # камера отказала в подключении (2026-10-29: на 2–3 с при нескольких клиентах)
-LIGHT_BIT_RATE = 3_000_000
+LIGHT_BIT_RATE = 3_000_000  # в среднем; на движении до LIGHT_MAX_RATE
+LIGHT_MAX_RATE = 6_000_000
 LIGHT_FPS = 25
 OPEN_TIMEOUT_S = 5.0
 COPY_BAD_MAX = 25  # пакетов подряд не прошло запись — поток считается непригодным для копии
@@ -38,6 +39,7 @@ class RecState:
     bytes_total: int = 0
     rate_bps: float = 0.0
     error: str | None = None
+    degraded: bool = False  # поток нельзя скопировать, идёт лёгкий файл: точка у REC оранжевая
     paths: tuple[Path, ...] = ()
 
 
@@ -172,6 +174,7 @@ class VideoRecorder:
     def _encoder(self, width: int, height: int, fps: int = LIGHT_FPS) -> EncodeWriter:
         return EncodeWriter(self.folder, self._stem, width, height, fps=fps,
                             bit_rate=LIGHT_BIT_RATE if self._mode == "light" else None,
+                            max_rate=LIGHT_MAX_RATE if self._mode == "light" else None,
                             split_bytes=self.split_bytes)
 
     # --- кадры (симулятор) ---
@@ -275,7 +278,7 @@ class VideoRecorder:
                         self.camera_name, type(e).__name__)
             self._abandon_copy()
             self._mode = "light"
-            self._note(f"Камера «{self.camera_name}»: поток нельзя скопировать как есть, пишу лёгкий файл")
+            self._set(degraded=True)
 
     def _abandon_copy(self) -> None:
         w, self._writer = self._writer, None

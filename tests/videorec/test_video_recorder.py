@@ -125,7 +125,7 @@ def test_light_mode_uses_bitrate_and_camera_mode_does_not(tmp_path, monkeypatch)
 
     class Spy(real):
         def __init__(self, *a, **k):
-            seen.append(k.get("bit_rate"))
+            seen.append((k.get("bit_rate"), k.get("max_rate")))
             super().__init__(*a, **k)
 
     monkeypatch.setattr(R, "EncodeWriter", Spy)
@@ -133,7 +133,7 @@ def test_light_mode_uses_bitrate_and_camera_mode_does_not(tmp_path, monkeypatch)
         r = frames_rec(tmp_path / mode, mode=mode)
         r.start()
         finish_when_written(r)
-    assert seen == [None, 3_000_000]
+    assert seen == [(None, None), (3_000_000, 6_000_000)]
 
 
 # --- RTSP (настоящая камера с Mac недоступна: источник — локальный файл с настоящим H.264) ---
@@ -252,7 +252,7 @@ def test_stream_that_cannot_be_copied_falls_back_to_encoding(tmp_path, h264_file
     r = rtsp_rec(tmp_path, Inputs(h264_file))
     r.start()
     assert wait_for(lambda: not r.snapshot().signal and r.snapshot().bytes_total > 0)
-    assert "лёгк" in r.take_note().lower()
+    assert r.snapshot().degraded and "лёгк" not in (r.take_note() or "").lower()
     s = finish(r)
     assert s.error is None and count_frames(s.paths[0]) > 0
     assert not (tmp_path / "пусто.mp4").exists()
@@ -347,6 +347,5 @@ def test_long_run_of_bad_packets_falls_back(tmp_path, h264_file, fast_retry, mon
     _flaky(monkeypatch, set(range(5, 40)))
     r = rtsp_rec(tmp_path, Inputs(h264_file))
     r.start()
-    assert wait_for(lambda: r._mode == "light")
-    assert "лёгк" in r.take_note().lower()
+    assert wait_for(lambda: r.snapshot().degraded)
     finish(r)

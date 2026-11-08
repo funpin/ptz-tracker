@@ -143,3 +143,33 @@ def test_next_path_reserves_the_name_between_threads(tmp_path):
     for t in threads:
         t.join()
     assert len(set(got)) == 8
+
+
+def _peak_second_bits(path):
+    with av.open(str(path)) as c:
+        s = c.streams.video[0]
+        per = {}
+        for p in c.demux(s):
+            if p.dts is not None and p.size:
+                k = int(p.dts * s.time_base)
+                per[k] = per.get(k, 0) + p.size * 8
+    return max(per.values())
+
+
+def _quiet_then_burst(w):
+    rng = np.random.default_rng(3)
+    still = np.full((240, 320, 3), 90, np.uint8)
+    for i in range(250):  # 10 с: 6 с покоя, 4 с шума
+        img = rng.integers(0, 255, (240, 320, 3), np.uint8) if i >= 150 else still
+        w.write_frame(img, i * 0.04)
+    w.close()
+
+
+def test_max_rate_limits_bursts(tmp_path):
+    free = EncodeWriter(tmp_path / "a", "e", 320, 240, bit_rate=150_000)
+    capped = EncodeWriter(tmp_path / "b", "e", 320, 240, bit_rate=150_000, max_rate=300_000)
+    _quiet_then_burst(free)
+    _quiet_then_burst(capped)
+    assert _peak_second_bits(capped.paths[0]) < 300_000 * 1.6
+    assert _peak_second_bits(free.paths[0]) > _peak_second_bits(capped.paths[0])
+

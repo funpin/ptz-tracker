@@ -1,12 +1,12 @@
-"""Нагрузка на компьютер в верхней строке: сверху «всего», снизу доля программы (макет recording-controls.html)."""
+"""Нагрузка на компьютер в нижней строке: «CPU 92 % · PTZ 61» (макет load-placement.html, вариант 1)."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from ptztracker.system_load import LoadSnapshot, Metric, load_level
-from ptztracker.ui.theme import FS_CAPTION, FS_TEXT, SP, C
+from ptztracker.ui.theme import FS_CAPTION, SP, C
 
 KEYS = (("cpu", "CPU", "Процессор"), ("gpu", "GPU", "Видеокарта"), ("ram", "RAM", "Память"))
 _LEVEL_COLOR = {"": C.TEXT, "warn": C.LOST, "crit": C.FAULT}
@@ -21,28 +21,15 @@ class LoadMeter(QWidget):
         super().__init__(parent)
         self.setFocusPolicy(Qt.NoFocus)
         self._snap = LoadSnapshot()
-        self._totals: dict[str, QLabel] = {}
-        self._owns: dict[str, QLabel] = {}
+        self._labels: dict[str, QLabel] = {}
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(SP[3])
-        for key, name, _ in KEYS:
-            col = QVBoxLayout()
-            col.setSpacing(0)
-            top = QHBoxLayout()
-            top.setSpacing(SP[0])
-            cap = QLabel(name)
-            cap.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: 11px; font-weight: 600;")
-            total = QLabel("—")
-            own = QLabel("PTZ —")
-            own.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: 11px;")
-            top.addWidget(cap)
-            top.addWidget(total)
-            top.addStretch(1)
-            col.addLayout(top)
-            col.addWidget(own)
-            row.addLayout(col)
-            self._totals[key], self._owns[key] = total, own
+        row.setSpacing(SP[2])
+        for key, _, _ in KEYS:
+            label = QLabel()
+            label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px;")
+            row.addWidget(label)
+            self._labels[key] = label
         self.set_snapshot(self._snap)
 
     def _metric(self, key: str) -> Metric:
@@ -52,17 +39,22 @@ class LoadMeter(QWidget):
         return _pct(self._metric(key).total)
 
     def own_text(self, key: str) -> str:
-        return f"PTZ {_pct(self._metric(key).own)}"
+        own = self._metric(key).own
+        return f"PTZ {'—' if own is None else round(own)}"
 
     def level(self, key: str) -> str:
         return load_level(self._metric(key).total)
 
+    def line_text(self, key: str) -> str:
+        name = next(n for k, n, _ in KEYS if k == key)
+        return f"{name} {self.total_text(key)} · {self.own_text(key)}"
+
     def set_snapshot(self, s: LoadSnapshot) -> None:
         self._snap = s
-        for key, label in self._totals.items():
-            label.setText(self.total_text(key))
-            label.setStyleSheet(f"color: {_LEVEL_COLOR[self.level(key)]}; font-size: {FS_TEXT}px; font-weight: 600;")
-            self._owns[key].setText(self.own_text(key))
+        for key, label in self._labels.items():
+            name = next(n for k, n, _ in KEYS if k == key)
+            color = _LEVEL_COLOR[self.level(key)]
+            label.setText(f"{name} <b style='color:{color}'>{self.total_text(key)}</b> · {self.own_text(key)}")
         self.setToolTip(self._table())
 
     def _table(self) -> str:

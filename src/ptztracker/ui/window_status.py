@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 import time
 
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QLabel, QMenu, QMessageBox, QToolButton
+from PySide6.QtWidgets import QLabel, QMenu, QMessageBox, QToolButton, QWidget
 
 from ptztracker import __version__
 from ptztracker.camera.session import REFUSED_SHOW_S, CameraSession
@@ -36,6 +36,9 @@ from ptztracker.updates import CHECK_INTERVAL_S, RELEASE_PAGE, UpdateInfo, is_ne
 from ptztracker.video.rtsp import STREAM_CHOICES, strip_credentials
 
 log = logging.getLogger(__name__)
+
+
+MESSAGE_MIN_W = 200  # столько нижней строки оставить сообщениям
 
 
 class StatusMixin:
@@ -331,6 +334,7 @@ class StatusMixin:
         if not s:
             self.video_pill.set(*video_pill(None, ""))
             self.analysis_pill.set("", "off", "Анализ: камера не выбрана")
+            self._sync_trouble_pills()
             self.blackbox_btn.set("Журнал", "off", "Журнал для разбора: камера не выбрана")
             self._fit_top_bar()
             return
@@ -356,6 +360,10 @@ class StatusMixin:
         self._fit_top_bar()
 
     def _update_analysis_status(self, s: CameraSession) -> None:
+        self._set_analysis_status(s)
+        self._sync_trouble_pills()
+
+    def _set_analysis_status(self, s: CameraSession) -> None:
         a = s.analyzer
         r = a.latest() if a else None
         if a is None:
@@ -396,7 +404,6 @@ class StatusMixin:
         if not hasattr(self, "_top"):
             return  # ещё строится окно
         pills = (self.atem_pill,)
-        self.load_meter.show()
         for p in pills:
             p.set_compact(False)
         avail = self.width() - 2 * SP[1]
@@ -404,7 +411,20 @@ class StatusMixin:
             if self._top.sizeHint().width() <= avail:
                 break
             p.set_compact(True)
-        self.load_meter.setVisible(self._top.sizeHint().width() <= avail)
+        self._fit_status_bar()
+
+    def _fit_status_bar(self) -> None:
+        """Узкое окно: первой уходит нагрузка, сообщениям нужно хотя бы немного места."""
+        sb = self.statusBar()
+        others = [w for w in sb.findChildren(QWidget, options=Qt.FindDirectChildrenOnly)
+                  if not w.isHidden() and w not in (self.load_meter, sb.message_label)]
+        need = sum(w.sizeHint().width() + SP[2] for w in others) + self.load_meter.sizeHint().width()
+        self.load_meter.setVisible(need + MESSAGE_MIN_W <= self.width())
+
+    def _sync_trouble_pills(self) -> None:
+        """Разрешение и к/с уже есть в углу видео: внизу эти значки — только когда что-то не так."""
+        for pill in (self.video_pill, self.analysis_pill):
+            pill.setVisible(pill.kind() in ("fault", "warn"))
 
     def _menu_button(self, icon_name: str, tooltip: str) -> StatusPill:
         b = StatusPill(icon_name, "", "neutral")

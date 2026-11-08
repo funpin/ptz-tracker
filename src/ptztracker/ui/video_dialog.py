@@ -146,7 +146,7 @@ class VideoDialog(QDialog):
 
         self.camera_card = _ModeCard("Как отдаёт камера",
                                      "H.264 в полном качестве, без пережатия. Процессор почти не нагружает.")
-        self.light_card = _ModeCard("Лёгкий файл · 3000 кбит/с, 25p",
+        self.light_card = _ModeCard("Лёгкий файл · 3 Мбит/с, до 6 на движении, 25p",
                                     "Пережимает поток. Удобно для архива, нагружает компьютер.")
         self.mode_camera, self.mode_light = self.camera_card.radio, self.light_card.radio
         self._modes = QButtonGroup(self)  # карточки — разные родители, сами взаимно не исключаются
