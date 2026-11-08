@@ -202,3 +202,11 @@ def test_stop_all(monkeypatch):
     c.toggle(b)
     c.stop_all()
     assert not c.any_active() and K.STOP_MIN == 1
+
+
+def test_low_space_warns_once_when_turning_critical():
+    s = FakeSession()
+    c = make([s], disk(free=_minutes(4)))
+    s.state = active()
+    assert c.tick()[1] == ["Мало места: запись скоро остановится сама"]
+    assert c.tick()[1] == []

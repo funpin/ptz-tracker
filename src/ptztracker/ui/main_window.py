@@ -114,6 +114,7 @@ from ptztracker.ui.main_menu import MainMenu
 from ptztracker.ui.manual_controls import STICK_MIN, ManualControls
 from ptztracker.ui.presets_drawer import DrawerRow, PresetsDrawer
 from ptztracker.ui.preview import PreviewWidget
+from ptztracker.ui.record_status import RecordPill
 from ptztracker.ui.service_cell import KINDS, TITLES, ServiceCell, ServiceRow, WelcomeView
 from ptztracker.ui.state import (
     TrackingView,
@@ -124,6 +125,7 @@ from ptztracker.ui.state import (
     tracking_view,
     video_pill,
 )
+from ptztracker.ui.status_bar import MessageStatusBar
 from ptztracker.ui.theme import FS_CAPTION, R_BUTTON, SP, C
 from ptztracker.ui.widgets import (
     BrandMark,
@@ -535,7 +537,8 @@ class MainWindow(QMainWindow):
 
         # строка состояния: слева сообщения; справа видео и анализ выбранной камеры | Пресеты, Справка | версия.
         # Подписей клавиш нет — всё в справке F1
-        sb = self.statusBar()
+        sb = MessageStatusBar()
+        self.setStatusBar(sb)
         sb.setSizeGripEnabled(False)
         self.presets_btn = KeyButton("Пресеты", "P")
         self.presets_btn.setCheckable(True)
@@ -559,7 +562,13 @@ class MainWindow(QMainWindow):
         self.show_folder_btn = QPushButton("Показать в папке")
         self.show_folder_btn.setProperty("variant", "ghost")
         self.show_folder_btn.hide()
+        self.rec_pill = RecordPill()
+        self.rec_pill.stop_requested.connect(self.stop_video_slot)
+        self.rec_pill.stop_all_requested.connect(self.stop_all_video)
+        self.rec_pill.open_folder_requested.connect(self._open_video_folder)
+        sb.addWidget(self.rec_pill)
         sb.addWidget(self.show_folder_btn)
+        sb.attach_message_label()
 
         # одно меню ☰ в окне — одинаково на Mac и Windows; меню «Сервис» в строке macOS нет.
         # Строки ☰ — заместители этих действий (ui/main_menu.py): группы, значки, состояние справа, без подменю
@@ -2086,16 +2095,28 @@ class MainWindow(QMainWindow):
             return
         refusal = self.video.toggle(c.session)
         if refusal:
-            self.statusBar().showMessage(refusal, 8000)
+            self.statusBar().showMessage(refusal, 8000, error=True)
         self._refresh_video()
+
+    def stop_video_slot(self, slot: int) -> None:
+        self.video.stop_slot(slot)
+        self._refresh_video()
+
+    def stop_all_video(self) -> None:
+        self.video.stop_all()
+        self._refresh_video()
+
+    def _open_video_folder(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.video.current_folder())))
 
     def _refresh_video(self) -> None:
         for i, cell in enumerate(self.cells):
             c = self.grid.cells[i]
             cell.preview.set_rec(c.session.video_state() if c else None)
-        _summary, messages = self.video.tick()
+        summary, messages = self.video.tick()
+        self.rec_pill.set_summary(summary)
         for m in messages:
-            self.statusBar().showMessage(m, 8000)
+            self.statusBar().showMessage(m, 8000, error=True)
 
     def _update_status(self) -> None:
         self.load_meter.set_snapshot(self.system_load.snapshot())

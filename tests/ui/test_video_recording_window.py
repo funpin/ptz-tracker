@@ -79,3 +79,26 @@ def test_status_tick_shows_rec_on_preview(qtbot, tmp_path):
     assert w.preview.rec_text().startswith("REC")
     w.session.stop_video()
     w.close()
+
+
+def test_bottom_pill_follows_recording(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    assert w.rec_pill.isHidden()
+    press(w, Qt.Key_R, "r")
+    w._update_status()
+    assert not w.rec_pill.isHidden() and w.rec_pill.text().startswith("Запись: 1")
+    w.statusBar().showMessage("сообщение")
+    assert w.rec_pill.isVisible()
+    w.rec_pill.stop_requested.emit(0)
+    assert not w.session.video_state().active
+    w.close()
+
+
+def test_refusal_goes_to_status_line(qtbot, tmp_path):
+    from ptztracker.videorec.disk import DiskInfo
+
+    w = make(qtbot, tmp_path)
+    w.video.disk.snapshot = lambda: DiskInfo(False, 0, 0, "E:", "", None, "")
+    press(w, Qt.Key_R, "r")
+    assert not w.session.video_state().active and "не подключён" in w.statusBar().currentMessage()
+    w.close()

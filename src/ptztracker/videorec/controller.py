@@ -61,6 +61,7 @@ class VideoController:
         self.cfg, self._sessions = cfg, sessions
         self.disk = disk or DiskWatch(self.current_folder)
         self._rec_folder: Path | None = None
+        self._level = ""
         self._tracked: dict[str, tuple[object, str]] = {}  # id камеры → (сессия, имя): пишут, ждём конца
 
     def current_folder(self) -> Path:
@@ -149,6 +150,9 @@ class VideoController:
             msgs.append("Запись остановлена: на диске почти не осталось места")
             return RecSummary(), msgs
         level = "" if minutes is None or minutes >= WARN_MIN else "warn" if minutes >= CRIT_MIN else "crit"
+        if level == "crit" and self._level != "crit":
+            msgs.append("Мало места: запись скоро остановится сама")
+        self._level = level
         parts = [
             "Запись: " + ", ".join(str(r.slot + 1) for r in rows),
             format_clock(max(r.elapsed_s for r in rows)),
