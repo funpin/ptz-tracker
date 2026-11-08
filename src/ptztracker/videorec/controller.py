@@ -32,6 +32,7 @@ class RecSummary:
     text: str = ""
     level: str = ""  # "" | "warn" | "crit"
     free_bytes: int = 0
+    tooltip: str = ""
 
 
 def format_clock(seconds: float) -> str:
@@ -41,11 +42,12 @@ def format_clock(seconds: float) -> str:
 
 
 def format_left(minutes: float) -> str:
+    """Округляет вниз: запас лучше не обещать лишний."""
     total = int(minutes)
     h, m = total // 60, total % 60
     if not h:
         return f"{m} мин"
-    return f"{h} ч {m} мин" if m and h < 10 else f"{h} ч"
+    return f"{h} ч {m} мин" if m and h < 2 else f"{h} ч"
 
 
 def format_gb(n: float) -> str:
@@ -83,7 +85,7 @@ class VideoController:
             return None
         info = self.disk.snapshot()
         if info is not None and not info.connected:
-            return f"Запись не начата: диск {info.label} не подключён. ☰ → Запись видео…"
+            return f"Диск {info.label} не подключён"
         split = FAT32_SPLIT_BYTES if info is not None and is_fat32(info) else None
         self._rec_folder = self.current_folder()
         session.start_video(self._rec_folder, self.cfg.video_mode, split)
@@ -132,10 +134,10 @@ class VideoController:
             st = live.get(cid)
             if st is None or live_session(states, cid) is not session:
                 del self._tracked[cid]
-                msgs.append(f"Запись камеры «{name}» остановлена")
+                msgs.append(f"«{name}»: запись остановлена")
             elif not st.active:
                 del self._tracked[cid]
-                msgs.append(st.error or f"Запись камеры «{name}» остановлена")
+                msgs.append(st.error or f"«{name}»: запись остановлена")
         return msgs
 
     def tick(self) -> tuple[RecSummary, list[str]]:
@@ -154,21 +156,20 @@ class VideoController:
         minutes = info.free / rate / 60 if known and rate > 0 else None
         if minutes is not None and minutes < STOP_MIN:
             self.stop_all()
-            msgs.append("Запись остановлена: на диске почти не осталось места")
+            msgs.append("Запись остановлена: нет места")
             return RecSummary(), msgs
         level = "" if minutes is None or minutes >= WARN_MIN else "warn" if minutes >= CRIT_MIN else "crit"
         if level == "crit" and self._level != "crit":
-            msgs.append("Мало места: запись скоро остановится сама")
+            msgs.append("Мало места")
         self._level = level
-        parts = [
-            "Запись: " + ", ".join(str(r.slot + 1) for r in rows),
-            format_clock(max(r.elapsed_s for r in rows)),
-            f"{format_gb(sum(r.bytes_total for r in rows))} ГБ",
-        ]
+        written = f"Записано {format_gb(sum(r.bytes_total for r in rows))} ГБ"
+        text, tooltip, free = "", written, 0
         if known:
-            left = f" (~{format_left(minutes)})" if minutes is not None else ""
-            parts.append(f"на {where(info)} свободно {format_gb(info.free)} ГБ{left}")
-        return RecSummary(rows, " · ".join(parts), level, info.free if known else 0), msgs
+            free = info.free
+            tooltip += f" · на {info.name or where(info)} свободно {format_gb(free)} ГБ"
+            if minutes is not None:
+                text = f"~{format_left(minutes)}"
+        return RecSummary(rows, text, level, free, tooltip), msgs
 
 
 def live_session(states: list, camera_id: str):

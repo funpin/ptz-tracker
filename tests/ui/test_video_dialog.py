@@ -19,7 +19,7 @@ def internal():
 
 def make(qtbot, monkeypatch, info=None, cfg=None):
     monkeypatch.setattr(V, "disk_info", lambda folder: info or internal())
-    d = VideoDialog(cfg or AppConfig(), camera_name="Сцена")
+    d = VideoDialog(cfg or AppConfig())
     qtbot.addWidget(d)
     qtbot.waitUntil(lambda: bool(d.disk_text.text()), timeout=2000)
     return d
@@ -27,8 +27,7 @@ def make(qtbot, monkeypatch, info=None, cfg=None):
 
 def test_shows_free_space_and_estimates(qtbot, monkeypatch):
     d = make(qtbot, monkeypatch)
-    assert "Свободно 180 ГБ из 512 ГБ" in d.disk_text.text()
-    assert "одна камера — 15 ч" in d.disk_text.text() and "четыре — 3 ч 54 мин" in d.disk_text.text()
+    assert d.disk_text.text() == "180 ГБ из 512 ГБ · 1 камера ~15 ч · 4 камеры ~3 ч"
     assert d.disk_title.text() == "Системный (C:)" and "внутренний · NTFS" in d.disk_kind.text()
 
 
@@ -40,12 +39,12 @@ def test_terabyte_disk(qtbot, monkeypatch):
 def test_estimate_follows_mode(qtbot, monkeypatch):
     d = make(qtbot, monkeypatch)
     d.mode_light.click()
-    assert "одна камера — 128 ч" in d.disk_text.text()
+    assert "1 камера ~128 ч" in d.disk_text.text()
 
 
 def test_fat32_warning(qtbot, monkeypatch):
     d = make(qtbot, monkeypatch, DiskInfo(True, 48 * GB, 64 * GB, "F:", "USB", True, "FAT32"))
-    assert "FAT32" in d.disk_warning.text() and "20 мин" in d.disk_warning.text() and not d.disk_warning.isHidden()
+    assert d.disk_warning.text() == "FAT32: файл делится на части по ~20 мин" and not d.disk_warning.isHidden()
 
 
 def test_no_warning_on_normal_disk(qtbot, monkeypatch):
@@ -55,7 +54,7 @@ def test_no_warning_on_normal_disk(qtbot, monkeypatch):
 
 def test_disconnected_disk_is_red(qtbot, monkeypatch):
     d = make(qtbot, monkeypatch, DiskInfo(False, 0, 0, "E:", "", None, ""))
-    assert "не подключён" in d.disk_text.text() and d.disk_card.property("bad") is True
+    assert d.disk_text.text() == "Диск E: не подключён — запись не начнётся" and d.disk_card.property("bad") is True
 
 
 def test_choose_folder_does_not_wait_for_disk(qtbot, monkeypatch):
@@ -110,9 +109,12 @@ def test_untouched_folder_stays_default(qtbot, monkeypatch):
     assert cfg.video_dir == ""
 
 
-def test_example_name_uses_camera(qtbot, monkeypatch):
+def test_no_extra_text_in_dialog(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QLabel
+
     d = make(qtbot, monkeypatch)
-    assert d.example.text().startswith("Сцена_") and d.example.text().endswith(".mp4")
+    texts = " ".join(lb.text() for lb in d.findChildren(QLabel))
+    assert "ИМЯ ФАЙЛА" not in texts and "КУДА СОХРАНЯТЬ" not in texts and "журнала F9" not in texts
 
 
 def test_window_menu_opens_dialog(qtbot, tmp_path, monkeypatch):
@@ -131,7 +133,7 @@ def test_disk_text_is_not_clipped_after_answer_arrives(qtbot, monkeypatch):
     qtbot.waitExposed(d)
     qtbot.wait(50)
     lines = d.disk_text.fontMetrics().lineSpacing()
-    assert d.disk_text.height() >= 2 * lines and d.disk_title.height() >= d.disk_title.fontMetrics().height()
+    assert d.disk_text.height() >= lines and d.disk_title.height() >= d.disk_title.fontMetrics().height()
 
 
 def test_mode_cards_select_by_click_anywhere(qtbot, monkeypatch):
@@ -140,6 +142,6 @@ def test_mode_cards_select_by_click_anywhere(qtbot, monkeypatch):
     d = make(qtbot, monkeypatch)
     d.show()
     assert d.mode_camera.isChecked() and d.light_card.property("selected") is False
-    qtbot.mouseClick(d.light_card, Qt.LeftButton, pos=QPoint(200, 30))
+    qtbot.mouseClick(d.light_card, Qt.LeftButton, pos=QPoint(d.light_card.width() - 20, 10))
     assert d.mode_light.isChecked() and d.light_card.property("selected") is True
     assert d.camera_card.property("selected") is False

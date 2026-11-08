@@ -107,7 +107,8 @@ def test_summary_text():
     a.state, b.state = active(rate=0.0), active(rate=0.0)
     summary, msgs = c.tick()
     # 412 ГБ при двух камерах по 3,19 МБ/с — около 17,9 ч
-    assert summary.text == "Запись: 1, 3 · 12:34 · 4,8 ГБ · на E: свободно 412 ГБ (~17 ч)"
+    assert summary.text == "~17 ч"
+    assert summary.tooltip == "Записано 4,8 ГБ · на T7 свободно 412 ГБ"
     assert [r.slot for r in summary.rows] == [0, 2] and summary.level == "" and msgs == []
 
 
@@ -148,7 +149,7 @@ def test_real_rate_replaces_estimate():
     s = FakeSession()
     c = make([s], disk(free=10 * GB))
     s.state = active(rate=25e6)  # 400 секунд
-    assert "(~6 мин)" in c.tick()[0].text
+    assert c.tick()[0].text == "~6 мин"
 
 
 def test_vanished_recording_is_reported_once():
@@ -209,7 +210,7 @@ def test_low_space_warns_once_when_turning_critical():
     s = FakeSession()
     c = make([s], disk(free=_minutes(4)))
     s.state = active()
-    assert c.tick()[1] == ["Мало места: запись скоро остановится сама"]
+    assert c.tick()[1] == ["Мало места"]
     assert c.tick()[1] == []
 
 
@@ -219,3 +220,13 @@ def test_pulled_disk_is_not_reported_as_no_space():
     s.state = active()
     _, msgs = c.tick()
     assert s.state.active and msgs == []  # причину назовёт рекордер: «папка или диск недоступны»
+
+
+def test_time_left_never_promises_too_much():
+    assert [K.format_left(m) for m in (4, 18, 100, 537, 2147)] == ["4 мин", "18 мин", "1 ч 40 мин", "8 ч", "35 ч"]
+
+
+def test_refusal_is_short():
+    s = FakeSession()
+    assert make([s], disk(connected=False, free=0)).toggle(s) == "Диск E: не подключён"
+

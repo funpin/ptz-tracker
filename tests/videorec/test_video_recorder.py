@@ -69,7 +69,7 @@ def test_folder_that_cannot_be_created_reports_error(tmp_path):
     r.start()
     assert wait_for(lambda: not r.snapshot().active)
     s = r.snapshot()
-    assert "папк" in s.error and s.paths == ()
+    assert "диск" in s.error and s.paths == ()
 
 
 def test_stop_before_first_frame_leaves_no_file(tmp_path):
@@ -110,7 +110,7 @@ def test_folder_removed_while_recording_stops_with_error(tmp_path):
     assert wait_for(lambda: r.snapshot().bytes_total > 0)
     shutil.rmtree(folder)
     assert wait_for(lambda: not r.snapshot().active)
-    assert "папк" in r.snapshot().error
+    assert "диск" in r.snapshot().error
 
 
 def finish_when_written(r):
@@ -300,7 +300,7 @@ def test_unwritable_folder_is_reported_even_without_camera(tmp_path, fast_retry)
     r = rtsp_rec(tmp_path / "x" / "записи", Inputs())
     r.start()
     assert wait_for(lambda: not r.snapshot().active, t=2.0)
-    assert "папк" in r.snapshot().error
+    assert "диск" in r.snapshot().error
 
 
 def test_probe_leaves_folder_empty(tmp_path):

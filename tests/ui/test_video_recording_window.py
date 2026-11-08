@@ -86,7 +86,7 @@ def test_bottom_pill_follows_recording(qtbot, tmp_path):
     assert w.rec_pill.isHidden()
     press(w, Qt.Key_R, "r")
     w._update_status()
-    assert not w.rec_pill.isHidden() and w.rec_pill.text().startswith("Запись: 1")
+    assert not w.rec_pill.isHidden() and w.rec_pill.numbers() == [1]
     w.statusBar().showMessage("сообщение")
     assert w.rec_pill.isVisible()
     w.rec_pill.stop_requested.emit(0)

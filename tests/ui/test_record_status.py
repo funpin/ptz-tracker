@@ -20,9 +20,10 @@ def test_hidden_when_nothing_records(qtbot):
 
 def test_shows_text_and_level(qtbot):
     p = make(qtbot)
-    p.set_summary(RecSummary(ROWS, "Запись: 1, 3", "warn", 5))
-    assert not p.isHidden() and p.text() == "Запись: 1, 3" and p.property("level") == "warn"
-    p.set_summary(RecSummary(ROWS, "Запись: 1, 3", "crit", 5))
+    p.set_summary(RecSummary(ROWS, "~9 ч", "warn", 5, "Записано 1 ГБ"))
+    assert not p.isHidden() and p.text() == "~9 ч" and p.property("level") == "warn"
+    assert p.numbers() == [1, 3] and p.toolTip() == "Записано 1 ГБ"
+    p.set_summary(RecSummary(ROWS, "~9 ч", "crit", 5))
     assert p.property("level") == "crit"
 
 

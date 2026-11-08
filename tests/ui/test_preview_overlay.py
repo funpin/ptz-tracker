@@ -122,7 +122,7 @@ def test_start_chip_appears_only_under_mouse(qtbot):
     assert p.rec_rect() is None
     qtbot.mouseMove(p, QPoint(100, 100))
     qtbot.waitUntil(lambda: p.rec_rect() is not None, timeout=1000)
-    assert p.rec_text() == "Запись · R"
+    assert p.rec_text() == "Запись"
 
 
 def test_no_chip_without_camera(qtbot):
@@ -189,7 +189,7 @@ def test_rec_text_states(qtbot):
     p.set_rec(RecState(active=True, elapsed_s=754))
     assert p.rec_text() == "REC 12:34"
     p.set_rec(RecState(active=True, signal=False, elapsed_s=754))
-    assert p.rec_text() == "REC · нет сигнала"
+    assert p.rec_text() == "REC нет сигнала"
 
 
 def test_stop_text_under_mouse(qtbot):

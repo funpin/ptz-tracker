@@ -130,10 +130,10 @@ class VideoRecorder:
                 self._record_stream()
         except (_DiskFailure, OSError):
             log.exception("Запись камеры %s остановлена", self.camera_name)
-            self._set(error=f"Запись «{self.camera_name}» остановлена: папка или диск недоступны", active=False)
+            self._set(error=f"«{self.camera_name}»: стоп, диск недоступен", active=False)
         except Exception:
             log.exception("Запись камеры %s: сбой", self.camera_name)
-            self._set(error=f"Запись «{self.camera_name}» остановлена из-за ошибки", active=False)
+            self._set(error=f"«{self.camera_name}»: запись остановлена из-за ошибки", active=False)
         finally:
             self._close_writer()
             self._set(active=False)
@@ -224,7 +224,7 @@ class VideoRecorder:
             self._set(signal=False)
             if not self._announced_loss:
                 self._announced_loss = True
-                self._note(f"Камера «{self.camera_name}»: нет сигнала, запись продолжится, когда она вернётся")
+                self._note(f"«{self.camera_name}»: нет сигнала, запись ждёт")
 
     def _got_signal(self) -> None:
         if not self._state.signal:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QUrl, Signal
@@ -25,7 +24,7 @@ from ptztracker.ui.recording_dialog import friendly_path
 from ptztracker.ui.theme import FS_CAPTION, R_BUTTON, R_PANEL, SP, C
 from ptztracker.videorec.controller import format_gb, format_left
 from ptztracker.videorec.disk import RATE_CAMERA_BPS, RATE_LIGHT_BPS, DiskInfo, disk_info, is_fat32
-from ptztracker.videorec.writer import FAT32_SPLIT_BYTES, file_stem
+from ptztracker.videorec.writer import FAT32_SPLIT_BYTES
 
 
 class _Signals(QObject):
@@ -44,18 +43,14 @@ class _DiskTask(QRunnable):
 class _ModeCard(QFrame):
     """Вариант записи: рамка белая у выбранного, клик по всей карточке выбирает."""
 
-    def __init__(self, title: str, hint: str):
+    def __init__(self, title: str):
         super().__init__()
         self.setObjectName("modeCard")
         self.radio = QRadioButton(title)
-        note = QLabel(hint)
-        note.setWordWrap(True)
-        note.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: {FS_CAPTION}px; background: transparent;")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(SP[2], SP[1], SP[2], SP[1])
         lay.setSpacing(0)
         lay.addWidget(self.radio)
-        lay.addWidget(note)
 
     def sync(self) -> None:
         on = self.radio.isChecked()
@@ -71,12 +66,6 @@ class _ModeCard(QFrame):
         super().mousePressEvent(e)
 
 
-def _section(text: str) -> QLabel:
-    label = QLabel(text)
-    label.setStyleSheet(f"color: {C.TEXT_FAINT}; font-size: 11px; font-weight: 600; letter-spacing: 1px;")
-    return label
-
-
 def _total(n: int) -> str:
     if n < 1_000_000_000_000:
         return f"{format_gb(n)} ГБ"
@@ -84,7 +73,7 @@ def _total(n: int) -> str:
 
 
 class VideoDialog(QDialog):
-    def __init__(self, cfg: AppConfig, camera_name: str = "Камера", parent=None):
+    def __init__(self, cfg: AppConfig, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Запись видео")
         self._cfg = cfg
@@ -94,10 +83,6 @@ class VideoDialog(QDialog):
         self._token = 0
         self._signals = _Signals()
         self._signals.done.connect(self._on_disk)
-
-        about = QLabel("Видео камеры в файл, отдельно от журнала F9. Запись не влияет на управление и слежение.")
-        about.setWordWrap(True)
-        about.setStyleSheet(f"color: {C.TEXT_DIM};")
 
         self.folder_label = QLabel()
         browse = QPushButton("Изменить…")
@@ -124,8 +109,8 @@ class VideoDialog(QDialog):
             f" QProgressBar::chunk {{ background: {C.GREY}; border-radius: 3px; }}")
         self.disk_text = QLabel()
         self.disk_text.setWordWrap(True)
-        # ответ о диске приходит позже: место под две строки — сразу, иначе карточка сжата
-        self.disk_text.setMinimumHeight(self.disk_text.fontMetrics().lineSpacing() * 2 + 8)
+        # ответ о диске приходит позже: место под строку — сразу, иначе карточка сжата
+        self.disk_text.setMinimumHeight(self.disk_text.fontMetrics().lineSpacing() + 4)
         self.disk_warning = QLabel()
         self.disk_warning.setWordWrap(True)
         self.disk_warning.setStyleSheet(f"color: {C.LOST};")
@@ -144,10 +129,8 @@ class VideoDialog(QDialog):
         card.addWidget(self.disk_text)
         card.addWidget(self.disk_warning)
 
-        self.camera_card = _ModeCard("Как отдаёт камера",
-                                     "H.264 в полном качестве, без пережатия. Процессор почти не нагружает.")
-        self.light_card = _ModeCard("Лёгкий файл · 3 Мбит/с, до 6 на движении, 25p",
-                                    "Пережимает поток. Удобно для архива, нагружает компьютер.")
+        self.camera_card = _ModeCard("Как отдаёт камера · полное качество")
+        self.light_card = _ModeCard("Лёгкий файл · 3 Мбит/с, до 6 на движении, 25p")
         self.mode_camera, self.mode_light = self.camera_card.radio, self.light_card.radio
         self._modes = QButtonGroup(self)  # карточки — разные родители, сами взаимно не исключаются
         self._modes.addButton(self.mode_camera)
@@ -155,10 +138,6 @@ class VideoDialog(QDialog):
         (self.mode_light if cfg.video_mode == "light" else self.mode_camera).setChecked(True)
         self.mode_camera.toggled.connect(self._on_mode)
         self._on_mode()
-
-        stem = file_stem(camera_name, datetime.now())
-        self.example = QLabel(f"{stem}.mp4")
-        self.example.setStyleSheet(f"color: {C.TEXT_DIM};")
 
         cancel = QPushButton("Отмена")
         cancel.setAutoDefault(False)
@@ -176,8 +155,7 @@ class VideoDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(SP[3], SP[3], SP[3], SP[3])
         lay.setSpacing(SP[2])
-        for item in (about, _section("КУДА СОХРАНЯТЬ"), folder_row, self.disk_card, _section("ЧТО ЗАПИСЫВАТЬ"),
-                     self.camera_card, self.light_card, _section("ИМЯ ФАЙЛА"), self.example, foot):
+        for item in (folder_row, self.disk_card, self.camera_card, self.light_card, foot):
             (lay.addLayout if isinstance(item, QHBoxLayout) else lay.addWidget)(item)
         self.setMinimumWidth(540)
         self.choose_folder(self._folder, initial=True)
@@ -223,8 +201,7 @@ class VideoDialog(QDialog):
         if not info.connected:
             self.disk_title.setText("")
             self.disk_kind.setText("")
-            self.disk_text.setText(f"Диск {info.label} не подключён. "
-                                   "Подключите его или выберите другую папку — иначе запись не начнётся.")
+            self.disk_text.setText(f"Диск {info.label} не подключён — запись не начнётся")
             return
         self.disk_title.setText(f"{info.name} ({info.label})" if info.name else info.label)
         kind = {True: "съёмный", False: "внутренний", None: ""}[info.removable]
@@ -232,12 +209,11 @@ class VideoDialog(QDialog):
         self.disk_bar.setRange(0, 1000)
         self.disk_bar.setValue(round((info.total - info.free) / max(1, info.total) * 1000))
         minutes = info.free / self._rate() / 60
-        self.disk_text.setText(f"Свободно {format_gb(info.free)} ГБ из {_total(info.total)}. Хватит примерно: "
-                               f"одна камера — {format_left(minutes)}, четыре — {format_left(minutes / 4)}.")
+        self.disk_text.setText(f"{format_gb(info.free)} ГБ из {_total(info.total)} · "
+                               f"1 камера ~{format_left(minutes)} · 4 камеры ~{format_left(minutes / 4)}")
         if is_fat32(info):
             part = format_left(FAT32_SPLIT_BYTES / self._rate() / 60)
-            self.disk_warning.setText("FAT32 не хранит файлы больше 4 ГБ. "
-                                      f"Запись сама делится на части примерно по {part}, без пропусков между ними.")
+            self.disk_warning.setText(f"FAT32: файл делится на части по ~{part}")
             self.disk_warning.show()
 
     def _browse(self) -> None:

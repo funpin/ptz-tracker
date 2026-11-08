@@ -205,8 +205,8 @@ class PreviewWidget(QWidget):
         """Текст, по которому считается плашка: под мышью она не должна сжиматься, иначе клик уйдёт мимо."""
         s = self._rec
         if s is None or not s.active:
-            return "Запись · R"
-        return f"REC {format_clock(s.elapsed_s)}" if s.signal else "REC · нет сигнала"
+            return "Запись"
+        return f"REC {format_clock(s.elapsed_s)}" if s.signal else "REC нет сигнала"
 
     def rec_text(self) -> str:
         s = self._rec

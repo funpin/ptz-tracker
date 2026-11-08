@@ -93,8 +93,7 @@ class RecordingMixin:
     def _video_settings(self) -> None:
         from ptztracker.ui.video_dialog import VideoDialog
 
-        session = self.session
-        d = VideoDialog(self.cfg, session.cfg.name if session else "Камера", parent=self)
+        d = VideoDialog(self.cfg, parent=self)
         if d.exec():
             d.apply()
             self._save()
