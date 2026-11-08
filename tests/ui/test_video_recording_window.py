@@ -131,3 +131,23 @@ def test_close_finishes_file_within_two_seconds(qtbot, tmp_path):
     w.close()
     assert time.monotonic() - t0 < 6.0
     assert session.video.wait_closed(0.1) and session.video_state().paths[0].stat().st_size > 0
+
+
+def test_close_stops_cameras_before_waiting_for_files(qtbot, tmp_path):
+    w = make(qtbot, tmp_path)
+    press(w, Qt.Key_R, "r")
+    w._confirm_close_with_video = lambda: True
+    order = []
+    close_all, wait = w.grid.close_all, w.video.wait_closed
+
+    def spy_close():
+        order.append("cameras")
+        close_all()
+
+    def spy_wait(recorders, *a):
+        order.append(("files", len(recorders)))
+        wait(recorders, *a)
+
+    w.grid.close_all, w.video.wait_closed = spy_close, spy_wait
+    w.close()
+    assert order == ["cameras", ("files", 1)]

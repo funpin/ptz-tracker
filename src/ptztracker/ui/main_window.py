@@ -3234,13 +3234,13 @@ class MainWindow(QMainWindow):
         if self.video.any_active() and not self._confirm_close_with_video():
             e.ignore()
             return
-        self.video.stop_all()
-        self.video.wait_closed()
+        recorders = self.video.stop_all()
         try:
             self._prepare_close()
         except Exception:  # сбой подготовки не отменяет стоп камер
             log.exception("Закрытие окна: подготовка прервалась")
         self.grid.close_all()
+        self.video.wait_closed(recorders)  # после стопа камер: файлы не должны задерживать стоп
         self._save()
         super().closeEvent(e)
 

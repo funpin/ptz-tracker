@@ -202,3 +202,22 @@ def test_stop_text_under_mouse(qtbot):
     c = p.rec_rect().center()
     qtbot.mouseMove(p, QPoint(int(c.x()), int(c.y())))
     qtbot.waitUntil(lambda: p.rec_text() == "■ Стоп", timeout=1000)
+
+
+def test_plate_does_not_shrink_under_the_mouse(qtbot):
+    from PySide6.QtCore import QPoint
+
+    from ptztracker.videorec.recorder import RecState
+
+    p = rec_preview(qtbot)
+    p.set_rec(RecState(active=True, elapsed_s=754))
+    r = p.rec_rect()
+    left = QPoint(int(r.left()) + 3, int(r.center().y()))
+    qtbot.mouseMove(p, left)
+    qtbot.waitUntil(lambda: p.rec_text() == "■ Стоп", timeout=1000)
+    assert p.rec_rect() == r
+    clicks, selected = [], []
+    p.rec_clicked.connect(lambda: clicks.append(1))
+    p.targetClicked.connect(selected.append)
+    qtbot.mouseClick(p, Qt.LeftButton, pos=left)
+    assert clicks == [1] and selected == []

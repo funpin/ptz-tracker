@@ -126,3 +126,20 @@ def test_encode_writer_accepts_frames_faster_than_fps(tmp_path):
         w.write_frame(img, 5.0 + i * 0.006)
     w.close()
     assert count_frames(w.paths[0]) == 30
+
+
+def test_next_path_reserves_the_name_between_threads(tmp_path):
+    import threading
+
+    got, start = [], threading.Barrier(8)
+
+    def pick():
+        start.wait()
+        got.append(next_path(tmp_path, "cam"))
+
+    threads = [threading.Thread(target=pick) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(set(got)) == 8

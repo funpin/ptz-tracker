@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -23,6 +24,7 @@ RETRY_DELAYS_S = (2, 5, 10)  # камера отказала в подключе
 LIGHT_BIT_RATE = 3_000_000
 LIGHT_FPS = 25
 OPEN_TIMEOUT_S = 5.0
+COPY_BAD_MAX = 25  # пакетов подряд не прошло запись — поток считается непригодным для копии
 FOLDER_CHECK_S = 1.0
 RATE_WINDOW_S = 60.0
 _MODES = ("camera", "light")
@@ -73,6 +75,7 @@ class VideoRecorder:
         self._rate: deque[tuple[float, int]] = deque()
         self._next_check = 0.0
         self._announced_loss = False
+        self._copy_bad = 0
 
     @property
     def is_running(self) -> bool:
@@ -109,8 +112,16 @@ class VideoRecorder:
         with self._lock:
             self._notes.append(text)
 
+    def _probe_folder(self) -> None:
+        """Сразу, а не с первым кадром: иначе у недоступной камеры REC горел бы над папкой, куда нельзя писать."""
+        self.folder.mkdir(parents=True, exist_ok=True)
+        probe = self.folder / f".ptztracker-{os.getpid()}-{threading.get_ident()}.tmp"
+        probe.touch()
+        probe.unlink()
+
     def _run(self) -> None:
         try:
+            self._probe_folder()
             if self._frames is not None:
                 self._record_frames()
             else:
@@ -240,26 +251,31 @@ class VideoRecorder:
             got = True
             self._got_signal()
             if self._mode == "camera":
-                self._write_copy(packet, stream, next_slot)
+                self._write_copy(packet, stream)
             else:
                 self._write_encoded(packet, next_slot)
             self._publish()
         return got
 
-    def _write_copy(self, packet, stream, next_slot) -> None:
+    def _write_copy(self, packet, stream) -> None:
         if self._writer is None:
             self._writer = CopyWriter(self.folder, self._stem, stream, split_bytes=self.split_bytes)
         try:
             self._writer.write_packet(packet)
+            self._copy_bad = 0
         except OSError:
             raise
         except (av.error.FFmpegError, ValueError) as e:
+            self._copy_bad += 1
+            # разовый сбой отметок времени не повод терять полное качество на всю запись
+            if self._writer.bytes_written > 0 and self._copy_bad < COPY_BAD_MAX:
+                log.info("Запись %s: пакет пропущен (%s)", self.camera_name, type(e).__name__)
+                return
             log.warning("Запись %s: поток нельзя скопировать (%s), перехожу на кодирование",
                         self.camera_name, type(e).__name__)
             self._abandon_copy()
             self._mode = "light"
             self._note(f"Камера «{self.camera_name}»: поток нельзя скопировать как есть, пишу лёгкий файл")
-            self._write_encoded(packet, next_slot)
 
     def _abandon_copy(self) -> None:
         w, self._writer = self._writer, None

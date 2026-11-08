@@ -24,12 +24,16 @@ def file_stem(camera_name: str, when: datetime) -> str:
 
 
 def next_path(folder: Path, stem: str) -> Path:
+    """Первое свободное имя; файл создаётся сразу, чтобы две камеры с одним именем не взяли один и тот же."""
     path = folder / f"{stem}.mp4"
     n = 2
-    while path.exists():
-        path = folder / f"{stem}_{n:02d}.mp4"
-        n += 1
-    return path
+    while True:
+        try:
+            path.open("xb").close()
+            return path
+        except FileExistsError:
+            path = folder / f"{stem}_{n:02d}.mp4"
+            n += 1
 
 
 class _Segments:
@@ -45,7 +49,11 @@ class _Segments:
     def _open_file(self) -> av.container.OutputContainer:
         self.folder.mkdir(parents=True, exist_ok=True)
         path = next_path(self.folder, self.stem)
-        out = av.open(str(path), "w", format="mp4", options={"movflags": MOVFLAGS})
+        try:
+            out = av.open(str(path), "w", format="mp4", options={"movflags": MOVFLAGS})
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
         self.paths.append(path)
         self._segment_bytes = 0
         return out

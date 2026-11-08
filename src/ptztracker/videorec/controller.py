@@ -90,23 +90,28 @@ class VideoController:
         self._tracked[session.cfg.id] = (session, session.cfg.name)
         return None
 
-    def stop_all(self) -> None:
+    def stop_all(self) -> list:
+        """Остановить запись всех камер; вернуть рекордеры — их файлы закрываются в фоне."""
         self._tracked.clear()
+        recorders = []
         for _, s in self._sessions():
             s.stop_video()
+            if s.video is not None:
+                recorders.append(s.video)
         self._rec_folder = None
         self.disk.refresh()
+        return recorders
 
     def stop_slot(self, slot: int) -> None:
         for i, s in self._sessions():
             if i == slot and s.video_state().active:
                 self.toggle(s)
 
-    def wait_closed(self, timeout: float = CLOSE_WAIT_S) -> None:
+    @staticmethod
+    def wait_closed(recorders: list, timeout: float = CLOSE_WAIT_S) -> None:
         deadline = time.monotonic() + timeout
-        for _, s in self._sessions():
-            if s.video:
-                s.video.wait_closed(max(0.0, deadline - time.monotonic()))
+        for r in recorders:
+            r.wait_closed(max(0.0, deadline - time.monotonic()))
 
     def _release_folder(self) -> None:
         if not self.any_active():
@@ -145,7 +150,8 @@ class VideoController:
         info = self.disk.snapshot()
         by_slot = {i: st for i, _, st in states}
         rate = self._rate(rows, by_slot)
-        minutes = None if info is None or rate <= 0 else info.free / rate / 60
+        known = info is not None and info.connected  # вынутый диск — не «мало места»: причину назовёт рекордер
+        minutes = info.free / rate / 60 if known and rate > 0 else None
         if minutes is not None and minutes < STOP_MIN:
             self.stop_all()
             msgs.append("Запись остановлена: на диске почти не осталось места")
@@ -159,10 +165,10 @@ class VideoController:
             format_clock(max(r.elapsed_s for r in rows)),
             f"{format_gb(sum(r.bytes_total for r in rows))} ГБ",
         ]
-        if info is not None:
+        if known:
             left = f" (~{format_left(minutes)})" if minutes is not None else ""
             parts.append(f"на {where(info)} свободно {format_gb(info.free)} ГБ{left}")
-        return RecSummary(rows, " · ".join(parts), level, info.free if info else 0), msgs
+        return RecSummary(rows, " · ".join(parts), level, info.free if known else 0), msgs
 
 
 def live_session(states: list, camera_id: str):

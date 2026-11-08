@@ -199,21 +199,23 @@ class PreviewWidget(QWidget):
         return QRectF(area.right() - w - REC_MARGIN, area.top() + REC_MARGIN, w, REC_H)
 
     def rec_rect(self) -> QRectF | None:
-        return self._rec_plate(self.rec_text()) if self._rec_visible() else None
+        return self._rec_plate(self._rec_steady_text()) if self._rec_visible() else None
 
-    def rec_text(self) -> str:
+    def _rec_steady_text(self) -> str:
+        """Текст, по которому считается плашка: под мышью она не должна сжиматься, иначе клик уйдёт мимо."""
         s = self._rec
         if s is None or not s.active:
             return "Запись · R"
-        if self._rec_hovered(s):
-            return "■ Стоп"
         return f"REC {format_clock(s.elapsed_s)}" if s.signal else "REC · нет сигнала"
+
+    def rec_text(self) -> str:
+        s = self._rec
+        return "■ Стоп" if s is not None and self._rec_hovered(s) else self._rec_steady_text()
 
     def _rec_hovered(self, s: RecState) -> bool:
         if self._rec_mouse is None or self.mouse_mode or not s.active:
             return False
-        stop_w = self._rec_plate(f"REC {format_clock(s.elapsed_s)}")  # место плашки не зависит от наведения
-        return stop_w.contains(self._rec_mouse)
+        return self._rec_plate(self._rec_steady_text()).contains(self._rec_mouse)
 
     def _rec_hit(self, pos: QPointF) -> bool:
         r = None if self.mouse_mode else self.rec_rect()

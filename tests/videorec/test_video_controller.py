@@ -34,6 +34,7 @@ class FakeSession:
         self.state = IDLE
         self.started = []
         self.notes = []
+        self.video = None
 
     def video_state(self):
         return self.state
@@ -210,3 +211,11 @@ def test_low_space_warns_once_when_turning_critical():
     s.state = active()
     assert c.tick()[1] == ["Мало места: запись скоро остановится сама"]
     assert c.tick()[1] == []
+
+
+def test_pulled_disk_is_not_reported_as_no_space():
+    s = FakeSession()
+    c = make([s], disk(connected=False, free=0))
+    s.state = active()
+    _, msgs = c.tick()
+    assert s.state.active and msgs == []  # причину назовёт рекордер: «папка или диск недоступны»

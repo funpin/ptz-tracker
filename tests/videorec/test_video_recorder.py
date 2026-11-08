@@ -293,3 +293,60 @@ def test_url_is_built_in_recorder_thread(tmp_path, h264_file, fast_retry):
     assert wait_for(lambda: bool(seen))
     finish(r)
     assert seen[0] is False
+
+
+def test_unwritable_folder_is_reported_even_without_camera(tmp_path, fast_retry):
+    (tmp_path / "x").write_text("обычный файл")
+    r = rtsp_rec(tmp_path / "x" / "записи", Inputs())
+    r.start()
+    assert wait_for(lambda: not r.snapshot().active, t=2.0)
+    assert "папк" in r.snapshot().error
+
+
+def test_probe_leaves_folder_empty(tmp_path):
+    r = frames_rec(tmp_path, frames=FakeFrames(empty=True))
+    r.start()
+    time.sleep(0.1)
+    r.stop()
+    assert r.wait_closed(5.0) and list(tmp_path.iterdir()) == []
+
+
+class FlakyMux:
+    """Настоящий CopyWriter, у которого отдельные пакеты не проходят mux (сбой отметок времени)."""
+
+    def __init__(self, bad):
+        self.bad, self.n = bad, 0
+
+
+def _flaky(monkeypatch, bad):
+    real = R.CopyWriter
+    state = FlakyMux(bad)
+
+    class Flaky(real):
+        def write_packet(self, packet):
+            state.n += 1
+            if state.n in state.bad:
+                raise av.error.ArgumentError(22, "non monotonic dts")
+            super().write_packet(packet)
+
+    monkeypatch.setattr(R, "CopyWriter", Flaky)
+
+
+def test_single_bad_packet_keeps_copying(tmp_path, h264_file, fast_retry, monkeypatch):
+    _flaky(monkeypatch, {10})
+    r = rtsp_rec(tmp_path, Inputs(h264_file))
+    r.start()
+    assert wait_for(lambda: not r.snapshot().signal and r.snapshot().bytes_total > 0)
+    note = r.take_note()
+    s = finish(r)
+    assert "лёгк" not in (note or "").lower() and r._mode == "camera"
+    assert count_frames(s.paths[0]) >= 70
+
+
+def test_long_run_of_bad_packets_falls_back(tmp_path, h264_file, fast_retry, monkeypatch):
+    _flaky(monkeypatch, set(range(5, 40)))
+    r = rtsp_rec(tmp_path, Inputs(h264_file))
+    r.start()
+    assert wait_for(lambda: r._mode == "light")
+    assert "лёгк" in r.take_note().lower()
+    finish(r)
