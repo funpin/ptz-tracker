@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import itertools
 import logging
-import re
 import threading
 import time
 from concurrent.futures import Future, InvalidStateError
@@ -27,24 +26,20 @@ log = logging.getLogger(__name__)
 MAX_CAMERA_ERROR_RETRIES = 3
 UNREACHABLE_BACKOFF_AFTER = 3
 UNREACHABLE_BACKOFF_S = 1.0
-# Окно для зума при слежении (часть 0, раздел A: зум ждал за поворотом до 2,4 с). Зум, ждущий дольше
-# ZOOM_WINDOW_AFTER_S, уходит раньше поворота, если поворот почти не изменился (< PT_SMALL_CHANGE кодов
-# по обеим осям), если это отъезд (человек у края кадра) или если зум останавливает/разворачивает уже
-# отправленный зум. Поворот уступает не больше одного окна подряд.
-ZOOM_WINDOW_AFTER_S = 0.3
+# Окно для зума при слежении: когда ждут и поворот, и зум, зум ждёт не больше двух окон,
+# поворот уступает не больше одного окна подряд. Иначе поворот, у которого код меняется почти каждый такт,
+# вытеснял зум (часть 0, раздел A: зум ждал до 2,4 с; 2026-11-09: поворот и зум почти не шли одновременно).
+ZOOM_WINDOW_AFTER_S = 0.25
 # Запрос положения (#APC, #GZ), прождавший столько, уходит раньше слежения (поворота и зума), но не раньше аварийных и
 # ручных команд. Живая HE40 (2026-10-30): слежение заново занимало ячейки pt и zoom каждый такт, и запросы ждали до 7 с —
 # регулятор считал скорости по зуму 10-секундной давности. Запрос — одна команда в секунду, поворот теряет из-за него
 # не больше одного окна.
 QUERY_MAX_WAIT_S = 0.4
-PT_SMALL_CHANGE = 2
 # Стопы поворота и зума не отбрасываются по счётчику ошибок: потерянный стоп оставляет камеру ехать.
 _NEVER_DROP = frozenset({STOP_PT, STOP_ZOOM})
 # Одно и то же предупреждение о сбое команды — не чаще раза в столько секунд: при долгом обрыве аварийные стопы
 # повторяются ~7 раз в секунду, и журнал (1 МБ × 5) иначе прокручивается за 1,5–2 часа.
 FAILURE_LOG_INTERVAL_S = 5.0
-_PT_RE = re.compile(r"#PTS(\d\d)(\d\d)")
-_ZOOM_RE = re.compile(r"#Z(\d\d)")
 
 
 def _settle(fut: Future | None, result: str | None = None, exc: Exception | None = None) -> None:
@@ -296,26 +291,9 @@ class CommandScheduler:
         """Отдать окно ожидающему зуму слежения вместо поворота слежения (см. ZOOM_WINDOW_AFTER_S)."""
         zoom = self._st.slots.get("zoom")
         if (best.key != "pt" or best.priority != Priority.TRACKING or zoom is None
-                or zoom.priority != Priority.TRACKING_ZOOM or self._pt_yielded
-                or now - zoom.waiting_since < ZOOM_WINDOW_AFTER_S):
+                or zoom.priority != Priority.TRACKING_ZOOM or self._pt_yielded):
             return False
-        return self._pt_small_change(best.cmd) or self._zoom_urgent(zoom.cmd)
-
-    def _pt_small_change(self, cmd: str) -> bool:
-        new, old = _PT_RE.fullmatch(cmd), _PT_RE.fullmatch(self._st.last_sent.get("pt", ""))
-        if not (new and old):
-            return False
-        return all(abs(int(a) - int(b)) < PT_SMALL_CHANGE for a, b in zip(new.groups(), old.groups()))
-
-    def _zoom_urgent(self, cmd: str) -> bool:
-        """Отъезд или остановка/разворот зума, который камера сейчас выполняет: ждать поворот нельзя."""
-        new = _ZOOM_RE.fullmatch(cmd)
-        if not new:
-            return False
-        if int(new[1]) < 50:
-            return True  # отъезд — человек у края кадра
-        old = _ZOOM_RE.fullmatch(self._st.last_sent.get("zoom", ""))
-        return bool(old) and int(old[1]) > 50 and int(new[1]) <= 50
+        return now - zoom.waiting_since >= ZOOM_WINDOW_AFTER_S
 
     def _drop_expired(self, now: float) -> None:
         for key, item in list(self._st.slots.items()):

@@ -27,9 +27,9 @@ log = logging.getLogger(__name__)
 LOOP_HZ = 25.0
 STALE_S = 0.6  # результат анализа старше — анализ встал, камеру останавливаем
 POLL_TICK_S = 0.25  # шаг цикла опроса: решает, что из #APC/#GZ пора спросить
-APC_POLL_MOVING_S = 0.5  # при слежении, пока камера поворачивается (и 0,5 с после): подстройка скорости ждёт свежего #APC
+APC_POLL_MOVING_S = 0.75  # при слежении, пока камера поворачивается (и 0,5 с после): подстройка скорости ждёт свежего #APC
 APC_POLL_STILL_S = 1.0  # при слежении, камера стоит: сторожу и записи хватает раза в секунду
-GZ_POLL_MOVING_S = 0.5  # зум едет (и 1 с после остановки): модель зума сверяется с #GZ
+GZ_POLL_MOVING_S = 0.75  # зум едет (и 1 с после остановки): модель зума сверяется с #GZ (каждый запрос занимает окно поворота)
 GZ_POLL_STILL_S = 2.0  # зум стоит: редкий опрос только чтобы модель зума не уходила от камеры
 APC_MOVE_TAIL_S = 0.5
 GZ_MOVE_TAIL_S = 1.0
@@ -105,10 +105,10 @@ class Follower:
         # последний ответ #APC (опрос идёт при записи): сторож раскачки сверяет по нему развороты камеры
         self._pan_tilt: tuple[int, int] | None = None
         self._pan_tilt_t: float | None = None
-        # Номер включения слежения и с каким номером отправлена каждая команда зума слежения: команда,
+        # Номер включения слежения и с каким номером отправлена каждая команда слежения: команда,
         # поставленная до выключения, но ушедшая уже после нового включения, — не для нового регулятора
         self._gen = 0
-        self._zoom_cmd_gen: dict[str, int] = {}
+        self._cmd_gen: dict[str, int] = {}
         self._codes = (50, 50, 50)
         self._last_u: float | None = None
         self._last_manual = float("-inf")
@@ -143,7 +143,7 @@ class Follower:
             self._adapt_apc_t = self._adapt_gz_t = None
             self._pan_tilt = self._pan_tilt_t = None  # сторожу нового включения — только новые ответы #APC
             self._gen += 1
-            self._zoom_cmd_gen.clear()
+            self._cmd_gen.clear()
             self._codes = (50, 50, 50)
             self._pt_move_t = self._zoom_move_t = float("-inf")
             self._last_u = None
@@ -236,8 +236,8 @@ class Follower:
             self._zoom_pos, self._zoom_pos_t = z, time.monotonic()
 
     def _on_cmd_sent(self, info: dict) -> None:
-        """Планировщик отправил команду: команда зума — в модель зума регулятора (зум ждёт за поворотом);
-        pan/tilt и зум — в подстройку скорости (что камера правда получила)."""
+        """Планировщик отправил команду: поворот и зум — в модель камеры регулятора (что и когда ушло на самом деле)
+        и в подстройку скорости."""
         code, pt = sent_zoom_code(info), sent_pt_codes(info)
         if code is None and pt is None:
             return
@@ -247,17 +247,22 @@ class Follower:
                 return
             if pt is not None:
                 self.adapter.pt_sent(t, pt[0], pt[1], self._zoom_pos)
+                if info.get("priority") == Priority.TRACKING.name and self._cmd_gen.get(info["cmd"]) != self._gen:
+                    return  # команда прежнего включения слежения
+                self.controller.pt_sent(t, pt[0], pt[1], self._zoom_pos)  # модель поворота — по настоящей отправке
                 return
             self.adapter.zoom_sent(t, code)  # и команда прежнего включения: камера её выполнила
-            if info.get("priority") == Priority.TRACKING_ZOOM.name and self._zoom_cmd_gen.get(info["cmd"]) != self._gen:
+            if info.get("priority") == Priority.TRACKING_ZOOM.name and self._cmd_gen.get(info["cmd"]) != self._gen:
                 return  # команда прежнего включения слежения
             self.controller.zoom_sent(t, self.calib.zoom_rate(code))
 
     def _submit_tracking(self, pan: int, tilt: int, zc: int) -> None:
         """Коды слежения → в очередь (вызывать под self._lock)."""
-        self.scheduler.submit("pt", P.pan_tilt_speed(pan, tilt), Priority.TRACKING)
+        ptcmd = P.pan_tilt_speed(pan, tilt)
+        self._cmd_gen[ptcmd] = self._gen
+        self.scheduler.submit("pt", ptcmd, Priority.TRACKING)
         zcmd = P.zoom_speed(zc)
-        self._zoom_cmd_gen[zcmd] = self._gen
+        self._cmd_gen[zcmd] = self._gen
         self.scheduler.submit("zoom", zcmd, Priority.TRACKING_ZOOM)
 
     def _notify(self) -> None:
@@ -271,7 +276,7 @@ class Follower:
     # --- потоки ---------------------------------------------------------
 
     def _poll_zoom(self) -> None:
-        # при слежении: #APC раз в секунду (0,5 с, пока камера движется), #GZ только пока едет зум
+        # при слежении: #APC раз в секунду (0,75 с, пока камера движется), #GZ только пока едет зум
         # и 1 с после (иначе раз в 2 с); без слежения, но с записью — раз в 2 с и не сразу после ручной команды
         last_idle_poll = float("-inf")
         last_apc = last_gz = float("-inf")

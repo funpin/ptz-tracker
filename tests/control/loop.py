@@ -26,9 +26,6 @@ MEAS_DT = 1 / 14  # анализ 14 к/с
 # Наибольшая очередь команд поворота, которую проверяют тесты: p95 живого пути решение → камера 121–131 мс
 # (2026-10-29). Модель регулятора ждёт половину (framing.PT_QUEUE_S) — устойчивость при ρ 0,5–1,4 держит запас.
 QUEUE_MAX = 0.13
-# Только крайний случай: таблица неверна в ×2 и подстройка по #APC ещё не нашла поправку — за первое стояние
-# при 0,13 с два разворота (не раскачка: сторож молчит), при 0,08–0,10 — один (DECISIONS, задача 6).
-QUEUE_X2_BEFORE_ADAPT = 0.08
 
 
 @dataclass
@@ -45,6 +42,7 @@ class Trace:
     model_zoom: list = field(default_factory=list)  # ln масштаба в модели регулятора
     scale: list = field(default_factory=list)  # поправка скорости (pan, tilt, zoom) после такта (adapt=True)
     codes: list = field(default_factory=list)  # коды (pan, tilt, zoom) после такта (adapt=True)
+    cam_v: list = field(default_factory=list)  # настоящая скорость поворота камеры, доли кадра/с при текущем зуме
 
 
 def run(
@@ -121,6 +119,8 @@ def run(
 
     def apply_pt(now, qp, qt):
         k = math.exp(cam_z.position(now))
+        if channel:  # как Follower по on_sent: модель поворота — по ушедшим командам
+            ctrl.pt_sent(now, qp, qt, gz_pos)
         if adapter is not None and cam_he42:  # °/с камеры → мировые единицы (доли кадра на зуме старта)
             adapter.pt_sent(now, qp, qt, gz_pos)
             true_gz = real_gz(now)
@@ -211,6 +211,7 @@ def run(
             apply_zoom(t, qz)
         zx = math.exp(cam_z.position(t))
         tr.t.append(t)
+        tr.cam_v.append(cam_x.velocity(t) * zx)
         tr.pan.append(out.pan)
         tr.tilt.append(out.tilt)
         tr.zoom.append(out.zoom)

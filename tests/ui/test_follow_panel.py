@@ -61,7 +61,7 @@ def test_composition_and_effort_saved(qtbot, tmp_path):
     w.follow_panel.effort_slider.setValue(20)
     w.follow_panel.effort_slider.sliderReleased.emit()
     assert w.session.follower.controller.composition.key == "wide"
-    assert abs(w.session.follower.controller.effort.gain - 0.9 - (1.3 - 0.9) * 0.4) < 1e-6
+    assert abs(w.session.follower.controller.effort.gain - 1.2 - (1.7 - 1.2) * 0.4) < 1e-6
     w.close()
     cam = store.load().cameras[0]
     assert cam.composition == "wide" and abs(cam.effort - 0.2) < 1e-9

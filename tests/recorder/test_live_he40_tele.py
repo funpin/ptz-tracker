@@ -29,14 +29,7 @@ def test_episode_is_small_and_replays():
     s = res.summary()
     assert res.calibration_ok and s.skipped_events == 0
     assert 55 <= s.following_s <= 65 and s.target_switches == 0
-    # Было: коды совпадали с записью во всём (max_code_diff == 0). Теперь регулятор не приближает зум выше
-    # TRACK_ZOOM_MAX (HE40 2026-10-30, DECISIONS): расходятся только коды зума, и только там, где в записи зум шёл
-    # «ближе» на теле; повороты и наклоны — те же.
-    assert all(a[:2] == b[:2] for a, b in zip(res.codes_rec, res.codes_new))
-    diff = [(a[2], b[2], z) for a, b, z in zip(res.codes_rec, res.codes_new, res.zoom_pos) if a != b]
-    # расхождений мало: измерено 126 тактов из 1344 (~9%); предел 20% ловит случай, когда зум почти не наезжает вообще
-    assert diff and len(diff) < 0.2 * len(res.codes_rec)
-    assert all(old > 50 and new <= 50 and z >= 0xC00 for old, new, z in diff)
+    # С 2026-11-09 регулятор другой (человечное слежение): коды с записью не совпадают, проверяем предел наезда
     assert all(b[2] <= 50 for b, z in zip(res.codes_new, res.zoom_pos) if z >= TRACK_ZOOM_MAX)
 
 

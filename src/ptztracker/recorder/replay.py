@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, fields
 from ptztracker.control.camera_model import Calibration, CameraDynamics, default_calibration
 from ptztracker.control.composition import COMPOSITIONS, DEFAULT_COMPOSITION, BodyMeasure, Composition
 from ptztracker.control.effort import EffortProfile
-from ptztracker.control.follower import output_codes, sent_zoom_code
+from ptztracker.control.follower import output_codes, sent_pt_codes, sent_zoom_code
 from ptztracker.control.framing import FramingController, FramingInput
 from ptztracker.recorder.reader import Episode, _num
 from ptztracker.vision.tracker import _iou
@@ -255,6 +255,7 @@ def replay_controller(
     codes: Codes = (50, 50, 50)
     bounds: list[list[float]] = []  # [начало, конец] каждого включения слежения
     on = False
+    last_zoom: int | None = None  # положение зума последнего такта: код поворота → скорость
     implicit_t: float | None = None  # слежение «включилось» по такту, а событие follow on ещё не встретилось
 
     def start(t: float, latency: float) -> None:
@@ -315,6 +316,7 @@ def replay_controller(
                 if recorded_calib:
                     calib.set_speed_scale(e.get("speed_scale"))
                 out = ctrl.step(inp)
+                last_zoom = inp.zoom_pos
                 codes = output_codes(calib, out, inp.zoom_pos, codes)
                 soft_x, soft_y = ctrl.effort.soft_x, ctrl.effort.soft_y
                 res.t.append(t)
@@ -330,9 +332,11 @@ def replay_controller(
                 res.segment.append(len(bounds) - 1)
                 bounds[-1][1] = t
             elif kind == "cmd":
-                code = sent_zoom_code(e)
-                if on and code is not None:  # как Follower: модель зума — по командам, ушедшим в камеру
+                code, pt = sent_zoom_code(e), sent_pt_codes(e)
+                if on and code is not None:  # как Follower: модель зума и поворота — по командам, ушедшим в камеру
                     ctrl.zoom_sent(t, calib.zoom_rate(code))
+                if on and pt is not None and last_zoom is not None:
+                    ctrl.pt_sent(t, pt[0], pt[1], last_zoom)
             elif kind == "analysis":
                 res.targets.append((t, e.get("target_id"), e.get("target_state") or "none"))
             elif kind == "position":

@@ -1,15 +1,13 @@
 """Регулятор кадрирования: по положению человека решает, с какой скоростью вести pan/tilt/zoom.
 
 Чистая функция шага (без потоков и сети), вызывается ~25 раз в секунду. Как оператор:
-- не реагирует на покачивания внутри мёртвой зоны; «пошёл» — по скорости и смещению в одну сторону за 0,4 с;
-- идёт вместе с человеком (полное упреждение по скорости человека «в мире»);
-- трогается и тормозит плавно: ускорение и рывок ограничены у движения самой камеры (модель разгона), а
-  когда человек уходит за мягкую зону — догоняет изо всех сил;
-- тормозит заранее: ошибка берётся такой, какой станет, когда камера ответит (тормозной путь —
-  мёртвое время + τ), после перелёта возвращается медленно;
+- различает «стоит, переминается» и «идёт» плавным весом (PersonEstimator): стоит — держит середину переминания, идёт — ведёт человека;
+- скорость растёт с отклонением по одной гладкой кривой (motion_law.speed_for_error), без ступеней и порогов;
+- трогается и тормозит плавно: ускорение и рывок ограничены у движения самой камеры (модель разгона), чем дальше
+  человек от метки, тем больше разрешённое ускорение;
+- тормозит заранее: ошибка берётся такой, какой станет, когда камера ответит (тормозной путь — мёртвое время + τ);
 - учитывает, что кадр опаздывает: камера уже сдвинула картинку, пока кадр шёл по сети;
-- оставляет место перед идущим человеком;
-- зумирует только когда кадр спокоен, а отъезжает сразу, если человек у края или поворотом его не догнать.
+- зумирует вместе с поворотом: наезд замедляется, только когда поворот не успевал бы за человеком или мало места до края.
 
 Модель зума (zdyn) идёт по командам, которые реально ушли в камеру (zoom_sent), и подправляется
 по ответам #GZ (FramingInput.zoom_pos_t): зум может ждать в очереди за поворотом.
@@ -17,6 +15,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass
 from typing import Literal
@@ -26,34 +25,26 @@ from ptztracker.camera import protocol as P
 from ptztracker.control.camera_model import Calibration, CameraDynamics, zoom_ln
 from ptztracker.control.composition import BodyMeasure, Composition
 from ptztracker.control.effort import EffortProfile
+from ptztracker.control.motion_law import smoothstep, speed_for_error
+from ptztracker.control.person_estimator import PersonEstimator
 
-ALPHA = 0.35  # сглаживание положения человека
-VEL_WINDOW_S = 0.4  # окно оценки скорости человека
-CALM_WINDOW_S = 1.5  # «человек стоит», если за это время сместился меньше мёртвой зоны
-WALK_WINDOW_S = 0.4  # «пошёл»: за это время сместился в одну сторону ...
-WALK_SHIFT = 1.2  # ... больше этой доли мёртвой зоны (покачивание у кафедры столько не проходит)
-WALK_SHIFT_MIN = 0.06  # ... и не меньше этого (доли кадра): переминание ±0,06 при «Резко» — не ходьба
-WALK_SLOW_SHIFT = 0.16  # или за CALM_WINDOW_S в одну сторону больше этого: медленно идёт (общий план)
 # Поворот ждёт в очереди планировщика (min_interval 0,13 с, последняя команда побеждает) в среднем половину
 # интервала: модель pan/tilt регулятора считает это частью мёртвого времени. Без этого при разгоне τ 0,12 с
 # модель опережала камеру на очередь, переминание казалось ходьбой, и «Резко» качалось при ρ ≥ 0,85 (DECISIONS).
 # Модель зума идёт по командам, которые ушли (zoom_sent), — ей это не нужно.
 PT_QUEUE_S = 0.065
 BRAKE = 2.5  # тормозим твёрже, чем разгоняемся: ускорение и рывок торможения — в столько раз больше
-CATCH_UP = 10.0  # человек уходит за мягкую зону — разгон в столько раз больше a_max (по сути, как может камера)
-# Упреждение по скорости человека — полное: на ходу человек у якоря. Скорость считается с поправкой на
-# движение камеры по модели; если камера быстрее модели в ρ раз, в оценку попадает (ρ−1)·скорость камеры.
-# Рост упреждения плавный (FF_RISE_S), падение — сразу: так эта петля не раскачивает камеру, пока
-# подстройка скорости (speed_adapt) не нашла ρ (тесты ×0,5…×2).
-FF_GAIN = 1.0
-FF_RISE_S = 0.5
-START_BLEND = 0.5  # пошёл: скорость — середина между окном VEL_WINDOW_S и тремя последними замерами
-STOP_INNOV = 0.01  # доли кадра: человек позади прогноза больше этого два замера подряд — тормозит
-# Возврат после перелёта: со скоростью RETURN_GAIN·ошибка, не быстрее RETURN_V_MAX (человек за мягкой
-# зоной) и RETURN_V_SOFT (в ней); направление «туда»
-# забывается, если камера стоит дольше RETURN_WINDOW_S. Человек правда пошёл назад — когда упреждение
-# в ту сторону не меньше WALK_BACK_V (кажущееся «назад» сразу после торможения камеры меньше).
-RETURN_GAIN, RETURN_V_MAX, RETURN_WINDOW_S, WALK_BACK_V = 2.5, 0.25, 3.0, 0.1
+CATCH_UP = 10.0  # человек почти у края — разгон до этого множителя a_max (плавно, по отклонению)
+CATCH_UP_FROM, CATCH_UP_TO = 0.14, 0.30  # доли кадра от метки: множитель от 1 до CATCH_UP
+# Упреждение по скорости человека: на ходу человек чуть впереди метки, зато камера меньше проезжает мимо при
+# остановке (DECISIONS). Рост плавный (FF_RISE_S): если камера быстрее модели, её разгон кажется движением
+# человека; так эта петля не раскачивает камеру, пока подстройка скорости (speed_adapt) не нашла поправку.
+FF_GAIN = 0.85
+FF_RISE_S, FF_FALL_S = 0.3, 0.06
+# Доводка: ближе этого (доли мёртвой зоны) камера не двигается вовсе, иначе вечно ползёт на нижних кодах
+HOLD_FROM, HOLD_TO = 0.5, 0.9
+LATENCY_GAIN_REF = 0.3  # с: задержка видео больше — коэффициент обратной связи падает пропорционально (MJPEG 0,12–0,26 не трогаем)
+RETURN_V_MAX = 0.5  # доли кадра/с: потолок доводки, пока человек стоит
 # Отъезд у края: за EDGE_ZOOM_ERR — со скоростью EDGE_ZOOM·zoom_max; прогноз ухода (Axis.escape) за
 # ESCAPE_ERR — сразу ESCAPE_ZOOM ln/с: поворотом уже не успеть (быстрая ходьба на «Поясе»).
 EDGE_ZOOM_ERR, EDGE_ZOOM, EDGE_ZOOM_ACCEL = 0.3, 1.5, 2.0
@@ -80,20 +71,16 @@ ZOOM_LIMIT_LEAD_S = 0.1  # команда наезда, ещё не дошедш
 LOST_STOP_S = 0.5
 LOST_COAST_S = 0.6  # человек ушёл за край быстрее камеры и пропал — столько ещё идём за ним
 STILL_V = 0.02  # медленнее — считаем, что человек стоит
-START_V, STOP_V = 0.05, 0.03  # скорость человека для перехода в «движение» / обратно в «стоим»
-RELEASE = 0.4  # возврат в «стоим», когда ошибка < RELEASE·dead
-EDGE_GAIN = 1.8  # за мягкой зоной догоняем сильнее
+MOVING_CMD, MOVING_WALK = 0.01, 0.3  # «движение» для состояния: команда быстрее этого или вес «идёт» больше этого
 LEAD_MAX, LEAD_TAU = 0.08, 0.8
-SETTLE_V = 0.08  # человек остановился, камера проехала — возвращаем медленно, без «пинг-понга»
-RETURN_V_SOFT = 1.5 * SETTLE_V  # возврат после перелёта, пока человек в мягкой зоне
 NO_TARGET_S = 0.3
 ZOOM_ACCEL = 0.5  # ln/с²
-ZOOM_IN_AFTER_HOLD_S = 1.0
-# «Спокоен» для наезда: размах за CALM_WINDOW_S меньше ZOOM_CALM_IN·мёртвая зона (наезд начинается) и не больше
-# ZOOM_CALM_OUT·мёртвая зона (идущий наезд продолжается; размах считается в кадре сейчас, так что наезд сам
-# останавливается, когда переминание в кадре вырастает до того, что камера ещё держит без раскачки). Стоящий человек переминается ±0,03…0,06 кадра —
-# размах 0,06…0,12 больше мёртвой зоны 0,05, и по прежнему правилу «стоит» наезд не начинался.
-ZOOM_CALM_IN, ZOOM_CALM_OUT = 2.2, 2.5
+# Наезд на ходу: множитель скорости от запаса до края (ошибка + куда уйдёт, пока камера ответит) и от того,
+# успеет ли поворот, когда картинка станет крупнее (скорость человека в кадре ÷ потолок поворота)
+ZOOM_ROOM_FROM, ZOOM_ROOM_TO = 0.18, 0.34
+ZOOM_SPEED_FROM, ZOOM_SPEED_TO = 0.55, 0.9
+ZOOM_WALK_SLOWDOWN = 0.6  # пока человек идёт, наезд в 2,5 раза медленнее: картинка крупнеет — поворот должен успевать
+ZOOM_RETRY_FROM, ZOOM_RETRY_TO = 1.0, 3.0  # с после отъезда: наезд снова плавно разрешается (без «отъехал — наехал» на ходу)
 U_SMOOTH = 0.3
 # Поправка модели зума по ответу #GZ: доля расхождения за один ответ и предел одной поправки (ln).
 # Соответствие #GZ → масштаб живьём не мерялось (he42.ZOOM_RATIO) — замер не должен перебивать модель целиком.
@@ -124,16 +111,6 @@ class FramingOutput:
 
 def _limit(v: float, lim: float) -> float:
     return max(-lim, min(lim, v))
-
-
-def _slope(pts: list[tuple[float, float]]) -> float:
-    """Наклон прямой по точкам (t, x) методом наименьших квадратов; 0 — если точек меньше трёх."""
-    if len(pts) < 3:
-        return 0.0
-    mt = sum(t for t, _ in pts) / len(pts)
-    mx = sum(x for _, x in pts) / len(pts)
-    den = sum((t - mt) ** 2 for t, _ in pts)
-    return sum((t - mt) * (x - mx) for t, x in pts) / den if den > 0 else 0.0
 
 
 class SwingWatch:
@@ -262,27 +239,22 @@ class _Axis:
         self.sign = sign
         self.dyn = dyn
         self.watch = SwingWatch(fw_per_unit, lag)
+        self.person = PersonEstimator()
         self.reset()
 
     def reset(self) -> None:
-        self.world: float | None = None
-        self.v_world = 0.0  # мировые единицы/с
-        self.v_img = 0.0  # то же в долях кадра/с при текущем зуме
-        self.hist: list[tuple[float, float]] = []
-        self.calm_hist: list[tuple[float, float]] = []
-        self.t_meas: float | None = None
-        self._behind = 0  # сколько замеров подряд человек позади прогноза
-        self.walked = False  # «пошёл» (Axis.walking)
+        self.person.reset()
+        self.sent_model = False  # модель поворота идёт по ушедшим в камеру командам (FramingController.pt_sent)
         self.mode = "holding"
         self.v_cmd = 0.0
         self.a_cmd = 0.0  # ускорение камеры по модели (fw/s²), которое задаёт команда: по нему — рывок
         self.v_ff = 0.0  # скорость упреждения, доли кадра/с
+        self.v_img = 0.0  # скорость человека в кадре при текущем зуме
         self.lead = 0.0
-        self.err = 0.0
+        self.err = 0.0  # отклонение цели от метки
+        self.reach = 0.0  # |отклонение самого человека от метки|: переминание у края важно, хотя цель — середина
         self.escape = 0.0  # прогноз наибольшей ошибки, пока камера догоняет (доли кадра)
-        self.catch_up = False  # человек уходит за мягкую зону — догоняем с ускорением камеры без ограничения
-        self.travel_dir = 0  # куда камера шла за человеком в последний раз
-        self.travel_t = 0.0
+        self.urgency = 0.0  # 0…1: насколько далеко человек, разгон — до CATCH_UP
         self.exit_cmd = 0.0  # команда «за уходящим за край», если он пропадёт
         self.active_t = 0.0
         self.watch.reset()
@@ -292,76 +264,24 @@ class _Axis:
 
     def measure(self, img: float, t_shot: float, k_shot: float) -> None:
         # «мировая» позиция: что было бы без поворота камеры и без зума
-        z = (img - 0.5) / k_shot + self.sign * self._cam(t_shot)
-        if self.world is None or self.t_meas is None:
-            self.world, self.v_world, self.t_meas = z, 0.0, t_shot
-            self.hist = [(t_shot, z)]
-            return
-        dt = max(1e-3, t_shot - self.t_meas)
-        pred = self.world + self.v_world * dt
-        self.world = pred + ALPHA * (z - pred)
-        self.t_meas = t_shot
-        self.calm_hist.append((t_shot, z))
-        self.calm_hist = [(t, v) for t, v in self.calm_hist if t_shot - t <= CALM_WINDOW_S + 0.5]
-        # скорость — наклон по последним VEL_WINDOW_S
-        self.hist.append((t_shot, z))
-        self.hist = [(t, v) for t, v in self.hist if t_shot - t <= VEL_WINDOW_S]
-        if len(self.hist) >= 3:
-            self.v_world = _slope(self.hist)
-            v_short = _slope(self.hist[-3:])
-            # пошёл (разгоняется): наклон по трём последним замерам больше — берём середину, а не ждём окна
-            if v_short * self.v_world > 0 and abs(v_short) > abs(self.v_world):
-                self.v_world += START_BLEND * (v_short - self.v_world)
-            # человек отстаёт от прогноза два замера подряд — тормозит: скорость по трём последним замерам
-            behind = (z - pred) * self.v_world < 0 and abs(z - pred) * k_shot > STOP_INNOV
-            self._behind = self._behind + 1 if behind else 0
-            if self._behind >= 2:
-                self.v_world = v_short if v_short * self.v_world > 0 and abs(v_short) < abs(self.v_world) else (
-                    0.0 if v_short * self.v_world <= 0 else self.v_world)
+        self.person.update(t_shot, (img - 0.5) / k_shot + self.sign * self._cam(t_shot), k_shot)
 
-    def spread(self, now: float, k_now: float) -> float:
-        """Размах положения человека за последние CALM_WINDOW_S, в долях кадра при текущем зуме."""
-        pts = [z for t, z in self.calm_hist if now - t <= CALM_WINDOW_S]
-        if len(pts) < 3:
-            return float("inf")
-        return (max(pts) - min(pts)) * k_now
-
-    def walking(self, k_now: float, dead: float) -> bool:
-        """«Пошёл»: за последние WALK_WINDOW_S человек сместился в одну сторону больше WALK_SHIFT·dead,
-        и скорость того же знака. Покачивание у кафедры за такое окно столько не проходит. Вызывать раз
-        за такт: помнит прошлый ответ."""
-        if self.t_meas is None:
-            return False
-        pts = [(t, z) for t, z in self.calm_hist if self.t_meas - t <= WALK_WINDOW_S]
-        if len(pts) < 3 or pts[-1][0] - pts[0][0] < 0.5 * WALK_WINDOW_S:
-            return False
-        shift = (pts[-1][1] - pts[0][1]) * k_now
-        # гистерезис: уже идёт — достаточно половины смещения и скорости STOP_V
-        need = max(WALK_SHIFT * dead, WALK_SHIFT_MIN)
-        need, v_min = (0.5 * need, STOP_V) if self.walked else (need, START_V)
-        self.walked = abs(shift) >= need and abs(self.v_img) >= v_min and shift * self.v_img > 0
-        if not self.walked and abs(self.v_img) >= v_min:
-            # медленная ходьба (общий план): за CALM_WINDOW_S в одну сторону больше, чем переминание туда-обратно
-            slow = [z for t, z in self.calm_hist if self.t_meas - t <= CALM_WINDOW_S]
-            if len(slow) >= 3:
-                long_shift = (slow[-1] - slow[0]) * k_now
-                self.walked = abs(long_shift) >= WALK_SLOW_SHIFT and long_shift * self.v_img > 0
-        return self.walked
+    def spread(self, k_now: float) -> float:
+        """Размах переминания (половина), доли кадра при текущем зуме."""
+        return self.person.sway * k_now
 
     def _ramp(self, want: float, dt: float, e: EffortProfile, now: float, k_now: float) -> None:
         """Команда к want так, чтобы ускорение камеры по модели ((команда − скорость)/τ) было не больше a_max
-        (торможение — BRAKE·a_max, человек уходит за мягкую зону — без ограничения), а его изменение —
-        не больше j_max. Плавность — у движения самой камеры, а не у команды."""
+        (торможение — BRAKE·a_max, далеко от метки — плавно до CATCH_UP·a_max), а его изменение — не больше j_max.
+        Плавность — у движения самой камеры, а не у команды."""
         tau = max(0.05, self.dyn.tau)
         v_m = self.dyn.velocity(now + self.dyn.dead_time) * k_now  # скорость камеры, когда команда дойдёт
         dv = want - v_m
-        braking = v_m * dv < 0
-        if braking:
+        if v_m * dv < 0:
             a_lim, j = BRAKE * e.a_max, BRAKE * e.j_max
-        elif self.catch_up:
-            a_lim, j = CATCH_UP * e.a_max, CATCH_UP * e.j_max
         else:
-            a_lim, j = e.a_max, e.j_max
+            boost = 1.0 + (CATCH_UP - 1.0) * self.urgency
+            a_lim, j = boost * e.a_max, boost * e.j_max
         # сколько скорость ещё изменится, пока нынешнее ускорение гаснет с рывком j, — это уже «в пути»
         rest = dv - self.a_cmd * abs(self.a_cmd) / (2 * j)
         a_des = math.copysign(min(a_lim, math.sqrt(2 * j * abs(rest))), rest)
@@ -371,6 +291,13 @@ class _Axis:
             u = 0.0  # камера и так стоит (код 50): без «хвоста» команды
         self.a_cmd = (u - v_m) / tau
         self.v_cmd = u
+
+    def _update_ff(self, target: float, dt: float) -> None:
+        """Упреждение к target: спад быстрый (человек останавливается), рост плавный."""
+        falling = abs(target) < abs(self.v_ff) or target * self.v_ff <= 0
+        self.v_ff += (target - self.v_ff) * (1 - math.exp(-dt / (FF_FALL_S if falling else FF_RISE_S)))
+        if abs(self.v_ff) < 1e-4:
+            self.v_ff = 0.0
 
     def step(
         self,
@@ -388,78 +315,55 @@ class _Axis:
         coast: bool = False,
     ) -> float:
         v_cap = e.v_max if v_cap is None else v_cap
-        if active and self.world is not None:
-            self.v_img = self.v_world * k_now
-            v_w = self.v_img if abs(self.v_img) >= STILL_V else 0.0
-            img_now = 0.5 + (self.world + self.v_world * (now - self.t_meas) - self.sign * self._cam(now)) * k_now
-            lead_target = _limit(-lead_k * v_w, LEAD_MAX)
+        p = self.person
+        if active and p.t is not None:
+            w = p.walk
+            self.v_img = p.vel * k_now
+            moving_img = self.v_img if abs(self.v_img) >= STILL_V else 0.0
+            pred = p.pos + p.vel * (now - p.t)
+            aim = (1 - w) * p.center + w * pred  # стоит — середина переминания, идёт — сам человек
+            shift = -self.sign * self._cam(now)
+            lead_target = _limit(-lead_k * w * moving_img, LEAD_MAX)
             self.lead += (lead_target - self.lead) * (1 - math.exp(-dt / LEAD_TAU))
-            self.err = img_now - (anchor + self.lead)
-            a = abs(self.err)
-            # «Пошёл» — по скорости и направлению за WALK_WINDOW_S: покачивание у кафедры даёт скорость,
-            # но не смещение в одну сторону. Иначе камера ходит за покачиванием туда-сюда.
-            walked = self.walking(k_now, dead)
-            # трогаемся, только когда человек вышел из мёртвой зоны: скорость покачивания не повод
-            if self.mode == "holding" and a > dead:
-                self.mode = "moving"
-            elif self.mode == "moving" and a < RELEASE * dead and (abs(v_w) < STOP_V or not walked):
-                self.mode = "holding"
-            if not walked:
-                v_w = 0.0  # покачивание — не повод вести камеру за человеком
-            # Упреждение: падение скорости — сразу (остановился), рост — плавно, с FF_RISE_S. Если камера
-            # быстрее модели, её разгон кажется замедлением человека; так эта петля не раскачивает камеру.
-            if v_w * self.v_ff <= 0:
-                self.v_ff = v_w * (1 - math.exp(-dt / FF_RISE_S))
-            elif abs(v_w) <= abs(self.v_ff):
-                self.v_ff = v_w
-            else:
-                self.v_ff += (v_w - self.v_ff) * (1 - math.exp(-dt / FF_RISE_S))
+            img_aim = 0.5 + (aim + shift) * k_now
+            img_person = 0.5 + (pred + shift) * k_now
+            self.err = img_aim - (anchor + self.lead)
+            self.reach = abs(img_person - (anchor + self.lead))
+            a = max(abs(self.err), self.reach)
+            self._update_ff(FF_GAIN * w * moving_img, dt)
             t_resp = self.dyn.dead_time + self.dyn.tau  # за столько камера отвечает на команду
+            v_w = w * moving_img
             # Куда уйдёт человек, пока камера его догоняет: v·(мёртвое время + τ) + v²/(2·a) по скорости
             # относительно камеры. За мягкой зоной — догоняем изо всех сил; за ESCAPE_ERR — ещё и шире.
             v_rel = v_w - self.sign * self.dyn.velocity(now) * k_now
             self.escape = a + abs(v_rel) * t_resp + v_rel * v_rel / (2 * BRAKE * e.a_max) if v_rel * self.err > 0 else a
-            # догон без ограничения — только по горизонтали: человек уходит вбок; по вертикали ошибка большая
+            # разгон сильнее — только по горизонтали: человек уходит вбок; по вертикали ошибка большая
             # бывает от наезда/отъезда (модель зума отстаёт), и резкий наклон за ней раскачивает камеру
-            self.catch_up = self.sign > 0 and (a > soft or abs(self.err + v_w * t_resp) > soft)
-            if self.mode == "moving":
-                # Ошибка — какой она станет, когда камера ответит: человек пройдёт v·(мёртвое время + τ),
-                # камера — свой тормозной путь по уже отданным командам. Так камера тормозит заранее.
-                e_pred = self.err + v_w * t_resp - self.sign * self.dyn.coast(now) * k_now
-                ap, base = abs(e_pred), RELEASE * dead
-                shaped = max(0.0, ap - base)
-                if ap > soft:
-                    shaped = (soft - base) + EDGE_GAIN * (ap - soft)
-                # камера по инерции проскочит человека: тормозим до его скорости, но не командуем «назад»
-                fb = 0.0 if e_pred * self.err < 0 else e.gain * math.copysign(shaped, e_pred)
-                want = self.sign * (FF_GAIN * self.v_ff + fb)
-                # Назад (против того, куда камера шла за человеком), а человек туда не идёт — перелёт после
-                # остановки: возвращаемся плавно, не быстрее RETURN_GAIN·ошибка и RETURN_V_MAX.
-                # Пока камера ещё катится «туда», «человек идёт назад» — кажущееся (ошибка задержки или скорости
-                # камеры при торможении): возврат всё равно медленный.
-                v_cam = self.dyn.velocity(now) * k_now
-                walks_back = abs(self.v_ff) >= WALK_BACK_V and want * self.sign * self.v_ff > 0 \
-                    and v_cam * self.travel_dir * self.sign <= WATCHDOG_MOVING_V
-                returning = want * self.travel_dir < 0 and not walks_back
-                against = want * self.sign * self.v_img < 0
-                if returning:
-                    v_back = RETURN_V_MAX if a > soft else RETURN_V_SOFT  # в мягкой зоне — совсем медленно
-                    want = _limit(want, min(v_back, max(SETTLE_V, RETURN_GAIN * (a - base))))
-                elif a <= soft and (abs(self.v_img) < STOP_V or against):
-                    # Оператор так и делает: доводит, а не дёргает обратно.
-                    want = _limit(want, SETTLE_V)
-            else:
-                want = 0.0
+            far = max(a, abs(self.err + v_w * t_resp))
+            # и только за идущим: стоящий у края никуда не денется, а резкий догон за ним даёт перелёт в другую сторону
+            self.urgency = smoothstep(far, CATCH_UP_FROM, CATCH_UP_TO) * smoothstep(w, 0.1, 0.5) if self.sign > 0 else 0.0
+            # Ошибка — какой она станет, когда камера ответит: человек пройдёт v·(мёртвое время + τ),
+            # камера — свой тормозной путь по уже отданным командам. Так камера тормозит заранее.
+            e_pred = self.err + v_w * t_resp - self.sign * self.dyn.coast(now) * k_now
+            # камера по инерции проскочит человека: тормозим до его скорости, но не командуем «назад»
+            fb = 0.0
+            if e_pred * self.err >= 0:
+                hold = smoothstep(abs(e_pred), HOLD_FROM * dead, HOLD_TO * dead)
+                # возврат к стоящему человеку — не быстрее RETURN_V_MAX: на полной скорости камера проскочила бы метку
+                fb_cap = RETURN_V_MAX + (v_cap - RETURN_V_MAX) * w if v_cap > RETURN_V_MAX else v_cap
+                fb = hold * speed_for_error(e_pred, dead, soft, e.gain, fb_cap)
+            want = self.sign * (self.v_ff + fb)
+            self.mode = "moving" if abs(want) > MOVING_CMD or abs(self.v_cmd) > MOVING_CMD or w > MOVING_WALK else "holding"
             # Наезд/отъезд сдвигает человека в кадре — доворачиваем одновременно, как оператор. Но если человек
             # уходит за край, а доворот при отъезде повёл бы камеру от него — не доворачиваем: отъезд сам
             # вернёт его к центру.
-            zoom_feed = self.sign * (img_now - 0.5) * zoom_rate
+            zoom_feed = self.sign * (img_aim - 0.5) * zoom_rate
             if zoom_rate < 0 and a > soft and zoom_feed * self.sign * self.err < 0:
                 zoom_feed = 0.0
             want += zoom_feed
             # Человек уходит за край кадра: если он пропадёт, камера ещё LOST_COAST_S идёт за ним с его
             # скоростью — он снова появляется в кадре, а не теряется насовсем.
-            self.exit_cmd = self.sign * FF_GAIN * self.v_ff if a > soft and self.err * self.v_ff > 0 else 0.0
+            self.exit_cmd = self.sign * self.v_ff if a > soft and self.err * self.v_ff > 0 else 0.0
             self.active_t = now
         elif coast and self.exit_cmd and now - self.active_t <= LOST_COAST_S:
             want, zoom_feed = self.exit_cmd, 0.0
@@ -467,11 +371,6 @@ class _Axis:
             want = zoom_feed = 0.0
             self.exit_cmd = 0.0
         want = _limit(want, v_cap)
-        if abs(self.v_ff) >= WALK_BACK_V:
-            self.travel_dir = 1 if self.sign * self.v_ff > 0 else -1
-            self.travel_t = now
-        elif self.travel_dir and self.mode == "holding" and now - self.travel_t > RETURN_WINDOW_S:
-            self.travel_dir = 0  # давно стоим: следующий шаг в любую сторону — уже не возврат после перелёта
         if active:
             self._ramp(want, dt, e, now, k_now)
         else:
@@ -482,9 +381,10 @@ class _Axis:
         if abs(self.v_cmd) < 1e-9:
             self.v_cmd = self.a_cmd = 0.0
         self.v_cmd = float(self.v_cmd)  # из ключевых точек приходят numpy-числа
-        target = None if not active or self.world is None else (self.world + self.v_world * (now - self.t_meas)) * k_now
+        target = None if not active or p.t is None else (p.pos + p.vel * (now - p.t)) * k_now
         self.watch.update(now, self.v_cmd, self.err, soft, float(zoom_feed), target, dead)
-        self.dyn.command(now, self.v_cmd / k_now)  # камера даёт fw/s при текущем зуме → в мировые единицы
+        if not self.sent_model:
+            self.dyn.command(now, self.v_cmd / k_now)  # камера даёт fw/s при текущем зуме → в мировые единицы
         return self.v_cmd
 
 
@@ -517,9 +417,7 @@ class FramingController:
         self._zoom_cmd = 0.0
         self._zoom_active = False
         self._zoom_capped = False  # наезд остановлен у TRACK_ZOOM_MAX (защёлка с запасом ZOOM_LIMIT_RELEASE)
-        self._hold_since: float | None = None
-        self._still_since: float | None = None
-        self._zoom_calm_since: float | None = None
+        self._zoom_out_t = float("-inf")  # когда в последний раз ехали шире
         self._gz_t: float | None = None  # момент последнего учтённого ответа #GZ
         self._gz_ref: float | None = None  # ln масштаба (по #GZ), которому соответствует k = 1
         self._apc_t: float | None = None  # момент последнего учтённого ответа #APC
@@ -528,6 +426,21 @@ class FramingController:
     def zoom_sent(self, t: float, rate: float) -> None:
         """Команда зума (ln/с) ушла в камеру в момент t: модель зума идёт по отправленному, а не по решённому."""
         self.zdyn.command(t, rate)
+
+    def pt_sent(self, t: float, pan: int, tilt: int, zoom_pos: int) -> None:
+        """Коды поворота и наклона ушли в камеру в момент t: модель идёт по настоящей отправке и настоящей скорости кода.
+
+        Очередь планировщика меняется от 0 до нескольких окон (поворот делит их с зумом и опросами), и модель,
+        ждущая среднюю очередь, опережала камеру: на ходу это ошибка положения человека «в мире».
+        Масштаб берётся на момент последнего #GZ: скорость кода посчитана по этому же положению зума.
+        """
+        k = self._k(self._gz_t if self._gz_t is not None else t)
+        for ax, code, axis, to_axis in ((self.x, pan, "pan", 1.0), (self.y, tilt, "tilt", 1 / TILT_FROM_FH)):
+            if not ax.sent_model:
+                ax.sent_model = True
+                ax.dyn.dead_time = self.calib.dead_time  # очередь больше не угадываем: момент отправки известен
+                ax.dyn.forget_after(t)  # решённые, но не ушедшие команды: иначе список команд потеряет порядок
+            ax.dyn.command(t, self.calib.pan_fw(code, zoom_pos, axis) * to_axis / k)
 
     def _zoom_measured(self, t: float, pos: int) -> None:
         """Ответ #GZ: подтянуть модель зума к замеру (масштаб k считается от первого ответа после reset)."""
@@ -542,6 +455,8 @@ class FramingController:
         dt = CTRL_DT_DEFAULT if self._t_prev is None else max(1e-3, now - self._t_prev)
         self._t_prev = now
         e, comp = self.effort, self.composition
+        if self.video_latency > LATENCY_GAIN_REF:  # чем дольше идёт кадр (H.264), тем мягче обратная связь: иначе раскачка
+            e = dataclasses.replace(e, gain=e.gain * LATENCY_GAIN_REF / self.video_latency)
         if inp.zoom_pos_t is not None and inp.zoom_pos_t != self._gz_t:
             self._gz_t = inp.zoom_pos_t
             self._zoom_measured(inp.zoom_pos_t, inp.zoom_pos)
@@ -578,43 +493,26 @@ class FramingController:
         if self.diverged:
             state = "diverged"
             self.x.mode = self.y.mode = "holding"
-            self._hold_since = None
         elif not active:
             state = "idle"
             self.x.mode = self.y.mode = "holding"
-            self._hold_since = None
         elif self.x.mode == "moving" or self.y.mode == "moving":
             state = "moving"
-            self._hold_since = None
         else:
             state = "holding"
-            if self._hold_since is None:
-                self._hold_since = now
 
-        # «Стоит» — по размаху мирового положения за CALM_WINDOW_S (покачивание у кафедры не мешает)
-        still = active and self.x.spread(now, k_now) < e.dead_x and self.y.spread(now, k_now) < dead_y
-        if not still:
-            self._still_since = None
-        elif self._still_since is None:
-            self._still_since = now
-        walking = state == "moving" or self._still_since is None
-        spread = max(self.x.spread(now, k_now) / max(e.dead_x, 1e-9), self.y.spread(now, k_now) / max(dead_y, 1e-9))
-        if not active or spread >= (ZOOM_CALM_OUT if self._zoom_calm_since is not None else ZOOM_CALM_IN):
-            self._zoom_calm_since = None
-        elif self._zoom_calm_since is None:
-            self._zoom_calm_since = now
         caps = ((self.x, v_cap, e.soft_x), (self.y, min(e.v_max, self.calib.pan_max_fw(inp.zoom_pos, axis="tilt") / TILT_FROM_FH), e.soft_y))
         # недостача: на сколько догон не успевает (прогноз ухода минус порог). В середине зоны (EDGE_ZOOM_ERR…
         # HARD_EDGE_ERR) — только если поворот на пределе (v_cmd ≥ SAT_FRAC·потолок), а ошибка растёт: иначе
         # камера справится поворотом сама. Человек уже у самого края — отъезд сразу, не дожидаясь разгона.
         shortfall = 0.0
         for ax, cap, soft in caps:
-            a, thr = abs(ax.err), max(soft, EDGE_ZOOM_ERR)
+            a, thr = max(abs(ax.err), ax.reach), max(soft, EDGE_ZOOM_ERR)
             if a > HARD_EDGE_ERR:
                 shortfall = max(shortfall, a - thr)
             elif a > thr and ax.escape > a and (abs(ax.v_cmd) >= SAT_FRAC * cap or ax.escape > ESCAPE_ERR):
                 shortfall = max(shortfall, ax.escape - thr)
-        zoom, size_err = self._zoom(now, dt, active, walking, e, inp.zoom_pos, shortfall)
+        zoom, size_err = self._zoom(now, dt, active, e, inp.zoom_pos, shortfall, caps)
         return FramingOutput(pan, tilt, zoom, state, (self.x.err, self.y.err), size_err)
 
     def image_motion(self, t0: float, t1: float) -> tuple[float, float, float]:
@@ -637,6 +535,7 @@ class FramingController:
         у предела наезд не трогается заново от дрожания #GZ — только когда зум отъехал на ZOOM_LIMIT_RELEASE."""
         ln = zoom_ln(zoom_pos) if self._gz_ref is None else self._gz_ref
         ln += self.zdyn.position(now) + self.zdyn.coast(now) + max(self._zoom_cmd, 0.0) * ZOOM_LIMIT_LEAD_S
+        ln = max(ln, zoom_ln(zoom_pos))  # камера уже на пределе по #GZ: наезд теперь идёт и на ходу, модель могла отстать
         limit = zoom_ln(TRACK_ZOOM_MAX)
         if ln >= limit:
             self._zoom_capped = True
@@ -644,16 +543,25 @@ class FramingController:
             self._zoom_capped = False
         return self._zoom_capped
 
+    def _zoom_room(self, caps) -> float:
+        """Насколько можно наезжать (0…1): мало места до края или поворот на этом зуме не успевал бы — медленнее."""
+        room = 1.0
+        for ax, cap, _soft in caps:
+            t_resp = ax.dyn.dead_time + ax.dyn.tau
+            near_edge = max(abs(ax.err), ax.reach) + abs(ax.v_img) * ax.person.walk * t_resp
+            room = min(room, 1.0 - smoothstep(near_edge, ZOOM_ROOM_FROM, ZOOM_ROOM_TO))
+            room = min(room, 1.0 - smoothstep(abs(ax.v_img) * ax.person.walk / max(cap, 1e-6), ZOOM_SPEED_FROM, ZOOM_SPEED_TO))
+        return room
+
     def _zoom(
-        self, now: float, dt: float, active: bool, walking: bool, e: EffortProfile, zoom_pos: int,
-        shortfall: float = 0.0,
+        self, now: float, dt: float, active: bool, e: EffortProfile, zoom_pos: int, shortfall: float, caps,
     ) -> tuple[float, float | None]:
         want = 0.0
         size_err = None
         escaping = False
         if active:
             at_edge = shortfall > 0
-            escaping = self.x.escape > ESCAPE_ERR and self.x.escape > abs(self.x.err)
+            escaping = self.x.escape > ESCAPE_ERR and self.x.escape > max(abs(self.x.err), self.x.reach)
             if self._u is not None and self._u > 0:
                 size_err = math.log(self._u / self.composition.u_frac)
                 a = abs(size_err)
@@ -663,17 +571,17 @@ class FramingController:
                     self._zoom_active = False
                 if self._zoom_active:
                     want = _limit(-e.zoom_gain * size_err, e.zoom_max)
-                    # Наезд — только когда человек сам стоит (≥1 с). Камера при этом может подправлять
-                    # наклон: наезд идёт одним плавным движением, а не «ступеньками».
-                    calm = self._zoom_calm_since is not None and now - self._zoom_calm_since >= ZOOM_IN_AFTER_HOLD_S
-                    if want > 0 and not calm:
-                        want = 0.0
+                    if want > 0:
+                        want *= self._zoom_room(caps) * (1 - ZOOM_WALK_SLOWDOWN * max(self.x.person.walk, self.y.person.walk))
+                        want *= smoothstep(now - self._zoom_out_t, ZOOM_RETRY_FROM, ZOOM_RETRY_TO)
             if at_edge:
                 # человек уходит из кадра, а поворот на пределе — шире, со скоростью по недостаче
                 want = -e.zoom_max * EDGE_ZOOM * min(1.0, shortfall / EDGE_SHORTFALL)
             if escaping:
                 miss = self.x.escape - ESCAPE_ERR  # прогноз ухода дальше ESCAPE_ERR — отъезд по недостаче
                 want = min(want, -ESCAPE_ZOOM * min(1.0, miss / EDGE_SHORTFALL))
+            if want < 0:
+                self._zoom_out_t = now
         elif any(ax.exit_cmd and now - ax.active_t <= LOST_COAST_S for ax in (self.x, self.y)) and not self.diverged:
             want, escaping = -ESCAPE_ZOOM, True  # ушёл за край и пропал: идём за ним и шире, чтобы снова увидеть
         capped = self._zoom_limit_reached(now, zoom_pos)
@@ -686,14 +594,6 @@ class FramingController:
         # у края диапазона объектива дальше не зумируем
         if (want < 0 and zoom_pos <= P.LENS_MIN + LENS_END_MARGIN) or (want > 0 and zoom_pos >= P.LENS_MAX - LENS_END_MARGIN):
             want = 0.0
-        # человек идёт — не наезжаем. Подправка камерой за переминающимся (спокойный размах, нет упреждения) — не ходьба:
-        # иначе зум останавливался и трогался в такт переминанию
-        calm_zoom = self._zoom_calm_since is not None
-        if any(ax.v_ff or ax.walked or (not calm_zoom and ax.mode == "moving" and abs(ax.v_img) >= START_V)
-               for ax in (self.x, self.y)):
-            want = min(want, 0.0)
-        if walking and self._zoom_cmd > 0 and want <= 0:
-            self._zoom_cmd = 0.0  # человек пошёл — наезд прекращаем сразу, без плавного спада
         # отъезд у края разгоняется быстрее наезда (но тоже плавно, без рывков 18↔50)
         faster = ESCAPE_ZOOM_ACCEL if escaping else EDGE_ZOOM_ACCEL
         acc = ZOOM_ACCEL * (faster if want < 0 and want < self._zoom_cmd else 1.0)

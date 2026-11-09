@@ -18,6 +18,9 @@ MOVING_THRESHOLD = 0.005  # быстрее этого (fw/s или ln/s) — к�
 # Гистерезис кода pan/tilt: прежний код держится, пока его скорость в пределах этой доли от нужной. Меньше шага
 # между кодами живой HE42 у 65–75 (~10%; см. DECISIONS). Было 0,15 — при выдуманной таблице с шагом ~5%.
 PT_HYSTERESIS = 0.10
+# Гистерезис кода зума. Окна для команд общие с поворотом: каждая лишняя смена кода зума отнимает окно у поворота,
+# а 30% скорости зума глазу незаметны и размер всё равно доберёт обратная связь. Было 0,15.
+ZOOM_HYSTERESIS = 0.30
 
 
 def _interp_curve(curve: list[tuple[int, float]], n: int) -> float:
@@ -118,7 +121,7 @@ class ZoomTable:
         v = _interp_curve(self.points, n)
         return v if code >= 50 else -v
 
-    def code_for(self, rate: float, current: int = 50, hysteresis: float = 0.15) -> int:
+    def code_for(self, rate: float, current: int = 50, hysteresis: float = ZOOM_HYSTERESIS) -> int:
         return _code_for(lambda n: _interp_curve(self.points, n), rate, current, hysteresis)
 
     def to_json(self) -> list:
@@ -190,6 +193,10 @@ class CameraDynamics:
             tb, x, v, target = self._base
             x, v = self._advance(tb, x, v, target, t_eff) if tb > -1e8 else (x, v)
             self._base = (t_eff, x, v, new_target)
+
+    def forget_after(self, t: float) -> None:
+        """Убрать команды, которые ещё не вступили к моменту t (модель перешла на другой источник команд)."""
+        self._cmds = [c for c in self._cmds if c[0] <= t]
 
     def shift(self, dx: float) -> None:
         """Сдвинуть всю историю положения на dx (поправка по замеру; скорость и команды не меняются)."""

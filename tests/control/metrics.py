@@ -40,8 +40,8 @@ def peak_error(tr, t0: float, t1: float = float("inf"), anchor: float = 0.5) -> 
 
 
 def jerk_p99(tr, t0: float = 0.0) -> float:
-    """99-й перцентиль |изменения ускорения команды| (fw/s³)."""
-    v = [p for t, p in zip(tr.t, tr.pan) if t >= t0]
+    """99-й перцентиль рывка настоящего движения камеры (доли кадра/с³): то, что видно в картинке."""
+    v = [p for t, p in zip(tr.t, tr.cam_v) if t >= t0]
     dt = 0.04
     acc = [(b - a) / dt for a, b in zip(v, v[1:])]
     jerk = sorted(abs(b - a) / dt for a, b in zip(acc, acc[1:]))

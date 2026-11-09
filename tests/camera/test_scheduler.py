@@ -418,22 +418,19 @@ def _run_tracking(s, clock, pan_step, zoom_cmd, T=3.0, zoom_at=0.0):
 
 
 def test_zoom_gets_window_without_delaying_pan_beyond_one_slot(env):
-    """Часть 0, раздел A: pt меняется каждый такт, и зум ждал до 2,4 с.
-
-    Если pt почти не меняется (< 2 кодов), зум ждёт не больше 0,3 с + окно; pt уступает не больше одного окна.
-    """
+    """Часть 0, раздел A: pt меняется каждый такт, и зум ждал до 2,4 с. Зум ждёт не больше двух окон."""
     s, clock, _ = env
     zoom_after, pt_wait = _run_tracking(s, clock, pan_step=1, zoom_cmd="#Z70", zoom_at=0.5)
-    assert zoom_after is not None and 0.3 - 1e-6 <= zoom_after <= 0.3 + 2 * 0.130 + 0.01
+    assert zoom_after is not None and zoom_after <= 0.25 + 2 * 0.130 + 0.01
     assert pt_wait <= 2 * 0.130 + 0.01  # обычное окно + не больше одного окна, отданного зуму
 
 
-def test_zoom_waits_while_pan_changes_notably(env):
-    """Поворот разгоняется (≥ 2 кодов за окно) — зум, который только начинает движение, ждёт: поворот важнее."""
+def test_zoom_alternates_with_pan_while_pan_changes_notably(env):
+    """Поворот разгоняется (код меняется каждый такт) — зум всё равно получает окно: поворот и зум работают вместе."""
     s, clock, _ = env
     zoom_after, pt_wait = _run_tracking(s, clock, pan_step=3, zoom_cmd="#Z70", T=2.0)
-    assert zoom_after is None
-    assert pt_wait <= 0.130 + 0.01
+    assert zoom_after is not None and zoom_after <= 0.25 + 2 * 0.130 + 0.01
+    assert pt_wait <= 2 * 0.130 + 0.01
 
 
 def test_zoom_stop_gets_window_while_pan_changes(env):
@@ -443,15 +440,15 @@ def test_zoom_stop_gets_window_while_pan_changes(env):
     assert s.pump() == "#Z74"
     clock.t += 0.2
     zoom_after, pt_wait = _run_tracking(s, clock, pan_step=3, zoom_cmd="#Z50")
-    assert zoom_after is not None and zoom_after <= 0.3 + 2 * 0.130 + 0.01
+    assert zoom_after is not None and zoom_after <= 0.25 + 2 * 0.130 + 0.01
     assert pt_wait <= 2 * 0.130 + 0.01
 
 
 def test_zoom_out_gets_window_while_pan_changes(env):
-    """Отъезд (у края кадра) срочен: уходит за 0,3 с + окно, даже когда pt меняется сильно; pt — не дольше окна сверху."""
+    """Отъезд (у края кадра) уходит не позже окна поворота, даже когда pt меняется сильно; pt — не дольше окна сверху."""
     s, clock, _ = env
     zoom_after, pt_wait = _run_tracking(s, clock, pan_step=3, zoom_cmd="#Z26", zoom_at=0.5)
-    assert zoom_after is not None and 0.3 - 1e-6 <= zoom_after <= 0.3 + 2 * 0.130 + 0.01
+    assert zoom_after is not None and zoom_after <= 0.25 + 2 * 0.130 + 0.01
     assert pt_wait <= 2 * 0.130 + 0.01
 
 
