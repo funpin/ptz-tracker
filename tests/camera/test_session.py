@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ptztracker.camera import session as session_module
 from ptztracker.camera.scheduler import Priority
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import CameraConfig
@@ -30,6 +31,27 @@ def test_sim_session_manual_pan():
         assert abs(s.sim.pan_deg - p) < 0.2
     finally:
         s.stop()
+
+
+def test_quiet_for_calibration_waits_for_startup_queries():
+    """Сразу после подключения в очереди стартовые опросы (~2 с): вперемешку с ними мастер получал er2 на всё."""
+    s = CameraSession(sim_cfg())
+    s.start()
+    try:
+        s.quiet_for_calibration()
+        assert not s.scheduler.pending()
+    finally:
+        s.stop()
+
+
+def test_quiet_for_calibration_does_not_wait_forever(monkeypatch):
+    """Очередь не пустеет (камера в ожидании отвечает er2 на всё) — ждём не дольше предела."""
+    monkeypatch.setattr(session_module, "QUIET_PAUSE_S", 0.0)
+    s = CameraSession(sim_cfg())
+    timeouts = []
+    s.scheduler = SimpleNamespace(wait_idle=lambda timeout: timeouts.append(timeout) or False)
+    s.quiet_for_calibration()
+    assert timeouts == [session_module.QUIET_DRAIN_S]
 
 
 def test_sim_session_has_video_and_online():
