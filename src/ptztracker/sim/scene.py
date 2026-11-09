@@ -13,6 +13,7 @@ import threading
 import cv2
 import numpy as np
 
+from ptztracker.sim import person_motion as pm
 from ptztracker.sim import projection
 
 # Сценарии движения докладчика: (стоит у кафедры, идёт вправо, стоит, идёт влево), секунды.
@@ -20,9 +21,13 @@ from ptztracker.sim import projection
 SCRIPTS = {
     "walk": (6.0, 4.0, 5.0, 6.0),  # быстро, ~1,2 м/с — стресс-тест
     "lecture": (8.0, 10.0, 8.0, 10.0),  # прохаживается, ~0,5 м/с
-    "stand": None,  # стоит у кафедры и слегка покачивается
+    "stand": None,  # стоит у кафедры, переминается с ноги на ногу
+    "shuffle": None,  # стоит, но заметно шатается: на «Поясе» это ±0,11 кадра
 }
-SWAY_PX, SWAY_PERIOD_S = 10.0, 3.0
+SWAY_M = {"stand": 0.10, "shuffle": 0.18}  # размах переминания ±, метры
+SWAY_PAUSE_M = 0.08  # переминание на стояниях между ходьбой
+WALK_BOB_M, WALK_BOB_UP_M = 0.025, 0.015  # качание корпуса на ходу: вбок и вверх-вниз, метры
+WALK_RAMP_S = 0.5  # человек разгоняется и тормозит не мгновенно
 
 # Трёхмерная сцена (проективный режим), метры. Камера на штативе в конце зала: человек в 14 м
 # от камеры и в 2 м перед задником; на широком угле он ~12% высоты кадра, как в плоском режиме.
@@ -105,6 +110,7 @@ class SyntheticStage:
             raise ValueError(f"projection={projection!r}: ожидалось одно из {self.PROJECTIONS}")
         self.projection = projection
         self.script = SCRIPTS[script]
+        self._sway_m = SWAY_M.get(script, SWAY_PAUSE_M)
         self.size = (width, height)
         self.seed = seed
         rng = np.random.default_rng(seed)
@@ -153,28 +159,45 @@ class SyntheticStage:
         self._map_key = None
         self._maps = None
 
-    def person_x(self, t: float) -> float:
+    def _phase(self, t: float) -> tuple[str, float, float]:
+        """Что человек делает в момент t: ("stand"/"right"/"left", сколько уже идёт отрезок, его длина)."""
         if self.script is None:
-            return self._x0 + SWAY_PX * math.sin(2 * math.pi * t / SWAY_PERIOD_S)
+            return "stand", float("inf"), float("inf")
         stand_a, walk_r, stand_b, walk_l = self.script
         u = t % sum(self.script)
-        if u < stand_a:
+        for name, length in (("stand", stand_a), ("right", walk_r), ("stand", stand_b), ("left", walk_l)):
+            if u < length:
+                return name, u, length
+            u -= length
+        return "left", walk_l, walk_l
+
+    def _path_x(self, t: float) -> float:
+        """Путь без качаний: стоит или идёт с разгоном и торможением."""
+        if self.script is None:
             return self._x0
-        u -= stand_a
-        if u < walk_r:
-            return self._x0 + (self._x1 - self._x0) * (u / walk_r)
-        u -= walk_r
-        if u < stand_b:
-            return self._x1
-        u -= stand_b
-        return self._x1 - (self._x1 - self._x0) * (u / walk_l)
+        name, u, length = self._phase(t)
+        d = self._x1 - self._x0
+        if name == "stand":
+            stand_a = self.script[0]
+            return self._x0 if (t % sum(self.script)) < stand_a else self._x1
+        moved = pm.walk_position(u, 0.0, length, d / (length - WALK_RAMP_S), WALK_RAMP_S)
+        return self._x0 + moved if name == "right" else self._x1 - moved
+
+    def person_x(self, t: float) -> float:
+        name, u, length = self._phase(t)
+        if name == "stand":
+            fade = 1.0 if math.isinf(length) else pm.phase_fade(u, length)
+            return self._path_x(t) + fade * pm.sway(t, self._sway_m, self.seed) * self.person_ppm
+        return self._path_x(t) + pm.phase_fade(u, length) * WALK_BOB_M * pm.walk_bob(t) * self.person_ppm
+
+    def _bob_up_m(self, t: float) -> float:
+        name, u, length = self._phase(t)
+        if name == "stand":
+            return 0.0
+        return pm.phase_fade(u, length) * WALK_BOB_UP_M * abs(pm.walk_bob(t))
 
     def _walking(self, t: float) -> bool:
-        if self.script is None:
-            return False
-        stand_a, walk_r, stand_b, _ = self.script
-        u = t % sum(self.script)
-        return stand_a <= u < stand_a + walk_r or u >= stand_a + walk_r + stand_b
+        return self._phase(t)[0] != "stand"
 
     def _swing(self, t: float) -> float:
         """Размах шага в долях роста."""
@@ -232,7 +255,8 @@ class SyntheticStage:
     # --- плоский режим ---------------------------------------------------------------------------
 
     def _flat_projector(self, m: np.ndarray, t: float):
-        px, hgt, foot = self.person_x(t), self._person_h, self.floor_y
+        px, hgt = self.person_x(t), self._person_h
+        foot = self.floor_y - self._bob_up_m(t) * self.person_ppm
         return lambda a, b: (m[0, 0] * (px + a * hgt) + m[0, 2], m[1, 1] * (foot - b * hgt) + m[1, 2])
 
     def _draw_person(self, img: np.ndarray, m: np.ndarray, t: float) -> None:
@@ -262,7 +286,7 @@ class SyntheticStage:
         d0, d1 = self.person_depth
         z = d0 + (d1 - d0) * (px - self._x0) / (self._x1 - self._x0)
         x = (px - self.size[0] / 2) / self.person_ppm
-        return x + a * PERSON_HEIGHT_M, self.cam_height - b * PERSON_HEIGHT_M, z
+        return x + a * PERSON_HEIGHT_M, self.cam_height - b * PERSON_HEIGHT_M - self._bob_up_m(t), z
 
     def wall_point(self, u: float, v: float) -> tuple[float, float, float]:
         """Точка (u, v) панорамы на плоскости задника, метры. Строка floor_y — линия пола."""
