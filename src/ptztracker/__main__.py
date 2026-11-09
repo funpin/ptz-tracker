@@ -82,10 +82,12 @@ def _replay_analysis_cli(src: Path, ep) -> int:
 def run_replay_view(ep) -> int:
     from PySide6.QtWidgets import QApplication
 
+    from ptztracker.ui.qt_gc import MainThreadGc
     from ptztracker.ui.replay_window import ReplayWindow
     from ptztracker.ui.theme import apply_dark_theme, install_russian
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
+    MainThreadGc(app)
     app.setApplicationName("PTZ Tracker")
     install_russian(app)
     apply_dark_theme(app)
@@ -135,11 +137,13 @@ def run_gui(use_sim: bool) -> int:
     from ptztracker.config import ConfigStore, default_config_path
     from ptztracker.logging_setup import setup_logging
     from ptztracker.ui.main_window import MainWindow
+    from ptztracker.ui.qt_gc import MainThreadGc
     from ptztracker.ui.single_instance import claim
     from ptztracker.ui.theme import apply_dark_theme, install_russian
 
     setup_logging()
     app = QApplication(sys.argv[:1])
+    MainThreadGc(app)
     app.setApplicationName("PTZ Tracker")
     install_russian(app)
     apply_dark_theme(app)

@@ -1,8 +1,23 @@
+import gc
 import os
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _gc_only_in_test_thread():
+    """Как ui/qt_gc.py в программе: уборка в фоновом потоке вешает Qt, а окон в тестах сотни."""
+    gc.disable()
+    yield
+    gc.enable()
+
+
+@pytest.fixture(autouse=True)
+def _collect_after_test():
+    yield
+    gc.collect()
 
 
 @pytest.fixture
