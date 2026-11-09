@@ -1,5 +1,6 @@
 """Рекордер одной камеры: кадры симулятора, RTSP, страховка, обрыв связи, ошибки диска."""
 
+import sys
 import threading
 import time
 
@@ -64,7 +65,7 @@ def test_stop_does_not_wait_for_the_thread(tmp_path):
 
 
 def test_folder_that_cannot_be_created_reports_error(tmp_path):
-    (tmp_path / "x").write_text("обычный файл")
+    (tmp_path / "x").write_text("обычный файл", encoding="utf-8")
     r = frames_rec(tmp_path / "x" / "записи")
     r.start()
     assert wait_for(lambda: not r.snapshot().active)
@@ -101,6 +102,7 @@ def test_disk_write_error_stops_only_this_recorder(tmp_path, monkeypatch):
     good.wait_closed(5.0)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows не даёт удалить папку с открытым файлом")
 def test_folder_removed_while_recording_stops_with_error(tmp_path):
     import shutil
 
@@ -233,7 +235,8 @@ def test_refused_connections_back_off(tmp_path, h264_file, fast_retry):
     r.start()
     assert wait_for(lambda: len(inputs.calls) >= 4 and r.snapshot().bytes_total > 0)
     gaps = [b - a for a, b in zip(inputs.calls, inputs.calls[1:], strict=False)]
-    assert gaps[0] >= 0.02 and gaps[1] >= 0.05 and gaps[2] >= 0.1
+    # часы Windows идут шагами ~16 мс: пауза может выглядеть чуть короче заданной
+    assert all(gap >= delay - 0.02 for gap, delay in zip(gaps, R.RETRY_DELAYS_S, strict=False))
     finish(r)
 
 
@@ -296,7 +299,7 @@ def test_url_is_built_in_recorder_thread(tmp_path, h264_file, fast_retry):
 
 
 def test_unwritable_folder_is_reported_even_without_camera(tmp_path, fast_retry):
-    (tmp_path / "x").write_text("обычный файл")
+    (tmp_path / "x").write_text("обычный файл", encoding="utf-8")
     r = rtsp_rec(tmp_path / "x" / "записи", Inputs())
     r.start()
     assert wait_for(lambda: not r.snapshot().active, t=2.0)
