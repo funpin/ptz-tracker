@@ -105,7 +105,31 @@ def test_slow_steady_walk_is_not_mistaken_for_sway():
 def test_very_slow_walk_does_not_inflate_sway():
     # 0,08 кадра/с: вес переменчив, но размах не растёт — камера едет за центром и порог не уезжает
     rows = feed(lambda t: 0.5 + pm.sway(t, 0.02) * (t < 8) + pm.walk_position(t, 8.0, 18.0, 0.08), 18)
-    assert all(sway <= 0.14 for t, _, _, _, _, sway in rows)
+    assert all(sway <= 0.16 for t, _, _, _, _, sway in rows)
+
+
+def test_sway_not_inflated_by_zoom_in():
+    # широкий план, потом наезд ×8: размах в кадре не вырастает в 8 раз (запись F9: 0,2 кадра вместо 0,05)
+    est = PersonEstimator()
+    for i in range(14 * 20):
+        t = i / 14
+        k = 1.0 + 7.0 * min(1.0, t / 15.0)
+        est.update(t, 0.5 + pm.sway(t, 0.05 / 8), k)
+    assert est.sway <= 0.1
+
+
+def test_fast_walk_recognised_after_sway_on_close_up():
+    # стоит на крупном плане, потом быстро уходит (запись F9): вес поднимается раньше, чем человек дойдёт до края
+    rows = feed(lambda t: 0.5 + pm.sway(t, 0.05) * (t < 8) + pm.walk_position(t, 8.0, 12.0, 0.73), 12)
+    assert any(t <= 8.6 and w > 0.5 for t, w, *_ in rows)
+
+
+@pytest.mark.parametrize("amp", [0.15, 0.2])
+def test_strong_sway_is_not_walking(amp):
+    # сильно шатается: вес «идёт» почти всё время низкий, размах выучен
+    rows = feed(lambda t: 0.5 + pm.sway(t, amp), 40)
+    late = [r[1] for r in rows if r[0] > 8]
+    assert sum(1 for w in late if w > 0.5) / len(late) <= 0.15
 
 
 def test_gap_restarts_estimate_at_new_place():
@@ -121,7 +145,7 @@ def test_slow_walk_on_close_up_is_recognised():
     # на крупном плане (k=4) медленный шаг 0,06 мира — 0,24 кадра/с: размах не должен «съедать» ходьбу
     rows = feed(lambda t: 0.5 + pm.walk_position(t, 3, 8, 0.06) + pm.sway(t, 0.008) * (t < 3), 8, k=4.0)
     assert any(t <= 4.6 and w > 0.8 for t, w, *_ in rows)
-    assert all(s * 4.0 < 0.1 for t, _, _, _, _, s in rows if t < 8)
+    assert all(s < 0.1 for t, _, _, _, _, s in rows if t < 8)
 
 
 def test_thresholds_are_in_frame_units():

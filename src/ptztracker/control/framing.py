@@ -44,6 +44,8 @@ FF_RISE_S, FF_FALL_S = 0.3, 0.06
 # Доводка: ближе этого (доли мёртвой зоны) камера не двигается вовсе, иначе вечно ползёт на нижних кодах
 HOLD_FROM, HOLD_TO = 0.5, 0.9
 LATENCY_GAIN_REF = 0.3  # с: задержка видео больше — коэффициент обратной связи падает пропорционально (MJPEG 0,12–0,26 не трогаем)
+FB_WALK_BASE, FB_WALK_K = 0.35, 0.4  # предел догона за идущим: доли кадра/с и доля его скорости
+FB_EDGE_FROM, FB_EDGE_TO = 0.3, 0.42  # доли кадра: ближе к краю предел догона плавно снимается
 RETURN_V_MAX = 0.5  # доли кадра/с: потолок доводки, пока человек стоит
 # Отъезд у края: за EDGE_ZOOM_ERR — со скоростью EDGE_ZOOM·zoom_max; прогноз ухода (Axis.escape) за
 # ESCAPE_ERR — сразу ESCAPE_ZOOM ln/с: поворотом уже не успеть (быстрая ходьба на «Поясе»).
@@ -52,7 +54,7 @@ ESCAPE_ERR, ESCAPE_ZOOM, ESCAPE_ZOOM_ACCEL = 0.4, 0.6, 10.0
 SAT_FRAC, EDGE_SHORTFALL, HARD_EDGE_ERR = 0.9, 0.08, 0.39  # отъезд — когда v_cmd ≥ 0,9·потолок; полная скорость при недостаче ≥ 0,08
 # Сторож раскачки: столько настоящих разворотов за окно — стоп и выключение. Часть 0 (B3): 61% прежних
 # «разворотов» — при команде, на которой камера стоит, 81% — во время зума; правила — в SwingWatch.
-WATCHDOG_REVERSALS, WATCHDOG_WINDOW_S = 3, 6.0
+WATCHDOG_REVERSALS, WATCHDOG_WINDOW_S = 4, 6.0  # было 3: случайные маршруты (сменил направление, сильно шатается) давали ложные срабатывания
 WATCHDOG_MOVING_V = 0.03  # fw/s: медленнее камера стоит (коды 50–59) — смена знака команды не разворот
 WATCHDOG_ERR_FRACTION = 1.0  # пик ошибки между разворотами больше всей мягкой зоны
 WATCHDOG_GROWTH = 1.0  # пик не меньше прошлого (в долях): затухающее качание — не раскачка
@@ -69,7 +71,8 @@ TRACK_ZOOM_MAX = 0xD55
 ZOOM_LIMIT_RELEASE = 0.05
 ZOOM_LIMIT_LEAD_S = 0.1  # команда наезда, ещё не дошедшая до камеры (очередь планировщика), — в прогнозе положения
 LOST_STOP_S = 0.5
-LOST_COAST_S = 0.6  # человек ушёл за край быстрее камеры и пропал — столько ещё идём за ним
+LOST_SEARCH_V = 0.35  # доли кадра/с: не медленнее этого ищем пропавшего
+LOST_COAST_S = 2.5  # человек ушёл за край быстрее камеры и пропал — столько ещё идём за ним и расширяем кадр, пока не найдём
 STILL_V = 0.02  # медленнее — считаем, что человек стоит
 MOVING_CMD, MOVING_WALK = 0.01, 0.3  # «движение» для состояния: команда быстрее этого или вес «идёт» больше этого
 LEAD_MAX, LEAD_TAU = 0.08, 0.8
@@ -266,10 +269,6 @@ class _Axis:
         # «мировая» позиция: что было бы без поворота камеры и без зума
         self.person.update(t_shot, (img - 0.5) / k_shot + self.sign * self._cam(t_shot), k_shot)
 
-    def spread(self, k_now: float) -> float:
-        """Размах переминания (половина), доли кадра при текущем зуме."""
-        return self.person.sway * k_now
-
     def _ramp(self, want: float, dt: float, e: EffortProfile, now: float, k_now: float) -> None:
         """Команда к want так, чтобы ускорение камеры по модели ((команда − скорость)/τ) было не больше a_max
         (торможение — BRAKE·a_max, далеко от метки — плавно до CATCH_UP·a_max), а его изменение — не больше j_max.
@@ -349,8 +348,11 @@ class _Axis:
             fb = 0.0
             if e_pred * self.err >= 0:
                 hold = smoothstep(abs(e_pred), HOLD_FROM * dead, HOLD_TO * dead)
-                # возврат к стоящему человеку — не быстрее RETURN_V_MAX: на полной скорости камера проскочила бы метку
-                fb_cap = RETURN_V_MAX + (v_cap - RETURN_V_MAX) * w if v_cap > RETURN_V_MAX else v_cap
+                # Догон ограничен: к стоящему — RETURN_V_MAX, за идущим — чуть быстрее него. Иначе камера набирает
+                # скорость вдвое больше человека и при его остановке пролетает весь кадр. У края кадра — без предела
+                near_cap = RETURN_V_MAX + (FB_WALK_BASE + FB_WALK_K * abs(moving_img) - RETURN_V_MAX) * w
+                edge = smoothstep(self.reach, FB_EDGE_FROM, FB_EDGE_TO)
+                fb_cap = min(v_cap, near_cap + (v_cap - near_cap) * edge)
                 fb = hold * speed_for_error(e_pred, dead, soft, e.gain, fb_cap)
             want = self.sign * (self.v_ff + fb)
             self.mode = "moving" if abs(want) > MOVING_CMD or abs(self.v_cmd) > MOVING_CMD or w > MOVING_WALK else "holding"
@@ -361,9 +363,11 @@ class _Axis:
             if zoom_rate < 0 and a > soft and zoom_feed * self.sign * self.err < 0:
                 zoom_feed = 0.0
             want += zoom_feed
-            # Человек уходит за край кадра: если он пропадёт, камера ещё LOST_COAST_S идёт за ним с его
-            # скоростью — он снова появляется в кадре, а не теряется насовсем.
-            self.exit_cmd = self.sign * self.v_ff if a > soft and self.err * self.v_ff > 0 else 0.0
+            # Человек у края кадра: если он пропадёт, камера ещё LOST_COAST_S идёт в его сторону и шире — он снова
+            # появляется в кадре, а не теряется насовсем.
+            # Туда, где его видели в последний раз: и если он ушёл, и если это камера проскочила мимо остановившегося.
+            side = img_person - anchor
+            self.exit_cmd = self.sign * math.copysign(max(abs(v_w), LOST_SEARCH_V), side) if a > soft else 0.0
             self.active_t = now
         elif coast and self.exit_cmd and now - self.active_t <= LOST_COAST_S:
             want, zoom_feed = self.exit_cmd, 0.0

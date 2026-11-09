@@ -151,7 +151,7 @@ def run_gui(use_sim: bool) -> int:
     if server is None:  # уже запущена: вторая копия вела бы те же камеры тем же геймпадом
         print("PTZ Tracker уже запущен — показываю его окно.")
         return 0
-    w = MainWindow(ConfigStore(default_config_path()), use_sim=use_sim)
+    w = MainWindow(ConfigStore(default_config_path()), use_sim=use_sim, random_sim=use_sim)
 
     def raise_window() -> None:
         while (conn := server.nextPendingConnection()) is not None:

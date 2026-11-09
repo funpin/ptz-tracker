@@ -32,7 +32,7 @@ def test_episode_is_small_and_has_the_swing():
     res = replay_controller(Episode.open(EPISODE))
     assert res.calibration_ok and res.summary().skipped_events == 0
     swing_err = [abs(e) for t, e in zip(res.t, res.err_y) if t - 72900 >= SWING_FROM_S]
-    assert max(swing_err) > 0.5  # раскачка в записи: ошибка по y до ±0,58
+    assert max(swing_err) > 0.4  # раскачка в записи: ошибка по y до ±0,58; новый регулятор считает её по сглаженной цели
     assert max(abs(c[1] - 50) for c in res.codes_rec) >= 25  # коды 23↔75
 
 

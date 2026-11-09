@@ -744,3 +744,26 @@ def test_escape_stops_even_if_pre_step_fails(qtbot, tmp_path, monkeypatch):
     qtbot.wait(400)
     assert [c for c in sim.received if c.startswith("#PTS")][-1] == "#PTS5050"
     w.close()
+
+
+def test_sim_launch_gets_a_new_random_route_each_time(qtbot, tmp_path):
+    store = ConfigStore(tmp_path / "c.json")
+    w = MainWindow(store, use_sim=True, random_sim=True)
+    qtbot.addWidget(w)
+    try:
+        cams = {c.id: c for c in w._sim_cams}
+        first, again = w._fresh_sim_scene(cams["sim1"]), w._fresh_sim_scene(cams["sim1"])
+        assert first.route is not None and not first.route.swaying
+        assert first.seed != again.seed  # другой маршрут при следующем запуске
+        assert w._fresh_sim_scene(cams["sim2"]).route.swaying  # вторая клетка — докладчик, который сильно шатается
+    finally:
+        w.close()
+
+
+def test_sim_scene_stays_fixed_without_random_flag(qtbot, tmp_path):
+    w = MainWindow(ConfigStore(tmp_path / "c.json"), use_sim=True)
+    qtbot.addWidget(w)
+    try:
+        assert w._fresh_sim_scene(w._sim_cams[0]) is None
+    finally:
+        w.close()

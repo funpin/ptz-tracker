@@ -57,3 +57,46 @@ def test_walk_bob_period_matches_step_rate():
     assert pm.walk_bob(0.0) == pytest.approx(0.0, abs=1e-9)
     assert pm.walk_bob(1 / pm.STEP_HZ) == pytest.approx(0.0, abs=1e-6)
     assert math.isclose(max(pm.walk_bob(i * 0.001) for i in range(1000)), 1.0, abs_tol=1e-3)
+
+
+def test_random_route_same_seed_same_route_other_seed_differs():
+    a, b, c = pm.RandomRoute(7), pm.RandomRoute(7), pm.RandomRoute(8)
+    times = [i * 0.5 for i in range(240)]
+    assert [a.x(t) for t in times] == [b.x(t) for t in times]
+    assert [a.x(t) for t in times] != [c.x(t) for t in times]
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_random_route_stays_on_stage_and_has_no_jumps(seed):
+    r = pm.RandomRoute(seed, half_width_m=2.5)
+    xs = [r.x(i * 0.02) for i in range(6000)]
+    assert max(abs(x) for x in xs) <= 2.5 + 0.45
+    assert max(abs(b - a) for a, b in zip(xs, xs[1:])) <= 0.05
+
+
+def test_random_routes_vary_direction_speed_and_sway():
+    legs = [leg for seed in range(20) for r in [pm.RandomRoute(seed)] if r.x(120.0) is not None for leg in r.legs]
+    walks = [leg for leg in legs if leg.walking]
+    assert {leg.x1 > leg.x0 for leg in walks} == {True, False}
+    speeds = [abs(leg.x1 - leg.x0) / leg.length for leg in walks]
+    assert max(speeds) > 0.8 and min(speeds) < 0.4
+    amps = [leg.sway for leg in legs if not leg.walking]
+    assert max(amps) >= 0.25 and min(amps) <= 0.08
+
+
+def test_swaying_route_has_strong_sway_most_of_the_time():
+    r = pm.RandomRoute(3, swaying=True)
+    r.x(200.0)
+    stands = [leg for leg in r.legs if not leg.walking]
+    assert sum(1 for leg in stands if leg.sway >= 0.25) / len(stands) >= 0.5
+
+
+def test_stage_random_script_uses_seed():
+    a, b = SyntheticStage(script="random", seed=1), SyntheticStage(script="random", seed=2)
+    assert [a.person_x(i * 2.0) for i in range(60)] != [b.person_x(i * 2.0) for i in range(60)]
+    assert SyntheticStage(script="big_sway").route is None
+
+
+def test_stage_rejects_unknown_script():
+    with pytest.raises(ValueError):
+        SyntheticStage(script="nope")

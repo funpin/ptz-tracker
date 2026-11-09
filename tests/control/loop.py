@@ -42,6 +42,7 @@ class Trace:
     model_zoom: list = field(default_factory=list)  # ln масштаба в модели регулятора
     scale: list = field(default_factory=list)  # поправка скорости (pan, tilt, zoom) после такта (adapt=True)
     codes: list = field(default_factory=list)  # коды (pan, tilt, zoom) после такта (adapt=True)
+    seen: list = field(default_factory=list)  # виден ли человек в кадре сейчас (in_frame_only)
     cam_v: list = field(default_factory=list)  # настоящая скорость поворота камеры, доли кадра/с при текущем зуме
 
 
@@ -78,6 +79,7 @@ def run(
     seed: int = 0,
     # команды и опросы — через настоящий планировщик (одно окно 0,13 с на поворот, зум и запросы); нужен adapt=True
     channel: bool = False,
+    in_frame_only: bool = False,  # человек виден только в кадре: вышел за край — замеров нет, как у детектора
 ) -> Trace:
     calib = default_calibration()
     if measured_tilt:
@@ -166,7 +168,8 @@ def run(
                 zx = math.exp(cam_z.position(t))
                 ix = 0.5 + (world_x(t) - cam_x.position(t) - 0.5) * zx + rng.gauss(0.0, noise)
                 iy = 0.5 + (world_y(t) + cam_y.position(t) - 0.5) * zx + rng.gauss(0.0, noise)
-                pending.append((t + latency, BodyMeasure((ix, iy), world_u(t) * zx * (1 + rng.gauss(0.0, 3 * noise)), True)))
+                seen = not in_frame_only or (0.0 <= ix <= 1.0 and 0.0 <= iy <= 1.0)
+                pending.append((t + latency, BodyMeasure((ix, iy), world_u(t) * zx * (1 + rng.gauss(0.0, 3 * noise)), True) if seen else None))
             else:
                 pending.append((t + latency, None))
         measure, t_cap = None, None
@@ -212,6 +215,8 @@ def run(
         zx = math.exp(cam_z.position(t))
         tr.t.append(t)
         tr.cam_v.append(cam_x.velocity(t) * zx)
+        ix_now = 0.5 + (world_x(t) - cam_x.position(t) - 0.5) * zx
+        tr.seen.append(0.0 <= ix_now <= 1.0)
         tr.pan.append(out.pan)
         tr.tilt.append(out.tilt)
         tr.zoom.append(out.zoom)

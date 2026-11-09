@@ -132,13 +132,14 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
 
     def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None, atem_port: int = 9910,
                  checker_factory: Callable[[str], UpdateChecker] | None = UpdateChecker, gamepad_backend=None,
-                 gamepad_hub=None):
+                 gamepad_hub=None, random_sim: bool = False):
         super().__init__(parent)
         self.setWindowTitle("PTZ Tracker")
         self.resize(1640, 850)
         self.store = store
         self.cfg: AppConfig = store.load()
         self.use_sim = use_sim
+        self.random_sim = random_sim  # запуск с --sim: случайный маршрут докладчика (в тестах — прежняя сцена)
         # проверка новой версии: в --sim сеть не трогаем; в тестах подставляют фальшивку
         self._checker_factory = None if use_sim and checker_factory is UpdateChecker else checker_factory
         self._checker: UpdateChecker | None = None

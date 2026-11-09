@@ -23,11 +23,12 @@ SCRIPTS = {
     "lecture": (8.0, 10.0, 8.0, 10.0),  # прохаживается, ~0,5 м/с
     "stand": None,  # стоит у кафедры, переминается с ноги на ногу
     "shuffle": None,  # стоит, но заметно шатается: на «Поясе» это ±0,11 кадра
+    "big_sway": None,  # стоит и сильно шатается из стороны в сторону: на «Поясе» это ±0,2 кадра
 }
-SWAY_M = {"stand": 0.10, "shuffle": 0.18}  # размах переминания ±, метры
+RANDOM_SCRIPTS = {"random": False, "random_sway": True}  # случайный маршрут по seed; True — больше стоит и сильно шатается
+SWAY_M = {"stand": 0.10, "shuffle": 0.18, "big_sway": 0.34}  # размах переминания ±, метры
 SWAY_PAUSE_M = 0.08  # переминание на стояниях между ходьбой
-WALK_BOB_M, WALK_BOB_UP_M = 0.025, 0.015  # качание корпуса на ходу: вбок и вверх-вниз, метры
-WALK_RAMP_S = 0.5  # человек разгоняется и тормозит не мгновенно
+WALK_BOB_UP_M = 0.015  # качание корпуса на ходу вверх-вниз, метры
 
 # Трёхмерная сцена (проективный режим), метры. Камера на штативе в конце зала: человек в 14 м
 # от камеры и в 2 м перед задником; на широком угле он ~12% высоты кадра, как в плоском режиме.
@@ -109,8 +110,11 @@ class SyntheticStage:
         if projection not in self.PROJECTIONS:
             raise ValueError(f"projection={projection!r}: ожидалось одно из {self.PROJECTIONS}")
         self.projection = projection
-        self.script = SCRIPTS[script]
+        self.script = SCRIPTS.get(script)  # случайный маршрут — в self.route
         self._sway_m = SWAY_M.get(script, SWAY_PAUSE_M)
+        self.route: pm.RandomRoute | None = None
+        if script not in SCRIPTS and script not in RANDOM_SCRIPTS:
+            raise ValueError(f"script={script!r}: ожидалось одно из {sorted(SCRIPTS) + sorted(RANDOM_SCRIPTS)}")
         self.size = (width, height)
         self.seed = seed
         rng = np.random.default_rng(seed)
@@ -146,6 +150,9 @@ class SyntheticStage:
         self._pyr = _build_pyramid(img)
         self._person_h = h * 0.18
         self._x0, self._x1 = w * 0.45, w * 0.62
+        if script in RANDOM_SCRIPTS:
+            half = (self._x1 - self._x0) / 2 / (self._person_h / PERSON_HEIGHT_M)
+            self.route = pm.RandomRoute(seed, half_width_m=half, swaying=RANDOM_SCRIPTS[script])
         self._shirt = tuple(int(c) for c in rng.integers(60, 220, 3))
         self._pants = tuple(int(c) for c in rng.integers(20, 90, 3))
         # трёхмерная сцена
@@ -180,23 +187,29 @@ class SyntheticStage:
         if name == "stand":
             stand_a = self.script[0]
             return self._x0 if (t % sum(self.script)) < stand_a else self._x1
-        moved = pm.walk_position(u, 0.0, length, d / (length - WALK_RAMP_S), WALK_RAMP_S)
+        moved = pm.walk_position(u, 0.0, length, d / (length - pm.WALK_RAMP_S), pm.WALK_RAMP_S)
         return self._x0 + moved if name == "right" else self._x1 - moved
 
     def person_x(self, t: float) -> float:
+        if self.route is not None:
+            return (self._x0 + self._x1) / 2 + self.route.x(t) * self.person_ppm
         name, u, length = self._phase(t)
         if name == "stand":
             fade = 1.0 if math.isinf(length) else pm.phase_fade(u, length)
             return self._path_x(t) + fade * pm.sway(t, self._sway_m, self.seed) * self.person_ppm
-        return self._path_x(t) + pm.phase_fade(u, length) * WALK_BOB_M * pm.walk_bob(t) * self.person_ppm
+        return self._path_x(t) + pm.phase_fade(u, length) * pm.WALK_BOB_M * pm.walk_bob(t) * self.person_ppm
 
     def _bob_up_m(self, t: float) -> float:
+        if self.route is not None:
+            return self.route.walk_fade(t) * WALK_BOB_UP_M * abs(pm.walk_bob(t))
         name, u, length = self._phase(t)
         if name == "stand":
             return 0.0
         return pm.phase_fade(u, length) * WALK_BOB_UP_M * abs(pm.walk_bob(t))
 
     def _walking(self, t: float) -> bool:
+        if self.route is not None:
+            return self.route.walking(t)
         return self._phase(t)[0] != "stand"
 
     def _swing(self, t: float) -> float:

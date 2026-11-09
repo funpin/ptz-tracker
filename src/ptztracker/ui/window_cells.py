@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import random
 import time
 
 from PySide6.QtCore import Qt
@@ -15,6 +16,7 @@ from ptztracker.config import GRID_SLOTS, SPEED_GEARS, CameraConfig
 from ptztracker.multicam.analysis import CellState, allocate_analysis
 from ptztracker.multicam.grid import Cell
 from ptztracker.multicam.velocity import MixerSource
+from ptztracker.sim.scene import SyntheticStage
 from ptztracker.ui.camera_cell import CameraCell
 from ptztracker.ui.camera_strip import StripItem
 from ptztracker.ui.icons import icon
@@ -68,7 +70,17 @@ class CellsMixin:
         return self._cell.skeleton_check
 
     def _make_session(self, cfg: CameraConfig, analysis: bool) -> CameraSession:
-        return CameraSession(cfg, scene_path=self.cfg.sim_scene_path, app_cfg=self.cfg, analysis=analysis)
+        return CameraSession(cfg, scene=self._fresh_sim_scene(cfg), scene_path=self.cfg.sim_scene_path, app_cfg=self.cfg,
+                             analysis=analysis)
+
+    def _fresh_sim_scene(self, cfg: CameraConfig) -> SyntheticStage | None:
+        """--sim: новый случайный маршрут при каждом запуске, чётные клетки — докладчик, который сильно шатается."""
+        if not self.random_sim or cfg.kind != "sim" or self.cfg.sim_scene_path:
+            return None
+        seed = random.SystemRandom().randrange(2**31)
+        script = "random_sway" if cfg.id[-1:] in "24" else "random"
+        log.info("Симулятор %s: сценарий %s, маршрут %d", cfg.id, script, seed)
+        return SyntheticStage(script=script, seed=seed)
 
     def _is_stored(self, cam: CameraConfig | None) -> bool:
         """Камера записана в настройки (её можно изменить и удалить); временный --sim — нет."""

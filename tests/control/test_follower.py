@@ -165,7 +165,8 @@ def test_enable_reads_zoom_immediately():
         select_person(s)
         assert s.follower.enable()  # Qt не ждёт #GZ: зум спрашивает поток опроса сразу после включения
         want = 0x555 + 0.5 * (0xFFF - 0x555)
-        deadline = time.monotonic() + 1.0
+        # сразу, но первый запрос может получить er2 от занятого симулятора и уйти повторно: 1 с мало (замер 0,3 или 1,9 с)
+        deadline = time.monotonic() + 2.5
         while abs(s.follower._zoom_pos - want) >= 30 and time.monotonic() < deadline:
             time.sleep(0.02)
         assert abs(s.follower._zoom_pos - want) < 30

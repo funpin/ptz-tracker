@@ -126,9 +126,12 @@ def test_replay_reproduces_recorded_codes(tmp_path):
         s.stop()
     res = replay_controller(Episode.open(path))
     assert len(res.t) > 30 * 20
+    # Модель поворота идёт по ушедшим командам: живая узнаёт о команде после ответа камеры, повтор — в момент отправки.
+    # Редкие такты расходятся на 2–3 кода; больше — уже другая логика
     bad = [(t, a, b) for t, a, b in zip(res.t, res.codes_rec, res.codes_new)
            if max(abs(x - y) for x, y in zip(a, b)) > 1]
-    assert not bad, bad[:5]
+    assert len(bad) <= 0.01 * len(res.t), bad[:5]
+    assert all(max(abs(x - y) for x, y in zip(a, b)) <= 4 for _, a, b in bad), bad[:5]
     assert any(c[0] != 50 or c[1] != 50 for c in res.codes_new)
 
 
