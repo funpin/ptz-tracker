@@ -378,6 +378,7 @@ class CellsMixin:
             act.setChecked(act.data() == want)
             act.setEnabled(real)
         self.controls.bind(self._source(cell, "mouse") if cell else None)
+        self._hub_follow()  # Videohub: выход вслед за выбранной камерой (сеть не ждём)
         if cam is not None:
             self.follow_panel.set_composition(cam.composition)
             if cam.composition.startswith("waist"):

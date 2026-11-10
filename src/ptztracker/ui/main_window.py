@@ -100,8 +100,10 @@ from ptztracker.ui.window_pads import PadsMixin
 from ptztracker.ui.window_presets import PresetsMixin
 from ptztracker.ui.window_recording import RecordingMixin
 from ptztracker.ui.window_status import StatusMixin
+from ptztracker.ui.window_videohub import VideohubMixin
 from ptztracker.updates import UpdateChecker, UpdateInfo
 from ptztracker.video.rtsp import STREAM_CHOICES
+from ptztracker.videohub.client import VIDEOHUB_PORT
 from ptztracker.videorec.controller import VideoController
 
 __all__ = ["MainWindow", "SIM_CAMERA", "sim_cameras", "make_pad_backend", "make_pad_hub", "_HOTKEYS", "KEY_PAN_SPEED", "SIDE_WIDTH", "STRIP_MS"]  # снаружи окно берут отсюда
@@ -127,12 +129,13 @@ def make_pad_hub():
     return SdlHub()
 
 
-class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMixin, InputMixin, PadsMixin, QMainWindow):
+class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMixin, InputMixin, PadsMixin,
+                 VideohubMixin, QMainWindow):
     _saveFinished = Signal(object)  # (пачка, Future записи); приходит из рабочего потока, обрабатывается в Qt-потоке
 
     def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None, atem_port: int = 9910,
                  checker_factory: Callable[[str], UpdateChecker] | None = UpdateChecker, gamepad_backend=None,
-                 gamepad_hub=None, random_sim: bool = False):
+                 gamepad_hub=None, random_sim: bool = False, videohub_port: int = VIDEOHUB_PORT):
         super().__init__(parent)
         self.setWindowTitle("PTZ Tracker")
         self.resize(1640, 850)
@@ -150,6 +153,7 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         for i, cell in enumerate(self.cells):
             cell.preview.rec_clicked.connect(partial(self.toggle_video, i))
         self.grid.selected = 0
+        self._init_videohub(videohub_port)
         self._build_cells(atem_port)
         self._build_gamepads(gamepad_backend, gamepad_hub)
         stream_menu = self._build_top_bar()
@@ -255,6 +259,9 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         self.atem_pill = StatusPill("atem")
         self.atem_pill.hide()
         self.atem_pill.clicked.connect(self._edit_atem)
+        self.hub_pill = StatusPill("hub")  # Videohub: что на выходе; нет хаба — нет значка
+        self.hub_pill.hide()
+        self.hub_pill.clicked.connect(self._edit_videohub)
         self.blackbox_btn = StatusPill("history")
         self.blackbox_btn.setPopupMode(QToolButton.InstantPopup)
         self.agent_badge = StatusPill("robot", "AGENT", "accent")
@@ -316,7 +323,7 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         self.view_one_btn.clicked.connect(lambda: self.set_single_view(True))
         tl.addWidget(seg)
         tl.addSpacing(SP[1])
-        for w in (self.atem_pill, self.top_pads, self.blackbox_btn, self.agent_badge):
+        for w in (self.atem_pill, self.hub_pill, self.top_pads, self.blackbox_btn, self.agent_badge):
             tl.addWidget(w)
         tl.addWidget(_vline())
         tl.addWidget(self.main_menu_btn)
@@ -522,6 +529,8 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         self.osd_action.triggered.connect(self._open_osd_menu)
         self.atem_action = QAction("ATEM…", self)
         self.atem_action.triggered.connect(self._edit_atem)
+        self.videohub_action = QAction("Videohub…", self)
+        self.videohub_action.triggered.connect(self._edit_videohub)
         self.agent_action = QAction("Агент…", self)
         self.agent_action.triggered.connect(self._show_agent_window)
         self.pads_action = QAction("Геймпады…", self)
@@ -569,6 +578,7 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         mm.add(self.del_action, "trash")
         mm.section("Подключения")
         mm.add(self.atem_action, "atem", self._atem_menu_status)
+        mm.add(self.videohub_action, "hub", self._videohub_menu_status)
         mm.add(self.pads_action, "gamepad", self._pads_menu_status)
         mm.add(self.agent_action, "robot", self._agent_menu_status)
         mm.section("Запись видео")
@@ -621,6 +631,7 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         self.video.disk.start()
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._update_status)
+        self._status_timer.timeout.connect(self._sync_hub)
         self._status_timer.start(500)
         # снимки камер в полоске «1 камера» — чаще тика статуса; таймер идёт только в этом режиме
         self._strip_timer = QTimer(self)
@@ -630,6 +641,7 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         QApplication.instance().installEventFilter(self)
         QApplication.instance().applicationStateChanged.connect(self._on_app_state)
         self._restart_atem()
+        self._restart_videohub()
         self._initial_grid()
         self._api = start_window_api(self)
         QTimer.singleShot(3000, self._start_update_check)
@@ -940,6 +952,7 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         if self.atem:
             self.atem.stop()
             self.atem = None
+        self._stop_videohub()
         for b in self._bridges:
             b.stop(timeout=0.1)  # до остановки сессии; Qt не ждёт SDL: зависший поток доделает выход сам
         if self._pad_multi is not None:

@@ -1,0 +1,140 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Videohub: выход вслед за камерой</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A;--lost:#F0A020;--fault:#EF4444;--pgm:#E8202A;--pvw:#2FB65E}
+*{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:16px 18px 40px;font-size:13px}
+h1{font-size:18px;margin:0 0 4px}.sub{color:var(--dim);font-size:12.5px;margin:0 0 16px;line-height:1.5;max-width:900px}h2{font-size:15px;margin:28px 0 10px}
+.row{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+.win{background:var(--bg);border:1px solid var(--line);border-radius:10px;flex:none;max-width:100%}.tb{height:30px;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:12px;font-weight:600;border-bottom:1px solid var(--line);background:var(--surface);border-radius:10px 10px 0 0}
+.in{padding:16px;display:flex;flex-direction:column;gap:12px}
+.sec{color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.r{display:flex;align-items:center;gap:10px;padding:7px 12px;font-size:13px;min-height:44px}.r:nth-child(even){background:rgba(245,245,242,.035)}
+.r.flash{background:rgba(183,243,74,.08);box-shadow:inset 3px 0 0 var(--lime)}
+.tile{display:inline-flex;width:18px;height:18px;border-radius:5px;align-items:center;justify-content:center;font-size:11px;font-weight:700;background:var(--raised-hi);flex:none}
+.tile.sel{background:var(--white);color:var(--bg)}.tile.pgm{background:var(--pgm)}.tile.pvw{background:var(--pvw);color:var(--bg)}
+.btn{height:34px;padding:0 14px;border-radius:8px;background:var(--raised);border:1px solid var(--line);color:var(--white);font:500 14px Inter;display:inline-flex;align-items:center;cursor:default}.btn.pri{background:var(--white);color:var(--bg);border-color:var(--white);font-weight:600}.btn.quiet{background:transparent;border-color:transparent;color:var(--dim)}
+.foot{display:flex;gap:10px;align-items:center}.sp{flex:1}
+.inp{height:34px;border-radius:8px;background:var(--raised);border:1px solid var(--line);display:flex;align-items:center;padding:0 10px;flex:1}
+.dd{height:30px;border-radius:8px;background:var(--raised);border:1px solid var(--line);display:inline-flex;align-items:center;gap:8px;padding:0 10px;min-width:190px;justify-content:space-between;color:var(--white)}
+.dd.none{color:var(--grey)}.dd:after{content:"";width:6px;height:6px;border-right:1.4px solid var(--dim);border-bottom:1.4px solid var(--dim);transform:rotate(45deg) translateY(-2px)}
+.status{display:flex;align-items:center;gap:8px;font-size:12.5px}.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.tog{width:30px;height:18px;border-radius:9px;background:var(--lime);position:relative;flex:none}.tog:after{content:"";position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;background:var(--bg)}
+.ncall{display:inline-flex;width:20px;height:20px;border-radius:50%;background:#FFD43B;color:#111;font:700 11px Inter;align-items:center;justify-content:center;flex:none}
+.notes{font-size:12.5px;color:var(--dim);line-height:1.5;max-width:380px}.notes ol{padding:0;margin:0;list-style:none}.notes li{margin-bottom:10px;display:flex;gap:8px}
+/* верхняя строка */
+.top{height:50px;background:var(--surface);border:1px solid var(--line);border-radius:10px;display:flex;align-items:center;gap:14px;padding:0 14px;width:1100px;max-width:100%;overflow:hidden}
+.mark{width:26px;height:26px;position:relative;flex:none}.mark:before,.mark:after{content:"";position:absolute;width:10px;height:10px;border:2.5px solid var(--white)}.mark:before{left:2px;top:2px;border-right:0;border-bottom:0;border-radius:5px 0 0 0}.mark:after{right:2px;bottom:2px;border-left:0;border-top:0;border-radius:0 0 5px 0}.mark i{position:absolute;left:10px;top:10px;width:6px;height:6px;border-radius:50%;background:var(--lime)}
+.pill{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 10px;border-radius:8px;color:var(--dim);font-size:12.5px;white-space:nowrap}.pill:hover{background:var(--raised)}
+.pill svg{fill:none;stroke-width:2;flex:none}.pill b{color:var(--white);font-weight:600}
+.vline{width:1px;height:20px;background:var(--line);flex:none}
+.track{height:34px;padding:0 16px;border-radius:8px;background:var(--lime);color:var(--bg);font-weight:700;display:inline-flex;align-items:center}
+/* меню */
+.menu{width:330px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px 0}
+.mrow{height:32px;display:flex;align-items:center;gap:10px;padding:0 12px;font-size:13px}.mrow svg{stroke:var(--dim);fill:none;stroke-width:1.8;flex:none}
+.mrow.hl{background:var(--raised-hi)}.msec{color:var(--faint);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:10px 12px 4px}
+.chip{font-size:11.5px;border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--dim);white-space:nowrap}.chip.ok{color:var(--lime);border-color:rgba(183,243,74,.45)}.chip.bad{color:var(--fault);border-color:rgba(239,68,68,.5)}
+/* вопросы */
+.q{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;max-width:980px;margin-bottom:10px}
+.q h3{margin:0 0 6px;font-size:14px}.q p{margin:0 0 8px;color:var(--dim);line-height:1.5}
+.choice{display:inline-flex;margin:4px 8px 0 0;padding:7px 13px;border-radius:999px;border:1px solid var(--line);color:var(--dim);font-size:12.5px}
+.choice.my{border-color:var(--white);color:var(--white)}.choice.my:after{content:" — предлагаю";color:var(--faint)}
+.demo{display:flex;gap:8px;align-items:center;margin:10px 0 0;color:var(--dim);font-size:12.5px;flex-wrap:wrap}
+.demo button{font:600 12px Inter;height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--raised);color:var(--white);cursor:pointer}
+.demo button.on{background:var(--white);color:var(--bg)}
+code{background:var(--raised);padding:1px 5px;border-radius:4px;font-size:12px}
+</style></head><body>
+<h1>Blackmagic Videohub: выход хаба идёт вслед за камерой</h1>
+<p class="sub">Когда в программе выбирается другая камера (главным геймпадом или мышью), PTZ Tracker говорит хабу: «на выход 5 подай вход этой камеры». Ниже — где это видно в окне и как настраивается. Внизу страницы — вопросы, на которые нужен ваш ответ. Кнопки «Камера 1/2/3» под верхней строкой — живая подсказка: нажмите и посмотрите, что меняется.</p>
+
+<h2>1. Верхняя строка окна</h2>
+<div class="row"><div>
+<div class="top">
+ <span class="mark"><i></i></span><span class="vline"></span>
+ <span class="pill"><svg width="16" height="16" viewBox="0 0 24 24" stroke="#B7F34A"><circle cx="12" cy="12" r="3"/><path d="M5 12a7 7 0 0 1 14 0M2 12a10 10 0 0 1 20 0"/></svg>ATEM</span>
+ <span class="ncall">1</span>
+ <span class="pill" id="pill"><svg width="16" height="16" viewBox="0 0 24 24" stroke="#B7F34A" id="pillic"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h4M7 12h4M7 15h4M13 9l4 3-4 3"/></svg><span id="pilltxt">Хаб: вых. 5 ← <b>Сцена</b></span></span>
+ <span class="pill"><svg width="16" height="16" viewBox="0 0 24 24" stroke="#B4B8BD"><path d="M7 9h10a4 4 0 0 1 4 4v2a2 2 0 0 1-3.5 1.3L16 15H8l-1.5 1.3A2 2 0 0 1 3 15v-2a4 4 0 0 1 4-4z"/></svg>2</span>
+ <span class="sp"></span><span class="pill">☰</span><span class="track">TRACK</span>
+</div>
+<div class="demo">Выбрать в программе:
+ <button data-n="1" class="on">Камера 1 · Сцена</button><button data-n="2">Камера 2 · Зал</button><button data-n="3">Камера 3 · Кафедра</button>
+ <span style="width:12px"></span>Состояние хаба: <button data-s="ok" class="on">на связи</button><button data-s="bad">не отвечает</button><button data-s="lock">выход занят</button>
+</div></div>
+<div class="notes"><ol>
+<li><span class="ncall">1</span>Рядом с ATEM — значок хаба: на какой выход что сейчас подано. Лайм — хаб на связи и выход переключён; красный — «Хаб: нет связи»; оранжевый — хаб на связи, но выход заблокирован с другого пульта и не переключается. Хаб не настроен — значка нет. Нажатие открывает окно настроек хаба (п. 3).</li>
+</ol></div></div>
+
+<h2>2. Меню ☰ → «Подключения»</h2>
+<div class="row"><div class="menu">
+ <div class="msec">Подключения</div>
+ <div class="mrow"><svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M5 12a7 7 0 0 1 14 0"/></svg>ATEM…<span class="sp"></span><span class="chip ok">на связи</span></div>
+ <div class="mrow hl"><span class="ncall" style="width:16px;height:16px;font-size:9px">2</span><svg width="16" height="16" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M13 9l4 3-4 3"/></svg>Videohub…<span class="sp"></span><span class="chip ok" id="menuchip">на связи</span></div>
+ <div class="mrow"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M7 9h10a4 4 0 0 1 4 4v2a2 2 0 0 1-3.5 1.3L16 15H8l-1.5 1.3A2 2 0 0 1 3 15v-2a4 4 0 0 1 4-4z"/></svg>Геймпады…<span class="sp"></span><span class="chip">2</span></div>
+ <div class="mrow"><svg width="16" height="16" viewBox="0 0 24 24"><rect x="5" y="7" width="14" height="11" rx="3"/><path d="M12 3v4"/></svg>Агент…</div>
+</div>
+<div class="notes"><ol><li><span class="ncall">2</span>Новая строка «Videohub…» в той же группе, что ATEM и геймпады; справа — состояние плашкой, как у ATEM.</li></ol></div></div>
+
+<h2>3. Окно «Videohub»</h2>
+<div class="row">
+<div class="win" style="width:560px"><div class="tb">Videohub — выход вслед за камерой</div><div class="in">
+ <div style="color:var(--dim);line-height:1.5"><span class="ncall" style="margin-right:6px">3</span>Когда в программе выбирается другая камера, хаб подаёт на выбранный выход её вход. Камерами это <b style="color:var(--white)">не управляет</b>. Хаб должен быть в той же сети.</div>
+ <div style="display:flex;gap:8px;align-items:center"><span style="color:var(--dim);width:110px">Адрес хаба</span><div class="inp">192.168.10.50</div></div>
+ <div class="status" style="margin-left:118px"><span class="ncall" style="margin-right:4px">4</span><span class="dot" style="background:var(--lime)" id="dlgdot"></span><span id="dlgst">На связи · Smart Videohub 12G 40×40</span></div>
+ <div style="display:flex;gap:8px;align-items:center"><span style="color:var(--dim);width:110px">Выход хаба</span><span class="dd" style="flex:1"><span>5 · Монитор режиссёра</span></span><span class="ncall">5</span></div>
+ <div style="display:flex;gap:10px;align-items:center;margin-left:118px"><span class="tog"></span><span>Переключать выход вслед за камерой</span><span class="ncall">6</span></div>
+ <div class="sec"><span class="ncall">7</span>Камеры и входы хаба</div>
+ <div class="panel" id="rows">
+  <div class="r" data-n="1"><span class="tile sel">1</span>Сцена<span class="sp"></span><span class="dd"><span>3 · PTZ 1</span></span></div>
+  <div class="r" data-n="2"><span class="tile">2</span>Зал<span class="sp"></span><span class="dd"><span>4 · PTZ 2</span></span></div>
+  <div class="r" data-n="3"><span class="tile">3</span>Кафедра<span class="sp"></span><span class="dd none"><span>не переключать</span></span></div>
+ </div>
+ <div style="color:var(--faint);font-size:12px" id="now"><span class="ncall" style="width:16px;height:16px;font-size:9px;margin-right:6px">8</span>Сейчас на выходе 5: вход 3 · PTZ 1</div>
+ <div class="foot"><span class="ncall">9</span><span class="btn quiet">Выключить хаб</span><span class="sp"></span><span class="btn">Отмена</span><span class="btn pri">Сохранить</span></div>
+</div></div>
+<div class="notes"><ol>
+<li><span class="ncall">3</span>Одной фразой: что делает и что камерами не управляет.</li>
+<li><span class="ncall">4</span>Связь — как у ATEM: лаймовая точка и модель хаба, красная — «нет связи: проверьте адрес и что хаб в той же сети».</li>
+<li><span class="ncall">5</span>Выход — списком с названиями выходов, которые хаб сам сообщает (их задают в Videohub Setup). Пока нет связи — просто номер.</li>
+<li><span class="ncall">6</span>Тумблер, чтобы на время отключить переключение, не стирая настройку (например, когда этот выход ушёл в эфир).</li>
+<li><span class="ncall">7</span>Для каждой камеры сетки — какой вход хаба на неё заведён, тоже списком с названиями входов. «Не переключать» — при выборе этой камеры выход остаётся как был. Номера здесь как на корпусе хаба (с 1).</li>
+<li><span class="ncall">8</span>Что сейчас на выходе — по ответу хаба. Если кто-то переключил выход с другого пульта, здесь это видно.</li>
+<li><span class="ncall">9</span>«Выключить хаб» — тихой кнопкой, как «Выключить Tally».</li>
+</ol></div></div>
+
+<h2>Вопросы</h2>
+<div class="q"><h3>А. Что значит «переключение камеры в программе»?</h3>
+<p>Я понял так: это выбор камеры в PTZ Tracker (рамка клетки, правая колонка, пресеты), который главный геймпад делает кнопкой Create в виде «1 камера». Если вы имели в виду эфир ATEM (камера ушла в PGM на микшере) — скажите, это другая привязка.</p>
+<span class="choice my">Выбор камеры в PTZ Tracker</span><span class="choice">Эфир ATEM (PGM)</span></div>
+<div class="q"><h3>Б. От чего переключать хаб?</h3>
+<p>Выбрать камеру можно главным геймпадом или мышью (клетка, плитка «1 камера», строка пресетов). Предлагаю — от любого выбора: тогда выход хаба всегда показывает ту камеру, что выбрана в программе.</p>
+<span class="choice my">От любого выбора камеры</span><span class="choice">Только от главного геймпада</span></div>
+<div class="q"><h3>В. Выходов один или несколько?</h3><p>Например, один и тот же сигнал на монитор режиссёра и на рекордер — два выхода.</p>
+<span class="choice my">Один выход</span><span class="choice">Несколько выходов, на все — одно и то же</span></div>
+<div class="q"><h3>Г. Что делать при запуске программы и после обрыва связи с хабом?</h3>
+<p>Предлагаю ничего не трогать: хаб переключается только когда вы сами сменили камеру. Иначе запуск программы во время эфира мог бы сам переключить выход.</p>
+<span class="choice my">Не трогать, только при смене камеры</span><span class="choice">При связи сразу подать вход выбранной камеры</span></div>
+<div class="q"><h3>Д. Какой у вас хаб и его адрес?</h3><p>Модель (например, Smart Videohub 12G 40×40, Videohub Mini) и IP-адрес. Знаете ли, не блокирует ли кто-то выходы с другого пульта (замок в Videohub Setup)?</p></div>
+<div class="q"><h3>Е. Оформление — так нравится?</h3><p>Значок в верхней строке (1), строка в меню (2), окно (3–9).</p>
+<span class="choice my">Так нравится</span><span class="choice">Поменять (напишу)</span></div>
+
+<script>
+const names={1:["Сцена","3 · PTZ 1"],2:["Зал","4 · PTZ 2"],3:["Кафедра",null]};let cur=1,onair=1,st="ok";
+const ic=document.getElementById("pillic"),txt=document.getElementById("pilltxt"),chip=document.getElementById("menuchip"),dot=document.getElementById("dlgdot"),dst=document.getElementById("dlgst"),now=document.getElementById("now");
+function draw(){
+ document.querySelectorAll(".demo button[data-n]").forEach(b=>b.classList.toggle("on",+b.dataset.n===cur));
+ document.querySelectorAll(".demo button[data-s]").forEach(b=>b.classList.toggle("on",b.dataset.s===st));
+ document.querySelectorAll("#rows .r").forEach(r=>{const n=+r.dataset.n;r.querySelector(".tile").classList.toggle("sel",n===cur);r.classList.toggle("flash",n===cur)});
+ const col={ok:"#B7F34A",bad:"#EF4444",lock:"#F0A020"}[st];ic.setAttribute("stroke",col);
+ if(st==="bad"){txt.innerHTML="Хаб: нет связи";chip.className="chip bad";chip.textContent="нет связи";dot.style.background="var(--fault)";dst.textContent="Нет связи: проверьте адрес и что хаб в той же сети";now.lastChild.textContent="Сейчас на выходе 5: неизвестно";return}
+ chip.className="chip ok";chip.textContent="на связи";dot.style.background="var(--lime)";dst.textContent="На связи · Smart Videohub 12G 40×40";
+ if(st==="lock"){txt.innerHTML="Хаб: выход 5 занят";ic.setAttribute("stroke","#F0A020");now.lastChild.textContent="Выход 5 заблокирован с другого пульта — не переключаю. Сейчас: вход "+names[onair][1];return}
+ if(names[cur][1])onair=cur;
+ txt.innerHTML="Хаб: вых. 5 ← <b>"+names[onair][0]+"</b>";
+ now.lastChild.textContent="Сейчас на выходе 5: вход "+names[onair][1]+(names[cur][1]?"":" (у «Кафедры» вход не задан — выход не трогаю)");
+}
+document.querySelectorAll(".demo button[data-n]").forEach(b=>b.onclick=()=>{cur=+b.dataset.n;draw()});
+document.querySelectorAll(".demo button[data-s]").forEach(b=>b.onclick=()=>{st=b.dataset.s;draw()});
+draw();
+</script>
+</body></html>

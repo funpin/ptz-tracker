@@ -23,6 +23,7 @@ import platformdirs
 from ptztracker.control.manual_curve import PAD_GEAR_DEG_S, clamp_sens
 from ptztracker.control.zones import zone_of
 from ptztracker.video.rtsp import with_mjpeg_framerate
+from ptztracker.videohub.protocol import hub_output_of
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class CameraConfig:
     # своя зона кадра для каждой крупности: {ключ композиции: [x, y, масштаб]} (control.zones)
     zones: dict = field(default_factory=dict)
     atem_input: int = 0  # вход ATEM (1…), 0 — не задан
+    videohub_input: int = 0  # вход Videohub (1…), на который заведена камера; 0 — выход не переключать
     pad_number: int | None = None  # устарело: точки на геймпаде = номер клетки; читается из старых конфигов
     tracking: bool = True  # камеру можно вести слежением (иначе только ручное управление)
     model: str | None = None  # ответ камеры на QID («AW-HE40»); ставит сессия при подключении, окно сохраняет
@@ -82,6 +84,10 @@ class AppConfig:
     api_port: int = 8765
     api_token: str = ""
     atem_ip: str = ""  # адрес микшера ATEM, пусто — Tally выключен
+    # Blackmagic Videohub (videohub/): на выход videohub_output (1…, 0 — не задан) подаётся вход выбранной камеры
+    videohub_ip: str = ""  # пусто — хаб выключен
+    videohub_output: int = 0
+    videohub_follow: bool = True  # переключать выход вслед за камерой (выключатель без стирания настроек)
     check_updates: bool = True  # раз в сутки спрашивать GitHub, не вышла ли новая версия
     last_update_check: float = 0.0  # когда проверяли в последний раз (секунды с 1970)
     latest_version: str = ""  # новая версия, найденная последней проверкой; пусто — новее нет
@@ -340,6 +346,13 @@ def _fix_video_settings(cfg: AppConfig) -> None:
         cfg.video_mode = "camera"
 
 
+def _fix_videohub_settings(cfg: AppConfig) -> None:
+    cfg.videohub_ip = cfg.videohub_ip.strip() if isinstance(cfg.videohub_ip, str) else ""
+    cfg.videohub_output = hub_output_of(cfg)
+    if not isinstance(cfg.videohub_follow, bool):
+        cfg.videohub_follow = True
+
+
 class ConfigStore:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -373,6 +386,7 @@ class ConfigStore:
         _fix_grid(cfg)
         _fix_update_settings(cfg)
         _fix_control_settings(cfg)
+        _fix_videohub_settings(cfg)
         return cfg
 
     def save(self, cfg: AppConfig) -> None:

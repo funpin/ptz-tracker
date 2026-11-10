@@ -400,10 +400,10 @@ class StatusMixin:
             cell.target_label.setStyleSheet(f"color: {C.LOST}; font-weight: bold;")
 
     def _fit_top_bar(self) -> None:
-        """Узкое окно: ATEM теряет текст; камера и TRACK — никогда."""
+        """Узкое окно: ATEM и хаб теряют текст; камера и TRACK — никогда."""
         if not hasattr(self, "_top"):
             return  # ещё строится окно
-        pills = (self.atem_pill,)
+        pills = (self.atem_pill, self.hub_pill)
         for p in pills:
             p.set_compact(False)
         avail = self.width() - 2 * SP[1]
