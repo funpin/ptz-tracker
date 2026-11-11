@@ -435,15 +435,21 @@ def test_preview_on_mjpeg_keeps_recorders_own_connection(tmp_path, h264_file, fa
 
 
 class Paced:
-    """Контейнер, который отдаёт пакеты не быстрее камеры: у возврата к копии счёт идёт на секунды."""
+    """Контейнер, который отдаёт пакеты не быстрее камеры: у возврата к копии счёт идёт на секунды.
+
+    Пакеты идут по расписанию (k-й — не раньше k·dt от начала), а не «пауза после каждого»: на машине CI пауза 0,01 с
+    длится 0,02–0,03 с, и поток шёл бы втрое медленнее задуманного (macos-15, 2026-11-11: ключевой кадр приходил позже
+    срока возврата к копии, и лёгкий файл не успевал начаться)."""
 
     def __init__(self, path, dt):
         self.c, self.dt = av.open(str(path)), dt
         self.streams = self.c.streams
 
     def demux(self, stream):
+        due = time.monotonic()
         for p in self.c.demux(stream):
-            time.sleep(self.dt)
+            due += self.dt
+            time.sleep(max(0.0, due - time.monotonic()))
             yield p
 
     def close(self):
@@ -469,7 +475,8 @@ def _copy_fails(monkeypatch, bad):
 
 
 def test_recording_returns_to_full_quality_after_fallback(tmp_path, h264_file, fast_retry, monkeypatch):
-    monkeypatch.setattr(R, "COPY_RETRY_S", 0.15)
+    # 0,2 с: ключевой кадр идёт каждые 0,05 с — лёгкий файл успевает начаться, даже если машина запнулась на 0,1 с
+    monkeypatch.setattr(R, "COPY_RETRY_S", 0.2)
     _copy_fails(monkeypatch, set(range(7, 32)))  # 25 пакетов подряд: переход на лёгкий файл; дальше поток здоров
     r = rtsp_rec(tmp_path, Inputs(lambda: Paced(h264_file, 0.01)))
     r.start()
@@ -539,7 +546,7 @@ def test_shared_recording_returns_to_full_quality(tmp_path, h264_file, fast_retr
 
 
 def test_disk_error_on_return_still_closes_the_light_file(tmp_path, h264_file, fast_retry, monkeypatch):
-    monkeypatch.setattr(R, "COPY_RETRY_S", 0.1)
+    monkeypatch.setattr(R, "COPY_RETRY_S", 0.2)  # с запасом на запинку машины, как в тесте возврата к копии
     state = _copy_fails(monkeypatch, set(range(7, 32)))
     flaky = R.CopyWriter
 
