@@ -52,7 +52,8 @@ class CameraConfig:
     speed_scale: dict | None = None
     composition: str = "waist_center"  # control.composition.COMPOSITIONS
     effort: float = 0.5  # 0 — мягко, 1 — резко
-    # своя зона кадра для каждой крупности: {ключ композиции: [x, y, масштаб]} (control.zones)
+    # своя зона кадра для каждой крупности: {ключ композиции: [x, y, ширина, высота]} (control.zones);
+    # запись прежних версий [x, y, масштаб] читается и при сохранении переписывается в новую
     zones: dict = field(default_factory=dict)
     atem_input: int = 0  # вход ATEM (1…), 0 — не задан
     videohub_input: int = 0  # вход Videohub (1…), на который заведена камера; 0 — выход не переключать

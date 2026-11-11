@@ -27,6 +27,16 @@ def test_reason_and_special_states_keep_words():
     assert hint_for("remote", "…", has_target=True)[1] == [("key", "Пробел", "продолжить")]
 
 
+def test_dragging_zone_shows_what_the_zone_means():
+    """Зону тянут: в плашке — её размер и что она значит (этап 2). Кнопки в это время не нужны, и вместе с ними
+    текст не помещается в клетку сетки 2×2. Мышь просто над зоной — как раньше, только кнопки."""
+    title, pairs = hint_for("on", "", has_target=True, target_id=1, zone_hover=True,
+                            zone_text="Зона ±22 % × ±18 % · хватает на спокойный шаг")
+    assert (title, pairs) == ("Зона ±22 % × ±18 % · хватает на спокойный шаг", [])
+    title, pairs = hint_for("on", "", has_target=True, target_id=1, zone_hover=True)
+    assert title == "" and [p[2] for p in pairs] == ["тяните — переместить", "за скобку — размер", "сброс"]
+
+
 def test_zone_hover_overrides():
     _t, pairs = hint_for("on", "", has_target=True, target_id=1, zone_hover=True)
     assert texts(pairs) == ["тяните — переместить", "за скобку — размер", "сброс"]

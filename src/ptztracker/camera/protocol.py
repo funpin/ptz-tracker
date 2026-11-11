@@ -115,6 +115,23 @@ def iris_auto(on: bool) -> str:
     return "#D31" if on else "#D30"
 
 
+# День / Ночь (ночной режим: камера убирает ИК-фильтр, картинка чёрно-белая). Запрос #D6 → d60 день, d61 ночь:
+# так ответили живые AW-HE40 (клуб, 2026-11-10: Club_1 — d61, Club_2 — d60). ⚠ Сама команда #D60/#D61 на живой
+# камере ещё не пробована; в ночном режиме баланс белого не настраивается (руководство AW-HE40) — тоже не сверено.
+Q_NIGHT = "#D6"
+
+
+def night(on: bool) -> str:
+    return "#D61" if on else "#D60"
+
+
+def parse_night(body: str) -> bool:
+    m = re.fullmatch(r"d6([01])", body.strip())
+    if not m:
+        raise ValueError(f"Не похоже на ответ режима День/Ночь: {body!r}")
+    return m.group(1) == "1"
+
+
 def iris_abs(pos: int) -> str:
     _check_range("iris", pos, LENS_MIN, LENS_MAX)
     return f"#AXI{pos:03X}"

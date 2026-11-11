@@ -5,7 +5,7 @@ import pytest
 
 from ptztracker.camera.client import CameraUnreachable
 from ptztracker.camera.protocol import CameraError
-from ptztracker.camera.scheduler import QUERY_MAX_WAIT_S, CommandScheduler, Priority
+from ptztracker.camera.scheduler import QUERY_HARD_WAIT_S, QUERY_MAX_WAIT_S, CommandScheduler, Priority
 
 
 class FakeClock:
@@ -555,10 +555,12 @@ def _query_item(s, cmd, now):
 
 
 def test_query_not_starved_by_continuous_tracking(env):
-    """HE40 2026-10-30: #APC/#GZ ждали до 7 с за непрерывным слежением. Теперь — не дольше ~0,4 с + окно."""
+    """HE40 2026-10-30: #APC/#GZ ждали до 7 с за непрерывным слежением. Теперь — не дольше ~0,4 с + окно; когда код
+    поворота скачет каждый такт (срочный поворот идёт раньше опроса, F9 2026-11-10) — не дольше QUERY_HARD_WAIT_S + окно."""
     s, clock, _ = env
-    waited = _tracking_with_query(s, clock, query_at=0.5)
-    assert waited is not None and waited <= 0.55, waited
+    waited = _tracking_with_query(s, clock, query_at=0.5, T=3.0)
+    assert waited is not None and waited <= QUERY_HARD_WAIT_S + 0.14, waited
+    assert QUERY_HARD_WAIT_S + 0.14 <= 0.75  # запас до таймаута запроса положения (1 с): иначе опрос бросят, не дождавшись
 
 
 def test_young_query_does_not_preempt_tracking(env):
@@ -571,6 +573,8 @@ def test_young_query_does_not_preempt_tracking(env):
 
 def test_aged_query_goes_before_tracking_and_tracking_zoom(env):
     s, clock, _ = env
+    s.submit("pt", _pt(59), Priority.TRACKING)
+    assert s.pump() == _pt(59)  # камера уже едет: дальше код меняется на один — обычная, не срочная команда
     s._st.queries.append(_query_item(s, "#GZ", clock.t))
     clock.t += QUERY_MAX_WAIT_S + 0.01
     s.submit("pt", _pt(60), Priority.TRACKING)
@@ -672,3 +676,118 @@ def test_repeated_failure_warning_rate_limited(env, caplog):
             s.pump(); clock.t += 0.131
     warnings = [r for r in caplog.records if r.levelname == "WARNING" and "не прошла" in r.getMessage()]
     assert len(warnings) == 1
+
+
+# --- запись F9 2026-11-10: «стоп» поворота доходил до камеры через 0,3–1,2 с (опросы и зум шли впереди) ---
+
+
+def _moving(s, clock, pan=62):
+    """Камера подтверждённо едет кодом pan по команде слежения."""
+    s.submit("pt", _pt(pan), Priority.TRACKING)
+    assert s.pump() == _pt(pan)
+    clock.t += 0.131
+
+
+def test_pan_stop_goes_before_aged_query_and_waiting_zoom(env):
+    """Регулятор решил остановить поворот: стоп уходит ближайшим окном — раньше состарившегося опроса и окна зума."""
+    s, clock, _ = env
+    _moving(s, clock)
+    s.submit("zoom", "#Z30", Priority.TRACKING_ZOOM)
+    s._st.queries.append(_query_item(s, "#GZ", clock.t))
+    clock.t += QUERY_MAX_WAIT_S + 0.01
+    s.submit("pt", "#PTS5050", Priority.TRACKING)
+    assert s.pump() == "#PTS5050"
+    clock.t += 0.131
+    assert s.pump() == "#GZ"  # опрос — сразу за ним, зум — следом
+    clock.t += 0.131
+    assert s.pump() == "#Z30"
+
+
+def test_pan_stop_is_not_held_by_queries_past_hard_wait(env):
+    """Стенд 2026-11-11: человек встал, а «стоп» поворота ждал два окна (0,26 с) за опросами #APC и #GZ, прождавшими
+    больше QUERY_HARD_WAIT_S, — камера проезжала мимо. Стоп — одна команда: он идёт первым, опрос ждёт ещё одно окно,
+    но не больше одного (иначе повторы стопа при отказах камеры держали бы опрос до таймаута)."""
+    s, clock, _ = env
+    _moving(s, clock)
+    s._st.queries.append(_query_item(s, "#APC", clock.t))
+    s._st.queries.append(_query_item(s, "#GZ", clock.t))
+    clock.t += QUERY_HARD_WAIT_S + 0.01
+    s.submit("pt", "#PTS5050", Priority.TRACKING)
+    assert s.pump() == "#PTS5050"
+    clock.t += 0.131
+    assert s.pump() == "#APC"
+    clock.t += 0.131
+    assert s.pump() == "#GZ"
+
+
+def test_query_past_hard_wait_yields_to_pan_stop_only_once(env):
+    s, clock, _ = env
+    _moving(s, clock)
+    s._st.queries.append(_query_item(s, "#APC", clock.t))
+    clock.t += QUERY_HARD_WAIT_S + 0.131 + 0.01  # опрос уже пропустил одно окно сверх предела
+    s.submit("pt", "#PTS5050", Priority.TRACKING)
+    assert s.pump() == "#APC"
+    clock.t += 0.131
+    assert s.pump() == "#PTS5050"
+
+
+def test_aged_position_query_goes_before_image_state_queries(env):
+    """Опрос положения (#APC/#GZ, ждут ответа с таймаутом 1 с) не стоит в хвосте за опросами настроек картинки
+    (gain, баланс белого, ирис… — их десяток разом, и ответ на них никто не ждёт). 2026-11-11: зум стал реже слать
+    команды, очередь слежения пустела, и #APC ждал за десятком настроек 2,4 с — опрос бросали по таймауту."""
+    s, clock, _ = env
+    for i, cmd in enumerate(("QGU", "QAW", "QSD:B1", "#GI", "QSH")):
+        s.submit(f"q_image{i}", cmd, Priority.QUERY, only_if_changed=False)
+    assert s.pump() == "QGU"  # пока опрос положения молод — настройки идут своим чередом
+    s._st.queries.append(_query_item(s, "#APC", clock.t))
+    clock.t += 0.131
+    assert s.pump() == "QAW"
+    clock.t += QUERY_MAX_WAIT_S
+    assert s.pump() == "#APC"  # состарился — идёт раньше оставшихся настроек
+    clock.t += 0.131
+    assert s.pump() == "QSD:B1"
+
+
+def test_notable_pan_change_goes_before_aged_query(env):
+    """Поворот меняется заметно (торможение, разгон — от 3 кодов): он нужнее камере, чем опрос положения."""
+    s, clock, _ = env
+    _moving(s, clock, pan=62)
+    s._st.queries.append(_query_item(s, "#APC", clock.t))
+    clock.t += QUERY_MAX_WAIT_S + 0.01
+    s.submit("pt", _pt(58), Priority.TRACKING)
+    assert s.pump() == _pt(58)
+    clock.t += 0.131
+    assert s.pump() == "#APC"
+
+
+def test_small_pan_change_yields_to_aged_query(env):
+    s, clock, _ = env
+    _moving(s, clock, pan=62)
+    s._st.queries.append(_query_item(s, "#APC", clock.t))
+    clock.t += QUERY_MAX_WAIT_S + 0.01
+    s.submit("pt", _pt(63), Priority.TRACKING)
+    assert s.pump() == "#APC"
+
+
+def test_single_busy_reply_retries_pan_before_heartbeat(env):
+    """Один отказ «занята» (er2) при живой камере: повтор стопа поворота уходит следующим, пульс ждёт.
+    Два отказа подряд — пульс идёт первым: так видно, что камера в ожидании."""
+    s, clock, send = env
+    s.probe_key = "heartbeat"
+    _moving(s, clock)
+    s.submit("heartbeat", "#O", Priority.QUERY, only_if_changed=False)
+    send.fail_next = [CameraError("er2", "eR2:PTS5050")]
+    s.submit("pt", "#PTS5050", Priority.TRACKING)
+    assert s.pump() == "#PTS5050" and send.ok[-1] != "#PTS5050"
+    clock.t += 0.131
+    assert s.pump() == "#PTS5050" and send.ok[-1] == "#PTS5050"
+    clock.t += 0.131
+    # два отказа подряд
+    _moving(s, clock)
+    send.fail_next = [CameraError("er2", "eR2:PTS5050"), CameraError("er2", "eR2:PTS5050")]
+    s.submit("pt", "#PTS5050", Priority.TRACKING)
+    sent = []
+    for _ in range(3):
+        sent.append(s.pump())
+        clock.t += 0.131
+    assert sent == ["#PTS5050", "#PTS5050", "#O"]

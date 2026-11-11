@@ -352,3 +352,208 @@ def test_long_run_of_bad_packets_falls_back(tmp_path, h264_file, fast_retry, mon
     r.start()
     assert wait_for(lambda: r.snapshot().degraded)
     finish(r)
+
+
+# --- просмотр уже держит H.264 камеры: вторым подключением камера не отдаёт (клуб, 2026-11-10) ---
+
+
+class OneClientPreview:
+    """Просмотр по RTSP на файле: настоящий RtspSource, но считается потоком H.264 камеры."""
+
+    def __new__(cls, path, shares=True):
+        from ptztracker.video.rtsp import RtspSource
+
+        class _Src(RtspSource):
+            shares_h264 = shares
+
+        return _Src(str(path))
+
+
+def shared_rec(folder, src, inputs=None, **kw):
+    inputs = inputs if inputs is not None else Inputs()  # своё подключение камера отвергает
+    r = VideoRecorder("Сцена", folder, url=lambda: "rtsp://u:secret@h/x", open_input=inputs,
+                      shared=lambda: src if src.shares_h264 else None, **kw)
+    return r, inputs
+
+
+def test_recording_takes_packets_from_h264_preview(tmp_path, h264_file, fast_retry):
+    src = OneClientPreview(h264_file)
+    r, inputs = shared_rec(tmp_path, src)
+    r.start()
+    time.sleep(0.1)  # запись уже ждёт пакеты, когда просмотр открывает поток
+    src.start()
+    try:
+        assert wait_for(lambda: len(r.snapshot().paths) >= 2)  # файл-источник пошёл по второму кругу
+        s = r.snapshot()
+        assert s.active and s.signal and s.error is None
+    finally:
+        s = finish(r)
+        src.stop()
+    assert inputs.calls == []  # второго подключения к камере не было
+    assert count_frames(s.paths[0]) >= 70  # из 75: копия без пережатия, с первого ключевого кадра
+
+
+def test_recording_reports_no_signal_while_h264_preview_is_down(tmp_path, fast_retry, monkeypatch):
+    monkeypatch.setattr(R, "SHARED_LOSS_S", 0.1)
+    src = OneClientPreview("rtsp://127.0.0.1:9/nothing")
+    r, inputs = shared_rec(tmp_path, src)
+    r.start()
+    try:
+        assert wait_for(lambda: not r.snapshot().signal)
+        assert r.snapshot().active and inputs.calls == []
+        assert "нет сигнала" in r.take_note() and r.take_note() is None
+    finally:
+        finish(r)
+
+
+def test_light_recording_takes_frames_from_h264_preview(tmp_path, h264_file_50, fast_retry, monkeypatch):
+    src = OneClientPreview(h264_file_50)
+    r, inputs = shared_rec(tmp_path, src, mode="light")
+    src.start()
+    r.start()
+    try:
+        assert wait_for(lambda: r.snapshot().bytes_total > 0)
+        time.sleep(1.0)
+    finally:
+        s = finish(r)
+        src.stop()
+    assert inputs.calls == [] and s.error is None
+    n = count_frames(s.paths[0])
+    assert 5 <= n <= 40  # около секунды по 25 к/с, а не 50
+
+
+def test_preview_on_mjpeg_keeps_recorders_own_connection(tmp_path, h264_file, fast_retry):
+    src = OneClientPreview(h264_file, shares=False)
+    r, inputs = shared_rec(tmp_path, src, inputs=Inputs(h264_file))
+    r.start()
+    assert wait_for(lambda: not r.snapshot().signal and r.snapshot().bytes_total > 0)
+    s = finish(r)
+    assert len(inputs.calls) >= 1 and count_frames(s.paths[0]) == 75
+
+
+# --- возврат с «лёгкого файла» к полному качеству (клуб, 2026-11-10: 40 минут записи в 3 Мбит/с из-за сбоя в 0,3 с) ---
+
+
+class Paced:
+    """Контейнер, который отдаёт пакеты не быстрее камеры: у возврата к копии счёт идёт на секунды."""
+
+    def __init__(self, path, dt):
+        self.c, self.dt = av.open(str(path)), dt
+        self.streams = self.c.streams
+
+    def demux(self, stream):
+        for p in self.c.demux(stream):
+            time.sleep(self.dt)
+            yield p
+
+    def close(self):
+        self.c.close()
+
+
+def _copy_fails(monkeypatch, bad):
+    """CopyWriter, у которого не проходят вызовы с номерами из bad; times — когда запись пробовала копию заново."""
+    real, state = R.CopyWriter, FlakyMux(bad)
+    state.times = []
+
+    class Flaky(real):
+        def write_packet(self, packet):
+            state.n += 1
+            if state.n in state.bad:
+                if self.bytes_written == 0:
+                    state.times.append(time.monotonic())
+                raise av.error.ArgumentError(22, "non monotonic dts")
+            super().write_packet(packet)
+
+    monkeypatch.setattr(R, "CopyWriter", Flaky)
+    return state
+
+
+def test_recording_returns_to_full_quality_after_fallback(tmp_path, h264_file, fast_retry, monkeypatch):
+    monkeypatch.setattr(R, "COPY_RETRY_S", 0.15)
+    _copy_fails(monkeypatch, set(range(7, 32)))  # 25 пакетов подряд: переход на лёгкий файл; дальше поток здоров
+    r = rtsp_rec(tmp_path, Inputs(lambda: Paced(h264_file, 0.01)))
+    r.start()
+    assert wait_for(lambda: r.snapshot().degraded)
+    assert wait_for(lambda: not r.snapshot().degraded and len(r.snapshot().paths) == 3)
+    assert wait_for(lambda: not r.snapshot().signal)  # поток кончился
+    s = finish(r)
+    assert s.error is None and r._mode == "camera"
+    light, full = count_frames(s.paths[1]), count_frames(s.paths[2])
+    assert light >= 5 and full >= 5  # лёгкий файл закрыт целым, дальше снова копия
+    assert light + full >= 35  # из 40 кадров после сбоя: на стыке не теряем больше группы кадров
+
+
+def test_failed_return_keeps_the_light_file_and_tries_less_often(tmp_path, tmp_path_factory, fast_retry,
+                                                                 monkeypatch):
+    from video_helpers import make_h264
+
+    monkeypatch.setattr(R, "COPY_RETRY_S", 0.05)
+    src = make_h264(tmp_path_factory.mktemp("long") / "long.mp4", seconds=6)
+    state = _copy_fails(monkeypatch, set(range(7, 10_000)))  # копия больше не идёт вовсе
+    r = rtsp_rec(tmp_path, Inputs(lambda: Paced(src, 0.008)))
+    r.start()
+    assert wait_for(lambda: not r.snapshot().signal and r.snapshot().degraded, t=8.0)
+    s = finish(r)
+    assert s.error is None and s.degraded
+    assert len(s.paths) == 2  # неудачная попытка не рвёт лёгкий файл и не оставляет пустых
+    assert count_frames(s.paths[1]) >= 110  # все кадры после сбоя (115), включая те, на которых пробовали копию
+    gaps = [b - a for a, b in zip(state.times, state.times[1:], strict=False)]
+    assert len(gaps) >= 2
+    assert all(gap >= 0.05 * 2 ** (i + 1) - 0.02 for i, gap in enumerate(gaps))  # 0,1 с, 0,2 с, 0,4 с…
+
+
+def test_fallback_starts_decoding_from_a_keyframe(tmp_path, h264_file, fast_retry, monkeypatch):
+    seen, real = [], av.Packet.decode
+
+    def spy(self, *a, **k):
+        seen.append(bool(self.is_keyframe))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(av.Packet, "decode", spy, raising=False)
+    _copy_fails(monkeypatch, set(range(7, 32)))  # сбой кончается на пакете 31; пакет 32 — не ключевой
+    r = rtsp_rec(tmp_path, Inputs(h264_file))
+    r.start()
+    assert wait_for(lambda: not r.snapshot().signal and r.snapshot().degraded)
+    finish(r)
+    monkeypatch.undo()
+    assert seen and seen[0]  # декодер не видел кадров, пока шла копия: с середины группы он выдаёт мусор
+
+
+def test_shared_recording_returns_to_full_quality(tmp_path, h264_file, fast_retry, monkeypatch):
+    monkeypatch.setattr(R, "COPY_RETRY_S", 0.2)
+    _copy_fails(monkeypatch, set(range(7, 32)))
+    src = OneClientPreview(h264_file)
+    r, inputs = shared_rec(tmp_path, src)
+    r.start()
+    time.sleep(0.1)
+    src.start()
+    try:
+        assert wait_for(lambda: r.snapshot().degraded)
+        assert wait_for(lambda: not r.snapshot().degraded and r._mode == "camera", t=8.0)
+        n = len(r.snapshot().paths)
+        assert wait_for(lambda: len(r.snapshot().paths) > n)  # и копия пишется дальше
+    finally:
+        s = finish(r)
+        src.stop()
+    assert inputs.calls == [] and s.error is None and not s.degraded
+
+
+def test_disk_error_on_return_still_closes_the_light_file(tmp_path, h264_file, fast_retry, monkeypatch):
+    monkeypatch.setattr(R, "COPY_RETRY_S", 0.1)
+    state = _copy_fails(monkeypatch, set(range(7, 32)))
+    flaky = R.CopyWriter
+
+    class DiskGone(flaky):
+        def write_packet(self, packet):
+            if state.n >= 31:
+                raise OSError(28, "No space left on device")
+            super().write_packet(packet)
+
+    monkeypatch.setattr(R, "CopyWriter", DiskGone)
+    r = rtsp_rec(tmp_path, Inputs(lambda: Paced(h264_file, 0.01)))
+    r.start()
+    assert wait_for(lambda: not r.snapshot().active)
+    assert r.wait_closed(5.0)
+    s = r.snapshot()
+    assert s.error and "диск" in s.error
+    assert len(s.paths) == 2 and count_frames(s.paths[1]) >= 5  # лёгкий файл в списке и читается

@@ -19,8 +19,8 @@ Windows-программа (PySide6), которая ведёт докладчи
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python 3.12–3.13
-.venv/bin/pytest -q -m "not slow"     # быстрый набор, ~1 мин — после каждого изменения
-.venv/bin/pytest -q                   # полный, ~9 мин (реальное время на симуляторе) — перед коммитом этапа
+.venv/bin/pytest -q -m "not slow"     # быстрый набор, ~18 мин (2026-11-11, 1760 тестов) — перед коммитом; по ходу — нужные папки: tests/control ~3 мин
+.venv/bin/pytest -q -m slow           # медленный, ~30 мин (реальное время на симуляторе; другие тяжёлые задачи рядом не запускать) — перед коммитом этапа
 .venv/bin/ruff check src tests        # линтер (F, E9, B, I); --fix сортирует импорты
 .venv/bin/python -m ptztracker --sim  # окно с двумя виртуальными камерами (sim1, sim2)
 ```

@@ -1,0 +1,132 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Зона — граница</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A;--lost:#F0A020}
+*{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:16px 18px 48px;font-size:13px}
+h1{font-size:18px;margin:0 0 4px}h2{font-size:15px;margin:26px 0 6px}
+.sub{color:var(--dim);font-size:12.5px;margin:0 0 14px;line-height:1.45;max-width:1150px}.sub b{color:var(--white)}
+.bar{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin-bottom:12px;color:var(--faint);font-size:12px}
+.grp{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.b{padding:6px 12px;border-radius:7px;border:1px solid var(--line);color:var(--dim);cursor:pointer;font-size:13px}
+.b.on{background:var(--white);color:var(--bg);font-weight:600;border-color:var(--white)}
+.row{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.cell{width:720px;max-width:100%;background:var(--surface);border:1px solid var(--white);border-radius:10px;overflow:hidden}
+.ch{display:flex;align-items:center;gap:8px;padding:7px 10px}
+.num{width:18px;height:18px;border-radius:5px;background:var(--white);color:var(--bg);font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center}
+.tag{font-size:11px;font-weight:700;padding:2px 6px;border-radius:5px;background:var(--lime);color:var(--bg)}
+.v{position:relative;aspect-ratio:16/9;background:#4b545d;overflow:hidden}
+.v svg{position:absolute;inset:0;width:100%;height:100%}
+.plate{position:absolute;left:10px;bottom:10px;background:rgba(23,25,29,.85);border-radius:7px;padding:5px 9px;font-size:12.5px;color:var(--dim)}.plate b{color:var(--white)}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.stat{flex:1;min-width:150px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
+.stat .l{color:var(--faint);font-size:11.5px}.stat .val{font-size:20px;font-weight:700;margin-top:2px}
+.n{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--lime);color:#111;font:700 11px Inter,sans-serif;align-items:center;justify-content:center;flex:none}
+.notes{font-size:12.5px;color:var(--dim);line-height:1.45;max-width:440px;flex:1;min-width:280px}
+.notes ol{padding:0;margin:0;list-style:none}.notes li{margin-bottom:11px;display:flex;gap:8px}.notes b{color:var(--white)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;max-width:1160px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.card h3{margin:0 0 4px;font-size:14px}.card p{color:var(--dim);font-size:12.5px;line-height:1.45;margin:0 0 10px}
+.card .v{border-radius:8px}
+.rec{font-size:10px;font-weight:700;color:var(--bg);background:var(--lime);padding:1px 6px;border-radius:4px;margin-left:6px}
+table{border-collapse:collapse;max-width:900px;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 10px;text-align:left;font-size:12.5px}th{color:var(--faint);font-weight:600}td{color:var(--dim)}td b{color:var(--white)}
+</style></head><body>
+<h1>Зона слежения — граница, которую задаёте вы</h1>
+<p class="sub">Сейчас размер зоны почти ничего не меняет: камера решает «пора ехать» по своим внутренним порогам. Предлагаю сделать, как вы просили: <b>скобки — это граница, за которую камера старается человека не выпускать</b>, и от размера зоны зависит вся работа слежения. Ниже — живая упрощённая модель: меняйте размер зоны и поведение человека и смотрите, как ведёт себя камера.</p>
+
+<div class="bar">
+ <div class="grp">Зона: <span class="b" data-k="0.5">Плотная ×0,5</span><span class="b on" data-k="1">Обычная ×1</span><span class="b" data-k="1.8">Свободная ×1,8</span></div>
+ <div class="grp">Человек: <span class="b" data-m="sway">переминается на месте</span><span class="b on" data-m="walk">ходит по сцене</span><span class="b" data-m="rush">ходит быстро</span></div>
+</div>
+<div class="row">
+<div style="max-width:100%">
+ <div class="cell"><div class="ch"><span class="num">1</span><b>Club_1</b><span style="flex:1"></span><span class="tag">ВЕДУ</span></div>
+ <div class="v"><svg id="stage" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice"></svg><div class="plate" id="plate"></div></div></div>
+ <div class="stats">
+  <div class="stat"><div class="l">Камера двигалась (за последние 30 с)</div><div class="val" id="sMove">—</div></div>
+  <div class="stat"><div class="l">Человек был за границей зоны</div><div class="val" id="sOut">—</div></div>
+  <div class="stat"><div class="l">Самый дальний уход от точки</div><div class="val" id="sPeak">—</div></div>
+ </div>
+</div>
+<div class="notes"><ol>
+ <li><span class="n">1</span><span><b>Точка — где держать лицо.</b> Как сейчас: тянете зону — точка едет с ней.</span></li>
+ <li><span class="n">2</span><span><b>Внутренняя рамка — покой.</b> Пока лицо в ней, камера стоит: человек переминается, а картинка не дёргается.</span></li>
+ <li><span class="n">3</span><span><b>Скобки — граница.</b> Чем ближе человек к скобке и чем быстрее он к ней идёт, тем раньше и решительнее едет камера. Внутри зоны она подправляет кадр плавно, у границы — догоняет в полную силу. Отъезд зумом — только если человек уходит уже из самого кадра и поворотом не успеть.</span></li>
+ <li><span class="n">4</span><span><b>Размер зоны = характер слежения.</b> Плотная зона: камера идёт вместе с человеком почти всё время, кадр «живой». Свободная: человек ходит внутри, камера долго стоит и трогается редко. Попробуйте переключить сверху.</span></li>
+ <li><span class="n">5</span><span><b>Идущего камера держит чуть впереди точки</b> — со стороны, куда он идёт. Когда он остановится, камера как раз докатится до точки, а не проскочит мимо. Это и есть лекарство от «обгона», который вы видели.</span></li>
+ <li><span class="n" style="background:var(--raised-hi);color:var(--white)">i</span><span>Модель упрощённая (одна ось, задержка видео 0,25 с), числа под картинкой — для сравнения размеров зоны между собой, не обещание для живой камеры.</span></li>
+</ol></div>
+</div>
+
+<h2>Честный предел: насколько плотную зону камера может удержать</h2>
+<p class="sub">Камера узнаёт, что человек пошёл, с опозданием: кадр идёт по сети, потом его разбирает нейросеть. За это время человек уже сдвинулся. Поэтому при резком старте он на мгновение выйдет за очень плотную зону — это не лечится настройкой, только более быстрым потоком. Замеры ваших камер 2026-11-10 (по Wi‑Fi):</p>
+<table>
+<tr><th>Поток</th><th>Камера «видит» с опозданием</th><th>Спокойный шаг на «Поясе» (0,35 кадра/с)</th><th>Быстрый шаг (0,7 кадра/с)</th></tr>
+<tr><td>MJPEG (1) 640×360, 25 к/с</td><td>≈ 0,3 с</td><td>уйдёт на <b>≈ 10 % кадра</b>, пока камера тронется</td><td>≈ 21 %</td></tr>
+<tr><td>MJPEG (2) 1280×720, 12 к/с</td><td>≈ 0,45 с</td><td>≈ 16 %</td><td>≈ 32 %</td></tr>
+<tr><td>H.264 1080p</td><td>≈ 0,5 с</td><td>≈ 18 %</td><td>≈ 35 %</td></tr>
+</table>
+<p class="sub" style="margin-top:10px">Обычная зона — ±22 % кадра, плотная — ±11 %. То есть на MJPEG (1) обычную зону камера удержит и при быстром шаге, а плотную — только на спокойном. Программа будет писать это на плашке, пока вы тянете зону (см. ниже), чтобы не гадать.</p>
+
+<h2>Как менять размер — один вопрос к вам</h2>
+<div class="cards">
+ <div class="card"><h3>А · Как сейчас: один размер</h3><p>Тянете за скобку — зона растёт и сжимается целиком, ширина и высота вместе. Просто, но нельзя сделать «широко по сцене, узко по высоте».</p>
+  <div class="v"><svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" id="vA"></svg><div class="plate"><b>Зона ±22 % × ±18 %</b> · обычная: удержит и быстрый шаг</div></div></div>
+ <div class="card"><h3>Б · Ширина и высота отдельно <span class="rec">советую</span></h3><p>Тянете за угол скобки — меняются ширина и высота по отдельности. Человек ходит вдоль сцены — зону можно сделать широкой и низкой: камера реже поворачивает, а по высоте голову держит точно.</p>
+  <div class="v"><svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" id="vB"></svg><div class="plate"><b>Зона ±34 % × ±10 %</b> · свободная по ширине, плотная по высоте</div></div></div>
+</div>
+<p class="sub" style="margin-top:14px">В обоих вариантах: двойной клик — сброс к обычной зоне; зона запоминается для каждой крупности («Пояс», «Рост», «Общий») у каждой камеры, как сейчас. Ползунок «Мягко … Резко» остаётся и отвечает только за плавность хода камеры, а не за размер зоны.</p>
+
+<script>
+const W=1600,H=900,AX=800,AY=270;
+function zoneSvg(bx,by,hot){ // bx, by — полуширина и полувысота границы в пикселях макета
+ const x0=AX-bx,x1=AX+bx,y0=Math.max(14,AY-by),y1=AY+by,L=Math.min(150,bx*0.45),r=26,dx=bx*0.23,dy=by*0.25;
+ return `<g fill="none" stroke="rgba(245,245,242,${hot?0.95:0.65})" stroke-width="${hot?7:5.5}" stroke-linecap="round" stroke-linejoin="round">
+ <path d="M${x0} ${y0+L}V${y0+r}q0-${r} ${r}-${r}H${x0+L}"/><path d="M${x1-L} ${y1}H${x1-r}q${r} 0 ${r}-${r}V${y1-L}"/></g>
+ <rect x="${AX-dx}" y="${AY-dy}" width="${2*dx}" height="${2*dy}" rx="18" fill="none" stroke="rgba(245,245,242,.32)" stroke-width="2.5"/>
+ <circle cx="${AX}" cy="${AY}" r="12" fill="#B7F34A"/>`}
+function person(px){return `<ellipse cx="${px}" cy="${AY}" rx="46" ry="52" fill="#d9ae96"/><path d="M${px-105} 900V${AY+120}q0-55 55-55h100q55 0 55 55v${900-AY-120}z" fill="#c08d82"/>`}
+function call(n,x,y){return `<circle cx="${x}" cy="${y}" r="20" fill="#B7F34A"/><text x="${x}" y="${y+7}" text-anchor="middle" font-family="Inter" font-weight="700" font-size="20" fill="#111">${n}</text>`}
+const bg=c=>{let s='';const items=[[-1500,540,300,360,'#b88445'],[-900,380,420,520,'#5a3c26'],[-200,150,200,230,'#22bf86'],[300,540,420,360,'#4569bb'],[1100,300,260,600,'#6b5a7a'],[1900,480,380,420,'#8a6a3a'],[2600,200,240,300,'#3f7f8f']];
+ for(const [x,y,w,h,f] of items){s+=`<rect x="${x-c*W}" y="${y}" width="${w}" height="${h}" fill="${f}"/>`}
+ return `<rect width="1600" height="900" fill="#4b545d"/><rect y="700" width="1600" height="200" fill="#3a4047"/>`+s};
+document.getElementById('vA').innerHTML=bg(0)+person(880)+zoneSvg(352,200,true);
+document.getElementById('vB').innerHTML=bg(0)+person(1010)+zoneSvg(544,110,true);
+
+// --- упрощённая модель одной оси (доли ширины кадра) ---
+const S={k:1,mode:'walk'},DT=1/50,LAT=0.25;
+let t=0,p=0,pv=0,goal=0,wait=0,c=0,cv=0,hist=[],log=[];
+const ss=(x,a,b)=>{const u=Math.min(1,Math.max(0,(x-a)/(b-a)));return u*u*(3-2*u)};
+function stepPerson(){
+ if(S.mode==='sway'){p=0.045*Math.sin(t*2.9)+0.02*Math.sin(t*1.3);return}
+ const sp=S.mode==='rush'?0.7:0.35;
+ if(wait>0){wait-=DT;pv+=(0-pv)*0.25}
+ else{const d=goal-p;if(Math.abs(d)<0.02){wait=1.5+Math.random()*2.5;goal=(Math.random()*2-1)*1.1}else{pv+=(Math.sign(d)*sp-pv)*0.12}}
+ p+=pv*DT+0.012*Math.sin(t*3.1)*DT*3}
+function stepCamera(){
+ hist.push([t,p]);while(hist.length&&t-hist[0][0]>1.2)hist.shift();
+ const seen=hist.filter(h=>h[0]<=t-LAT);if(seen.length<3)return;
+ const last=seen[seen.length-1],old=seen.find(h=>h[0]>=last[0]-0.3)||seen[0];
+ const v=(last[1]-old[1])/Math.max(0.05,last[0]-old[0]);
+ const B=0.22*S.k,dead=0.23*B,w=ss(Math.abs(v),0.05,0.14);
+ const e=(last[1]+v*LAT)-c, lead=Math.max(-0.6*B,Math.min(0.6*B,v*0.3*w));
+ let d=e-lead;d=Math.abs(d)<dead?0:d-Math.sign(d)*dead;
+ const near=ss(Math.abs(e)/B,0.55,1.0);
+ const want=w*v+(1.1+7*near)*d, a=(0.9+7*near)*DT;
+ cv+=Math.max(-a,Math.min(a,want-cv));if(Math.abs(want)<0.004&&Math.abs(cv)<0.01)cv=0;c+=cv*DT}
+function draw(){
+ const B=0.22*S.k,img=0.5+(p-c);
+ document.getElementById('stage').innerHTML=bg(c)+person(img*W)+zoneSvg(B*W,0.2*S.k*H,false)+call(1,AX+34,AY-30)+call(2,AX-0.23*B*W-30,AY+0.05*S.k*H+40)+call(3,AX+B*W+34,AY+0.2*S.k*H-60);
+ document.getElementById('plate').innerHTML=`<b>Зона ±${Math.round(B*100)} % × ±${Math.round(20*S.k)} %</b> · ${S.k<0.8?'плотная: камера идёт вместе с человеком':S.k>1.3?'свободная: камера трогается редко':'обычная'}`;
+ log.push([t,Math.abs(cv)>0.02,Math.abs(img-0.5)>B,Math.abs(img-0.5)]);while(log.length&&t-log[0][0]>30)log.shift();
+ const n=log.length||1;
+ document.getElementById('sMove').textContent=Math.round(100*log.filter(l=>l[1]).length/n)+' %';
+ document.getElementById('sOut').textContent=(100*log.filter(l=>l[2]).length/n).toFixed(1).replace('.',',')+' %';
+ document.getElementById('sPeak').textContent=Math.round(100*Math.max(...log.map(l=>l[3])))+' % кадра'}
+function tick(){for(let i=0;i<2;i++){t+=DT;stepPerson();stepCamera()}draw();requestAnimationFrame(tick)}
+function sel(attr,val){document.querySelectorAll(`[data-${attr}]`).forEach(b=>b.classList.toggle('on',b.dataset[attr]===String(val)))}
+document.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{S.k=+b.dataset.k;sel('k',b.dataset.k);log=[]});
+document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>{S.mode=b.dataset.m;sel('m',S.mode);log=[];wait=0;goal=p});
+tick();
+</script>
+</body></html>

@@ -609,3 +609,79 @@ def test_open_menu_hides_plates_under_it(qtbot, tmp_path):
     assert not cell.target_bar.isHidden() and not cell.info_label.isHidden()
     assert not w.follow_panel.status_label.muted
     w.close()
+
+
+# --- День / Ночь (макет docs/design/mockups/day-night.html, вариант А — без метки в шапке клетки) ---
+
+
+class NightSession(PowerSceneSession):
+    def __init__(self):
+        super().__init__()
+        self.image = dataclasses.replace(self.image, night=False, wb=0, gain=8)
+
+    def set_night(self, on):
+        self.calls.append(("night", on))
+        self.image = dataclasses.replace(self.image, night=on)
+
+
+def test_day_night_row_sits_under_gain_and_is_seen_without_scrolling(qtbot):
+    s = NightSession()
+    m, _ = build(qtbot, s)
+    m.open()
+    keys = m.visible_keys()
+    assert keys[keys.index("gain") + 1] == "night"
+    assert m._rows["night"].isVisibleTo(m) and m._rows["night"].title.text() == "День / Ночь"
+    assert m._rows["night"].value.text() == "День"
+    assert "чёрно-бел" in cm.WHY["night"]
+
+
+def test_day_night_toggles_by_click_and_arrows(qtbot):
+    s = NightSession()
+    m, _ = build(qtbot, s)
+    m.open()
+    m.click_item("night")
+    assert s.calls[-1] == ("night", True) and m._rows["night"].value.text() == "Ночь"
+    m.nav(-1, 0)
+    assert s.calls[-1] == ("night", False) and m._rows["night"].value.text() == "День"
+    m.nav(1, 0)
+    assert s.calls[-1] == ("night", True)
+
+
+def test_night_mode_dims_white_balance_and_says_why(qtbot):
+    s = NightSession()
+    s.image = dataclasses.replace(s.image, night=True, wb=P.WB_VAR, color_temp=0x20)
+    m, _ = build(qtbot, s)
+    m.open()
+    assert not m._enabled("wb") and not m._enabled("ctemp") and m._rows["wb"].value.text() == "—"
+    m._cursor = "night"
+    m._render()
+    assert "чёрно-бел" in m.hint.text() and "День" in m.hint.text()
+    m.nav(0, -1)
+    assert m._cursor not in ("wb", "ctemp")  # курсор погасшие строки перешагивает
+
+
+def test_day_night_row_hidden_until_camera_reports_the_mode(qtbot):
+    s = NightSession()
+    s.image = dataclasses.replace(s.image, night=None)  # камера на #D6 не ответила (другая модель)
+    m, _ = build(qtbot, s)
+    m.open()
+    assert "night" not in m.visible_keys()
+    m2, _ = build(qtbot, PowerSceneSession())  # у сессии нет set_night
+    m2.open()
+    assert "night" not in m2.visible_keys()
+
+
+def test_day_night_on_air_asks_first(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    s = NightSession()
+    m, _ = build(qtbot, s)
+    m.on_air = lambda: True
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a) or QMessageBox.No)
+    m.open()
+    m.click_item("night")
+    assert asked and ("night", True) not in s.calls and m._rows["night"].value.text() == "День"
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    m.click_item("night")
+    assert s.calls[-1] == ("night", True)

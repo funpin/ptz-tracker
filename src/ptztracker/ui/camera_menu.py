@@ -77,6 +77,7 @@ WHY = {
     "ctemp": "Вручную подогнать цвет под свет на сцене (режим VAR).",
     "iris": "Сколько света пускает объектив. Авто — камера сама держит яркость.",
     "gain": "Усиление сигнала: ярче в тёмном зале, но больше шума. Авто — камера решает сама.",
+    "night": "Ночь — камера видит в темноте, но картинка чёрно-белая. День — обычная цветная.",
     "shutter": "Убрать мерцание LED-экранов и ламп на сцене. Synchro — точная подстройка под частоту экрана.",
     "synchro": "Крутите, пока полосы на LED-экране не исчезнут.",
     "pedestal": "Уровень чёрного: подогнать картинку под соседние камеры, чтобы при переключении не было скачка.",
@@ -96,8 +97,10 @@ TITLE_OSD = "Меню Panasonic на камере"
 KEYS_QUICK = "↑↓ пункт · ←→ значение · ○ закрыть"
 KEYS_OSD = "↑↓  пункт\n→  выбрать\n←  назад\n○  закрыть"
 OSD_WIDTH = 150  # в меню Panasonic — узкая плашка слева: середину кадра занимает меню самой камеры
-ORDER = ("power", "focus", "wb", "ctemp", "iris", "gain", "shutter", "synchro", "pedestal", "detail", "scene",
-         "standby", "osd")
+ORDER = ("power", "focus", "wb", "ctemp", "iris", "gain", "night", "shutter", "synchro", "pedestal", "detail",
+         "scene", "standby", "osd")
+NIGHT_ON_HINT = ("Сейчас ночной режим: картинка чёрно-белая, баланс белого камера не меняет."
+                 " ←→ — вернуть День.")
 CONFIRM_S = 3.0  # «Выключить камеру»: второе нажатие × должно прийти за это время
 REFUSED_HINT = ("Камера не принимает эту настройку: она в режиме Full Auto. Выберите «Сцена» → Manual 1"
                 " ниже — тогда настройки заработают.")
@@ -234,6 +237,10 @@ class CameraMenu(QFrame):
         img = self._image()
         return self._cur("ctemp", getattr(img, "color_temp", None))
 
+    def _night(self) -> bool | None:
+        """День / Ночь, как сообщила камера: True — ночь; None — не сообщила (модель без ночного режима)."""
+        return self._cur("night", getattr(self._image(), "night", None))
+
     def _power(self) -> str:
         p = getattr(self._s(), "power", "on")
         return p if isinstance(p, str) else "on"
@@ -252,6 +259,10 @@ class CameraMenu(QFrame):
             return self._s() is not None
         if key == "gain":
             return self._has("set_gain") and self._supports("gain")
+        if key == "night":
+            return self._has("set_night") and self._night() is not None
+        if key in ("wb", "ctemp") and self._night():
+            return False  # ночью картинка чёрно-белая: баланс белого камера не меняет (руководство AW-HE40) ⚠
         if key == "wb":
             return self._has("set_wb") and self._supports("wb")
         if key == "ctemp":
@@ -274,6 +285,8 @@ class CameraMenu(QFrame):
         if self._wb() == P.WB_VAR:
             keys.append("ctemp")
         keys += ["iris", "gain"]
+        if self._has("set_night") and self._night() is not None:  # камера на #D6 ответила
+            keys.append("night")
         # редкие настройки (спека 2026-11-05): затвор, Synchro — только когда выбран, уровень чёрного, резкость
         if self._has("set_shutter"):
             keys.append("shutter")
@@ -303,7 +316,9 @@ class CameraMenu(QFrame):
         g = self._gain()
         out["gain"] = "—" if g is None else ("Авто" if g == P.GAIN_AUTO else f"Ручной  {P.gain_db(g)} dB")
         wb = self._wb()
-        out["wb"] = "—" if wb is None else P.WB_MODES.get(wb, "?")
+        night = self._night()
+        out["night"] = "—" if night is None else ("Ночь" if night else "День")
+        out["wb"] = "—" if wb is None or night else P.WB_MODES.get(wb, "?")
         ct = self._ctemp()
         out["ctemp"] = "—" if ct is None else f"≈{P.color_temp_kelvin(ct)} K  ◀ ▶"
         sh, sy, pd, dt = (self._val(k) for k in ("shutter", "synchro", "pedestal", "detail"))
@@ -339,7 +354,8 @@ class CameraMenu(QFrame):
             self._cursor = above[-1] if above else next((k for k in keys if self._enabled(k)), keys[0])
         vals = self.values()
         titles = {"scene": "Сцена ⚠", "standby": "Выключить камеру", "power": "Включить камеру", "focus": "Фокус", "wb": "Баланс белого", "ctemp": "   Цвет. температура",
-                  "iris": "Ирис", "gain": "Gain", "shutter": "Затвор", "synchro": "   Частота Synchro",
+                  "iris": "Ирис", "gain": "Gain", "night": "День / Ночь", "shutter": "Затвор",
+                  "synchro": "   Частота Synchro",
                   "pedestal": "Уровень чёрного", "detail": "Резкость", "osd": "Меню Panasonic на камере"}
         self.title_label.setText(TITLE_OSD if self.osd_mode else TITLE_QUICK)
         self.keys_label.setText(KEYS_OSD if self.osd_mode else KEYS_QUICK)
@@ -375,7 +391,8 @@ class CameraMenu(QFrame):
             lab.setVisible(n > 0 and not self.osd_mode)
         refused = not self.osd_mode and self._cursor not in ("focus", "iris", "osd") and self._refused()
         self._set_hint_color(C.LOST if refused else C.TEXT_DIM)
-        self.hint.setText(OSD_HINT if self.osd_mode else REFUSED_HINT if refused else WHY.get(self._cursor, ""))
+        why = NIGHT_ON_HINT if self._cursor == "night" and self._night() else WHY.get(self._cursor, "")
+        self.hint.setText(OSD_HINT if self.osd_mode else REFUSED_HINT if refused else why)
         # перенос строк: высоту считаем по ширине меню, иначе пояснение обрезается снизу
         m = self.layout().contentsMargins()
         self.hint.setFixedHeight(0 if self.osd_mode else self.hint.heightForWidth(WIDTH - m.left() - m.right()))
@@ -466,6 +483,9 @@ class CameraMenu(QFrame):
         if k == "scene":
             self._scene_step(d)
             return
+        if k == "night":
+            self._night_toggle()
+            return
         self._light(k)
         if k == "focus":
             if not self._controls.af_check.isChecked():
@@ -511,6 +531,8 @@ class CameraMenu(QFrame):
                 self._rare_step(k, +1)
             elif k == "scene":
                 self._scene_step(+1)
+            elif k == "night":
+                self._night_toggle()
             elif k not in ("ctemp", "synchro", "pedestal"):
                 self._toggle(k)
         self._render()
@@ -595,6 +617,21 @@ class CameraMenu(QFrame):
                 return
         self._remember("scene", new)
         self._s().set_scene(new)
+
+    def _night_toggle(self) -> None:
+        """День ⇄ Ночь. У камеры в эфире — сначала спросить: картинка меняется резко, зрители увидят."""
+        cur = self._night()
+        if cur is None:
+            return
+        if self.on_air():
+            from PySide6.QtWidgets import QMessageBox
+
+            q = ("Камера сейчас в эфире (PGM). Картинка сменится с цветной на чёрно-белую (или обратно) —"
+                 " зрители это увидят.\n\nПереключить?")
+            if QMessageBox.question(self.window(), "День / Ночь", q) != QMessageBox.Yes:
+                return
+        self._remember("night", not cur)
+        self._s().set_night(not cur)
 
     def _leave_osd(self) -> None:
         if self.osd_mode:

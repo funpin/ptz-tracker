@@ -148,3 +148,52 @@ def test_mjpeg_2_url_has_framerate_and_label():
     assert "resolution=1280x720" in stream_url("h", "mjpeg_2")
     assert all("framerate=" in u for u in stream_urls("h", "mjpeg_2", None, None, None))
     assert STREAM_CHOICES["mjpeg_2"] == "MJPEG (2) · 1280×720, 12 к/с"
+
+
+def _wait(cond, t=5.0):
+    end = time.monotonic() + t
+    while time.monotonic() < end and not cond():
+        time.sleep(0.01)
+    return cond()
+
+
+def test_tap_gets_packets_while_preview_decodes(tmp_path):
+    """Камера отдаёт H.264 одному получателю (клуб, 2026-11-10): запись берёт пакеты у просмотра."""
+    f = tmp_path / "клип.mp4"
+    _make_mp4(f)
+    src = RtspSource(str(f))
+    tap = src.tap()
+    src.start()
+    try:
+        got = []
+        assert _wait(lambda: (got.append(tap.get(0.05)) or True) and any(g and g[0] == 2 for g in got))
+        first = [g for g in got if g and g[0] == 1]
+        # все пакеты первого прохода файла (50 кадров), кроме первого: его съедает открытие потока (fflags=nobuffer)
+        assert len(first) == 49 and [p.dts for _, p, _ in first] == sorted(p.dts for _, p, _ in first)
+        assert all(p.size > 0 for _, p, _ in first)
+        assert src.latest() is not None  # просмотр при этом декодирует как раньше
+    finally:
+        src.untap(tap)
+        src.stop()
+
+
+def test_tap_packets_of_closed_connection_cannot_start_a_file(tmp_path):
+    """После закрытия подключения его поток трогать нельзя (PyAV: «Container is not open»)."""
+    f = tmp_path / "клип.mp4"
+    _make_mp4(f, seconds=1)
+    src = RtspSource(str(f))
+    tap = src.tap()
+    src.start()
+    try:
+        assert _wait(lambda: tap.retired >= 1)  # первый проход файла закрыт
+        with tap.lock:
+            assert not tap.alive(1) and tap.alive(tap.retired + 1)
+    finally:
+        src.untap(tap)
+        src.stop()
+
+
+def test_shares_h264_only_for_a_settled_rtsp_address():
+    assert RtspSource("rtsp://10.0.0.5/MediaInput/h264/stream_1").shares_h264
+    assert not RtspSource("http://10.0.0.5/cgi-bin/mjpeg?resolution=640x360").shares_h264
+    assert not RtspSource(["rtsp://10.0.0.5/a", "http://10.0.0.5/b"]).shares_h264  # «Авто»: адрес ещё не найден

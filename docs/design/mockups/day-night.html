@@ -1,0 +1,117 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>День / Ночь</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A;--lost:#F0A020;--pgm:#E8202A}
+*{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:16px 18px 40px;font-size:13px}
+h1{font-size:18px;margin:0 0 4px}.sub{color:var(--dim);font-size:12.5px;margin:0 0 14px;line-height:1.45;max-width:1150px}.sub b{color:var(--white)}
+.bar{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin-bottom:12px;color:var(--faint);font-size:12px}
+.bar .grp{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.bar span.b{padding:6px 12px;border-radius:7px;border:1px solid var(--line);color:var(--dim);cursor:pointer;font-size:13px}
+.bar span.b.on{background:var(--white);color:var(--bg);font-weight:600;border-color:var(--white)}
+.row{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.cell{width:720px;max-width:100%;background:var(--surface);border:1px solid var(--white);border-radius:10px;overflow:hidden}
+.cell.air{border-color:var(--pgm)}
+.ch{display:flex;align-items:center;gap:8px;padding:7px 10px;position:relative}
+.num{width:18px;height:18px;border-radius:5px;background:var(--white);color:var(--bg);font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center}
+.tag{font-size:11px;font-weight:700;padding:2px 6px;border-radius:5px;border:1px solid var(--line);color:var(--faint)}
+.tag.pgm{background:var(--pgm);border-color:var(--pgm);color:#fff}
+.tag.night{border-color:var(--grey);color:var(--white)}
+.v{position:relative;aspect-ratio:16/9;background:linear-gradient(180deg,#56606a,#4b545d 60%,#3a4047);overflow:hidden}
+.scene{position:absolute;inset:0;transition:filter .25s}
+.scene.night{filter:grayscale(1) brightness(1.25) contrast(1.1)}
+.pr{position:absolute}
+.menu{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:380px;max-width:calc(100% - 16px);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px}
+.mh{display:flex;padding:2px 12px;color:var(--dim);font-size:12px;font-weight:600}
+.keys{display:flex;gap:10px;padding:2px 12px 4px;color:var(--dim);font-size:11.5px;align-items:center;flex-wrap:wrap}
+.k{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:20px;padding:0 6px;border-radius:5px;background:var(--raised);border:1px solid var(--line);color:var(--white);font-size:10.5px;font-weight:600;margin-right:4px}
+.mr{height:26px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;border:1px solid transparent;border-radius:8px;margin-top:2px;position:relative}
+.mr b{font-weight:700}
+.mr.sel{background:rgba(245,245,242,.06);border-color:var(--white)}
+.mr.off{color:var(--faint)}.mr.half{opacity:.5}
+.mr.new{cursor:pointer}
+.more{text-align:center;color:var(--faint);font-size:11px;margin-top:2px}
+.hint{color:var(--dim);font-size:12px;padding:6px 12px 2px;line-height:1.4;min-height:54px}
+.n{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--lime);color:#111;font:700 11px Inter,sans-serif;align-items:center;justify-content:center;flex:none}
+.n.pin{position:absolute;z-index:3}
+.notes{font-size:12.5px;color:var(--dim);line-height:1.45;max-width:440px;flex:1;min-width:280px}
+.notes ol{padding:0;margin:0;list-style:none}.notes li{margin-bottom:11px;display:flex;gap:8px}.notes b{color:var(--white)}
+.dlg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:330px;max-width:calc(100% - 16px);background:var(--raised);border:1px solid var(--line);border-radius:10px;padding:14px 16px;z-index:4;box-shadow:0 10px 40px rgba(0,0,0,.5);display:none}
+.dlg h4{margin:0 0 8px;font-size:14px}.dlg p{margin:0 0 12px;color:var(--dim);line-height:1.45}
+.dlg .btns{display:flex;justify-content:flex-end;gap:8px}.dlg .btns span{height:28px;padding:0 14px;border-radius:8px;border:1px solid var(--line);display:flex;align-items:center;cursor:pointer}
+.dlg .btns span.yes{background:var(--white);color:var(--bg);font-weight:600;border-color:var(--white)}
+.fact{margin-top:16px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;color:var(--dim);line-height:1.45;max-width:720px}.fact b{color:var(--white)}
+</style></head><body>
+<h1>Быстрые настройки камеры: переключатель «День / Ночь»</h1>
+<p class="sub">В меню поверх видео (клавиша <b>M</b>, кнопка Options на геймпаде) появляется одна новая строка. Нажмите на неё в макете — увидите оба состояния. Сверху можно переключить, как выглядит камера в эфире и нужна ли метка «НОЧЬ» в шапке клетки.</p>
+<div class="bar">
+ <div class="grp">Камера: <span class="b on" data-air="0">не в эфире</span><span class="b" data-air="1">в эфире (PGM)</span></div>
+ <div class="grp">Метка в шапке клетки: <span class="b" data-mark="0">А · без метки</span><span class="b on" data-mark="1">Б · метка «НОЧЬ»</span></div>
+</div>
+<div class="row">
+<div>
+<div class="cell" id="cell"><div class="ch"><span class="num">1</span><b>Club_1</b><span style="flex:1"></span>
+  <span class="tag night" id="nightTag">НОЧЬ</span><span class="n" id="n5" style="margin-left:-2px">5</span>
+  <span class="tag pgm" id="pgmTag" style="display:none">ЭФИР</span><span class="tag">ВЫКЛ</span></div>
+<div class="v">
+ <div class="scene" id="scene">
+  <div class="pr" style="left:0;top:58%;width:10%;height:42%;background:#b88445"></div>
+  <div class="pr" style="left:10%;top:40%;width:24%;height:60%;background:#5a3c26"></div>
+  <div class="pr" style="left:34%;top:60%;width:24%;height:40%;background:#4569bb"></div>
+  <div class="pr" style="left:78%;top:30%;width:6%;height:11%;border-radius:50%;background:#d9ae96"></div>
+  <div class="pr" style="left:75%;top:41%;width:12%;height:59%;border-radius:12px 12px 0 0;background:#c08d82"></div>
+ </div>
+ <div class="menu" id="menu">
+  <div class="mh">Быстрые настройки</div>
+  <div class="keys"><span><span class="k">↑↓</span>пункт</span><span><span class="k">←→</span>значение</span><span><span class="k">M</span>закрыть</span></div>
+  <div class="mr"><span>Фокус</span><b>Авто</b></div>
+  <div class="mr" id="wbRow"><span>Баланс белого</span><b id="wbVal">ATW</b><span class="n pin" id="n3" style="right:-26px;top:2px">3</span></div>
+  <div class="mr"><span>Ирис</span><b>Авто</b></div>
+  <div class="mr"><span>Gain</span><b>Авто</b></div>
+  <div class="mr sel new" id="dnRow"><span>День / Ночь</span><b id="dnVal">День</b><span class="n pin" style="left:-28px;top:2px">1</span></div>
+  <div class="mr"><span>Затвор</span><b>1/50  ◀ ▶</b></div>
+  <div class="mr half"><span>Уровень чёрного</span><b>0  ◀ ▶</b></div>
+  <div class="more">▼ ещё 4</div>
+  <div class="hint" id="hint" style="position:relative"><span class="n pin" style="left:-28px;top:6px">2</span><span id="hintText"></span></div>
+ </div>
+ <div class="dlg" id="dlg"><span class="n pin" style="left:-10px;top:-10px">4</span><h4>День / Ночь</h4>
+  <p>Камера сейчас в эфире (PGM). Картинка сменится с цветной на чёрно-белую (или обратно) — зрители это увидят.<br><br>Переключить?</p>
+  <div class="btns"><span data-dlg="no">Нет</span><span class="yes" data-dlg="yes">Да</span></div></div>
+</div></div>
+<div class="fact"><b>Что уже проверено на ваших камерах</b> (только запрос, ничего не менял): камера отвечает на вопрос о режиме. Сейчас <b>Club_1 — Ночь</b>, <b>Club_2 — День</b>. Само переключение проверим вместе, когда камера не в эфире.</div>
+</div>
+<div class="notes"><ol>
+ <li><span class="n">1</span><span><b>Новая строка «День / Ночь»</b> — пятая, сразу под Gain: видна без прокрутки. Переключается, как Фокус и Ирис: <b>←→</b>, <b>×</b> на геймпаде или щелчок мышью. Значение — «День» или «Ночь», как его сообщает сама камера (если режим сменили с пульта — строка покажет новый).</span></li>
+ <li><span class="n">2</span><span><b>Пояснение под списком</b> у выбранной строки: что делает режим. Ночь — камера видит в темноте, но картинка чёрно-белая; День — обычная цветная.</span></li>
+ <li><span class="n">3</span><span><b>В режиме «Ночь» «Баланс белого» гаснет</b>: по руководству Panasonic цвет в ночном режиме не настраивается. Это проверим на камере; если она баланс всё-таки принимает — строку оставлю активной.</span></li>
+ <li><span class="n">4</span><span><b>Камера в эфире — программа переспросит</b>, как при смене сцены: картинка меняется резко, зрители увидят. Не в эфире — переключает сразу. (Включите сверху «в эфире» и нажмите на строку.)</span></li>
+ <li><span class="n">5</span><span><b>Вопрос к вам — метка «НОЧЬ» в шапке клетки.</b> Вариант <b>Б</b>: пока камера в ночном режиме, в шапке горит метка — видно и при закрытом меню, почему картинка чёрно-белая. Вариант <b>А</b>: без метки, режим виден только в меню. Советую Б.</span></li>
+ <li><span class="n" style="background:var(--raised-hi);color:var(--white)">i</span><span>Слежение, запись и пресеты от режима не зависят и не выключаются. В симуляторе строка тоже будет: картинка виртуальной камеры станет чёрно-белой, чтобы можно было потренироваться.</span></li>
+</ol></div>
+</div>
+<script>
+const st={night:false,air:false,mark:true};
+const $=id=>document.getElementById(id);
+const HINT={false:"Ночь — камера видит в темноте, но картинка чёрно-белая. День — обычная цветная.",
+            true:"Сейчас ночной режим: картинка чёрно-белая, баланс белого камера не меняет. ←→ — вернуть День."};
+function render(){
+  $("dnVal").textContent=st.night?"Ночь":"День";
+  $("scene").classList.toggle("night",st.night);
+  $("wbRow").classList.toggle("off",st.night);
+  $("wbVal").textContent=st.night?"—":"ATW";
+  $("n3").style.display=st.night?"":"none";
+  $("hintText").textContent=HINT[st.night];
+  $("nightTag").style.display=(st.night&&st.mark)?"":"none";
+  $("n5").style.display=(st.night&&st.mark)?"":"none";
+  $("pgmTag").style.display=st.air?"":"none";
+  $("cell").classList.toggle("air",st.air);
+  document.querySelectorAll("[data-air]").forEach(b=>b.classList.toggle("on",(b.dataset.air==="1")===st.air));
+  document.querySelectorAll("[data-mark]").forEach(b=>b.classList.toggle("on",(b.dataset.mark==="1")===st.mark));
+}
+$("dnRow").onclick=()=>{ if(st.air){$("dlg").style.display="block";} else {st.night=!st.night;render();} };
+document.querySelectorAll("[data-dlg]").forEach(b=>b.onclick=()=>{ $("dlg").style.display="none"; if(b.dataset.dlg==="yes"){st.night=!st.night;render();} });
+document.querySelectorAll("[data-air]").forEach(b=>b.onclick=()=>{st.air=b.dataset.air==="1";$("dlg").style.display="none";render();});
+document.querySelectorAll("[data-mark]").forEach(b=>b.onclick=()=>{st.mark=b.dataset.mark==="1";render();});
+st.night=true;render();
+</script>
+</body></html>

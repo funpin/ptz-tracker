@@ -10,14 +10,15 @@ from dataclasses import dataclass, field
 
 from ptztracker.camera import he42
 from ptztracker.camera import protocol as P
+from ptztracker.camera.protocol import CameraError
 from ptztracker.camera.scheduler import CommandScheduler, Priority, _Item
 from ptztracker.control.calibration import hfov_at
 from ptztracker.control.camera_model import CameraDynamics, default_calibration
-from ptztracker.control.composition import COMPOSITIONS, BodyMeasure
-from ptztracker.control.effort import EffortProfile
+from ptztracker.control.composition import BodyMeasure
 from ptztracker.control.follower import output_codes
 from ptztracker.control.framing import PT_QUEUE_S, TILT_FROM_FH, FramingController, FramingInput
 from ptztracker.control.speed_adapt import SpeedAdapter
+from ptztracker.control.zones import framing
 from ptztracker.sim.ptz_model import he42_deg_s
 
 CTRL_DT = 0.04  # 25 Гц
@@ -26,6 +27,10 @@ MEAS_DT = 1 / 14  # анализ 14 к/с
 # Наибольшая очередь команд поворота, которую проверяют тесты: p95 живого пути решение → камера 121–131 мс
 # (2026-10-29). Модель регулятора ждёт половину (framing.PT_QUEUE_S) — устойчивость при ρ 0,5–1,4 держит запас.
 QUEUE_MAX = 0.13
+# Человек срезан краем кадра (видно одно плечо): голова прикидывается по рамке — настолько ниже настоящей (доли высоты
+# кадра) выходила прикидка в записи F9 2026-11-10 (0,25–0,35); замер помечен ненадёжным (BodyMeasure.confident = False)
+EDGE_FALLBACK_DY = 0.3
+SHOULDER_HALF_U = 1.33 * 9 / 16  # полуширина плеч в долях ширины кадра на единицу U (U — в долях высоты)
 
 
 @dataclass
@@ -44,6 +49,10 @@ class Trace:
     codes: list = field(default_factory=list)  # коды (pan, tilt, zoom) после такта (adapt=True)
     seen: list = field(default_factory=list)  # виден ли человек в кадре сейчас (in_frame_only)
     cam_v: list = field(default_factory=list)  # настоящая скорость поворота камеры, доли кадра/с при текущем зуме
+    applied: list = field(default_factory=list)  # коды (pan, tilt), которые камера исполняет сейчас (adapt=True)
+    meas: list = field(default_factory=list)  # замеры, как их увидел анализ: (момент съёмки, x, y, размер или None)
+    zone: tuple = (0.22, 0.18)  # полуразмеры границы зоны оператора (x, y), доли кадра
+    anchor: tuple = (0.5, 0.25)  # точка, где держать лицо
 
 
 def run(
@@ -80,22 +89,31 @@ def run(
     # команды и опросы — через настоящий планировщик (одно окно 0,13 с на поворот, зум и запросы); нужен adapt=True
     channel: bool = False,
     in_frame_only: bool = False,  # человек виден только в кадре: вышел за край — замеров нет, как у детектора
+    ctrl_dt: float = CTRL_DT,  # такт регулятора (занятая машина: 7 тактов/с вместо 25, запись F9 2026-11-09)
+    meas_jitter: float = 0.0,  # кадр приходит позже на случайные 0…столько секунд, регулятор об этом не знает
+    er2: float = 0.0,  # доля команд, на которые камера отвечает «занята» (запись F9 2026-11-10: 16 %); нужен channel=True
+    # человек наполовину за боковым краем кадра — замер есть, но ненадёжный и с головой ниже настоящей (нужен in_frame_only)
+    edge_fallback: bool = False,
+    zones: dict | None = None,  # свои зоны оператора, как в настройках камеры: {ключ крупности: запись зоны}
+    # человек встал боком или наклонился: (начало, длительность, множитель) — на это время замер размера умножается
+    # на множитель, а нос в замере ниже на 0,5·u·(1 − множитель) (живой прогон 2026-11-10: 0,235 → 0,035 за 2,5 с)
+    u_drops: tuple[tuple[float, float, float], ...] = (),
 ) -> Trace:
     calib = default_calibration()
     if measured_tilt:
         calib.tilt = [(63, tilt_factor), (75, tilt_factor)]
     adapter = SpeedAdapter(calib) if adapt else None
     rng = random.Random(seed)
+    rng_busy = random.Random(seed + 7919)  # отказы камеры — своим генератором: шум замеров от них не меняется
     codes = (50, 50, 50)
     # #APC: положение камеры в градусах (единицы — he42.APC_DEG_PER_UNIT); мировые единицы — доли кадра
     # при зуме старта (pan) и доли его высоты (tilt)
     apc_per_fw = hfov_at(zoom_pos) / he42.APC_DEG_PER_UNIT
     cam_dyn = (calib.dead_time if cam_dead_time is None else cam_dead_time, calib.tau if cam_tau is None else cam_tau)
     cam_x, cam_y, cam_z = CameraDynamics(*cam_dyn), CameraDynamics(*cam_dyn), CameraDynamics(*cam_dyn)
-    ctrl = FramingController(
-        COMPOSITIONS[comp], EffortProfile.at(effort), calib, latency if ctrl_latency is None else ctrl_latency
-    )
-    tr = Trace()
+    composition, profile = framing(comp, effort, zones)
+    ctrl = FramingController(composition, profile, calib, latency if ctrl_latency is None else ctrl_latency)
+    tr = Trace(zone=(profile.soft_x, profile.soft_y), anchor=composition.anchor)
     t, next_meas = 0.0, 0.0
     pending = []  # (когда придёт, t_shot, measure)
     queued = []  # (когда дойдёт до камеры, pan, tilt)
@@ -105,6 +123,7 @@ def run(
     apc, apc_t, next_apc = None, None, 0.0
     gz_fed, apc_fed = None, None  # какие ответы уже отданы подстройке скорости
     clock = [0.0]
+    applied = [50, 50]
 
     def real_gz(now):
         return round(zoom_pos + cam_z.position(now) / math.log(he42.ZOOM_RATIO) * (P.LENS_MAX - P.LENS_MIN))
@@ -121,6 +140,8 @@ def run(
 
     def apply_pt(now, qp, qt):
         k = math.exp(cam_z.position(now))
+        if adapter is not None:
+            applied[:] = [qp, qt]
         if channel:  # как Follower по on_sent: модель поворота — по ушедшим командам
             ctrl.pt_sent(now, qp, qt, gz_pos)
         if adapter is not None and cam_he42:  # °/с камеры → мировые единицы (доли кадра на зуме старта)
@@ -146,6 +167,8 @@ def run(
 
     def send(cmd):
         now = clock[0]
+        if er2 and rng_busy.random() < er2:
+            raise CameraError("er2", "eR2:" + cmd.lstrip("#"))
         if m := re.fullmatch(r"#PTS(\d\d)(\d\d)", cmd):
             apply_pt(now, int(m[1]), int(m[2]))
         elif m := re.fullmatch(r"#Z(\d\d)", cmd):
@@ -169,7 +192,20 @@ def run(
                 ix = 0.5 + (world_x(t) - cam_x.position(t) - 0.5) * zx + rng.gauss(0.0, noise)
                 iy = 0.5 + (world_y(t) + cam_y.position(t) - 0.5) * zx + rng.gauss(0.0, noise)
                 seen = not in_frame_only or (0.0 <= ix <= 1.0 and 0.0 <= iy <= 1.0)
-                pending.append((t + latency, BodyMeasure((ix, iy), world_u(t) * zx * (1 + rng.gauss(0.0, 3 * noise)), True) if seen else None))
+                late = latency + rng.uniform(0.0, meas_jitter)
+                shrink = next((k for t0, length, k in u_drops if t0 <= t < t0 + length), 1.0)
+                m = None
+                if seen:  # шум размера берётся, только когда человек виден: прежние прогоны повторяются число в число
+                    u_seen = world_u(t) * zx * (1 + rng.gauss(0.0, 3 * noise)) * shrink
+                    m = BodyMeasure((ix, iy + 0.5 * world_u(t) * zx * (1 - shrink)), u_seen, True)
+                half = SHOULDER_HALF_U * world_u(t) * zx
+                if edge_fallback and in_frame_only and 0.0 <= iy <= 1.0 and -half < ix < 1 + half \
+                        and not half <= ix <= 1 - half:
+                    # одно плечо за краем: рамка — по видимой части тела, голова — прикидкой
+                    m = BodyMeasure(((max(0.0, ix - half) + min(1.0, ix + half)) / 2, iy + EDGE_FALLBACK_DY), None, False)
+                if m is not None:
+                    tr.meas.append((t, m.nose[0], m.nose[1], m.u))
+                pending.append((t + late, m))
             else:
                 pending.append((t + latency, None))
         measure, t_cap = None, None
@@ -197,7 +233,7 @@ def run(
         if channel:
             sched.submit("pt", P.pan_tilt_speed(codes[0], codes[1]), Priority.TRACKING)
             sched.submit("zoom", P.zoom_speed(codes[2]), Priority.TRACKING_ZOOM)
-            for i in range(round(CTRL_DT / CHANNEL_SUBSTEP)):
+            for i in range(round(ctrl_dt / CHANNEL_SUBSTEP)):
                 clock[0] = t + i * CHANNEL_SUBSTEP
                 sched.pump()
         elif adapter is not None:
@@ -228,7 +264,8 @@ def run(
         tr.model_zoom.append(ctrl.zdyn.position(t))
         tr.scale.append((calib.pan_scale, calib.tilt_scale, calib.zoom_scale))
         tr.codes.append(codes)
-        t = round(t + CTRL_DT, 6)
+        tr.applied.append(tuple(applied))
+        t = round(t + ctrl_dt, 6)
     return tr
 
 

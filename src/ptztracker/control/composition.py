@@ -11,11 +11,24 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ptztracker.vision.types import KP_L_EAR, KP_L_SHOULDER, KP_NOSE, KP_R_EAR, KP_R_SHOULDER
+from ptztracker.vision.types import (
+    KP_L_EAR,
+    KP_L_HIP,
+    KP_L_SHOULDER,
+    KP_NOSE,
+    KP_R_EAR,
+    KP_R_HIP,
+    KP_R_SHOULDER,
+)
 
 KP_MIN_CONF = 0.3
 U_PER_SHOULDER = 0.375  # у взрослого «нос→плечи» ≈ 0.375 ширины плеч (15 см / 40 см)
 EAR_U_RANGE = (1.0, 1.6)  # «уши→плечи» в долях U по ширине плеч; не меньше 1 — как у носа (max с шириной плеч)
+# Корпус «плечи → бёдра» — 3,3 U (плечи 1,0, бёдра 4,3). Он почти не сжимается, когда человек встаёт боком или
+# наклоняет голову (живой прогон 2026-11-10: «нос → плечи» и ширина плеч падали в 5–6 раз, зум наезжал). Мерка не
+# опускается ниже TORSO_FLOOR корпуса; выше прежней корпус её не поднимает — у людей разные пропорции, а размер
+# кадра у всех должен остаться прежним.
+TORSO_U, TORSO_FLOOR = 3.3, 0.85
 
 
 @dataclass(frozen=True)
@@ -66,6 +79,10 @@ def measure_body(
         if has_nose and sy - nose[1] / h > 0:
             # голову наклонил — «нос→плечи» сжимается, а плечи нет: берём большее
             u = max(sy - nose[1] / h, sw_u)
+            lh, rh = keypoints[KP_L_HIP], keypoints[KP_R_HIP]
+            # встал боком — сжались и плечи: страхует корпус. Бёдра за нижним краем кадра — догадка нейросети: не берём
+            if lh[2] >= KP_MIN_CONF and rh[2] >= KP_MIN_CONF and max(lh[1], rh[1]) <= h:
+                u = max(u, TORSO_FLOOR * ((lh[1] + rh[1]) / 2 / h - sy) / TORSO_U)
         if u is None and last_u is None:
             # Спиной с самого начала: носа не было и запомнить нечего. Опорная точка должна быть та же
             # («плечи минус U»), иначе кадр прыгнет, когда нос появится: U — по ушам, а без них — по ширине плеч.

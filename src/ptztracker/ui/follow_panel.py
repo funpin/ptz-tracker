@@ -65,7 +65,7 @@ class FollowPanel(QWidget):
         self.follow_btn.actionClicked.connect(self.calibrateRequested)
         self.status_label = HintBar()  # подсказка управления поверх видео (окно ставит её внизу слева)
         self._view: TrackingView | None = None
-        self._ctx = dict(has_target=False, target_id=None, pad=False, zone_hover=False)
+        self._ctx = dict(has_target=False, target_id=None, pad=False, zone_hover=False, zone_text="")
 
         self.comp_group = QButtonGroup(self)
         self.comp_group.setExclusive(True)
@@ -123,9 +123,10 @@ class FollowPanel(QWidget):
         self._view = v
         self._show_hint_bar()
 
-    def set_hint_context(self, has_target: bool, target_id: int | None, pad: bool, zone_hover: bool) -> None:
-        """Что показать в подсказке: есть ли цель, управляет ли камерой геймпад, навели ли на зону."""
-        ctx = dict(has_target=has_target, target_id=target_id, pad=pad, zone_hover=zone_hover)
+    def set_hint_context(self, has_target: bool, target_id: int | None, pad: bool, zone_hover: bool,
+                         zone_text: str = "") -> None:
+        """Что показать в подсказке: есть ли цель, управляет ли камерой геймпад, навели ли на зону (и что она значит)."""
+        ctx = dict(has_target=has_target, target_id=target_id, pad=pad, zone_hover=zone_hover, zone_text=zone_text)
         if ctx != self._ctx:
             self._ctx = ctx
             self._show_hint_bar()

@@ -10,14 +10,14 @@ from ptztracker.sim import person_motion as pm
 DT = 1 / 14
 
 
-def feed(fn, T, noise=0.004, k=1.0, seed=0, est=None):
+def feed(fn, T, noise=0.004, k=1.0, seed=0, est=None, dt=DT, zone=1.0):
     est = est or PersonEstimator()
     rng = random.Random(seed)
     rows = []
     n = 0
-    while n * DT < T:
-        t = n * DT
-        est.update(t, fn(t) + rng.gauss(0.0, noise) / k, k)
+    while n * dt < T:
+        t = n * dt
+        est.update(t, fn(t) + rng.gauss(0.0, noise) / k, k, zone)
         rows.append((t, est.walk, est.center, est.vel, est.pos, est.sway))
         n += 1
     return rows
@@ -155,3 +155,80 @@ def test_thresholds_are_in_frame_units():
     assert sum(1 for w in late if w > 0.3) / len(late) <= 0.05
     walk = feed(lambda t: 0.5 + pm.walk_position(t, 3, 8, 0.31 / 4), 8, k=4.0)
     assert any(t <= 3.9 and w > 0.8 for t, w, *_ in walk)
+
+
+# --- этап 2 (2026-11-11): поток MJPEG (1) даёт 25 замеров в секунду — прежние окна «в замерах» стали слишком короткими
+
+
+def test_slow_walk_with_step_sway_stays_walking_at_25_fps():
+    # шаг 0,19 кадра/с с качанием корпуса: человек идёт дальше, а не разворачивается — вес «идёт» не падает,
+    # размах не «выучивается» (было: вес падал до нуля каждые 2 с, размах рос до 0,13, камера шла рывками)
+    for seed in range(4):
+        rows = feed(walking(0.19, t1=12.0), 12, seed=seed, dt=1 / 25)
+        mid = [w for t, w, *_ in rows if 5.0 <= t <= 11.0]
+        assert sum(1 for w in mid if w > 0.5) / len(mid) >= 0.95, seed
+        assert max(sway for t, _, _, _, _, sway in rows if t >= 5.0) < 0.06, seed
+
+
+def test_velocity_is_not_noisy_at_25_fps():
+    # ровный шаг без качания: при 25 к/с три замера — 0,08 с, шум точек 0,004 давал в скорости ±0,1 кадра/с
+    rows = feed(lambda t: 0.5 + pm.walk_position(t, 3.0, 12.0, 0.31), 12, dt=1 / 25)
+    vs = [r[3] for r in rows if 5.0 <= r[0] <= 11.0]
+    mean = sum(vs) / len(vs)
+    assert abs(mean - 0.31) <= 0.02
+    assert (sum((v - mean) ** 2 for v in vs) / len(vs)) ** 0.5 <= 0.035
+
+
+def test_clear_deceleration_is_seen_without_waiting_for_long_window():
+    # быстрый шаг 0,6 кадра/с, остановка за 0,5 с (с 7,5 до 8,0): к концу торможения оценка скорости уже мала
+    # (в среднем по замерам на 7,9 и 8,0 с — не больше 0,155: замер 0,126; длинное окно с долей короткого давало 0,185)
+    late = []
+    for seed in range(8):
+        rows = feed(lambda t: 0.5 + pm.walk_position(t, 3.0, 8.0, 0.6), 9, seed=seed, dt=1 / 25)
+        late += [next(r[3] for r in rows if r[0] >= at) for at in (7.9, 8.0)]
+    assert sum(late) / len(late) <= 0.155, late
+
+
+def test_calm_stander_is_recognised_walking_before_he_is_far():
+    # стоял спокойно и пошёл 0,35 кадра/с: вес «идёт» поднимается, пока он не дальше 0,12 кадра от места
+    # (было 0,14 — на 0,2 с позже: к ответу камеры человек выходил за границу обычной зоны)
+    for seed in range(4):
+        fn = walking(0.35, t0=3.0, t1=8.0)
+        rows = feed(lambda t, fn=fn: fn(t) + pm.sway(t, 0.01) * (t < 3), 6, seed=seed, dt=1 / 25)
+        t_seen = next(t for t, w, *_ in rows if t > 3.0 and w > 0.5)
+        assert fn(t_seen) - 0.5 <= 0.12, (seed, t_seen, fn(t_seen) - 0.5)
+
+
+def test_prediction_is_not_used_for_known_swayer():
+    # кто заметно шатается, так же быстро идёт обратно: прогноз «уйдёт» для него не действует (порог — по положению)
+    rows = feed(lambda t: 0.5 + pm.sway(t, 0.2), 40, dt=1 / 25)
+    late = [r[1] for r in rows if r[0] > 8]
+    assert sum(1 for w in late if w > 0.3) / len(late) <= 0.05
+
+
+# --- этап 2: пороги «ушёл от места» — в долях зоны оператора ---
+
+
+def test_tight_zone_recognises_walking_earlier_and_loose_later():
+    # тот, кто заметно переминался (±0,08) и пошёл 0,2 кадра/с: в плотной зоне (×0,5) «идёт» замечается раньше и
+    # ближе к месту, в свободной (×1,8) — позже; в обычной — как раньше
+    fn = lambda t: 0.5 + pm.sway(t, 0.08) * (t < 8) + pm.walk_position(t, 8.0, 16.0, 0.2)  # noqa: E731
+    seen = {}
+    for zone in (0.5, 1.0, 1.8):
+        rows = feed(fn, 16, zone=zone, dt=1 / 25)
+        seen[zone] = next(t for t, w, *_ in rows if t > 8.0 and w > 0.5)
+    assert seen[0.5] + 0.1 <= seen[1.0] <= seen[1.8] - 0.15, seen
+    usual = next(t for t, w, *_ in feed(fn, 16, dt=1 / 25) if t > 8.0 and w > 0.5)
+    assert seen[1.0] == usual
+
+
+def test_tight_zone_follows_sway_that_loose_zone_ignores():
+    # шатание ±0,20: в плотной зоне (±0,11) это уход от места — на размахах вес «идёт» поднимается; в свободной
+    # (±0,40) и в обычной — нет. Удержать такого человека в плотной зоне камера всё равно не может: при её отклике
+    # 0,6–0,8 с ехать за шатанием с периодом 3 с хуже, чем стоять у середины (стенд 2026-11-11) — об этом плашка зоны.
+    share = {}
+    for zone in (0.5, 1.0, 1.8):
+        rows = feed(lambda t: 0.5 + pm.sway(t, 0.2), 40, zone=zone, dt=1 / 25)
+        late = [r[1] for r in rows if r[0] > 8]
+        share[zone] = sum(1 for w in late if w > 0.5) / len(late)
+    assert share[0.5] >= 0.1 and share[1.0] <= 0.02 and share[1.8] <= 0.02, share

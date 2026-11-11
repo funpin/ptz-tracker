@@ -185,7 +185,10 @@ def _effort(d, fallback: EffortProfile) -> EffortProfile:
     if not isinstance(d, dict):
         return fallback
     try:
-        return EffortProfile(**{f.name: float(d[f.name]) for f in fields(EffortProfile)})
+        # записи до этапа 2 не знают размера зоны и порогов сторожа — у них они по умолчанию
+        new = ("zone_w", "zone_h", "watch_soft_x", "watch_soft_y", "watch_dead_x", "watch_dead_y")
+        need = [f.name for f in fields(EffortProfile) if f.name not in new]
+        return EffortProfile(**{n: float(d[n]) for n in need}, **{n: float(d[n]) for n in new if n in d})
     except (KeyError, TypeError, ValueError):
         return fallback
 
@@ -257,6 +260,8 @@ def replay_controller(
     on = False
     last_zoom: int | None = None  # положение зума последнего такта: код поворота → скорость
     implicit_t: float | None = None  # слежение «включилось» по такту, а событие follow on ещё не встретилось
+    # Метка, которую оператор передвинул (событие follow без "on"): в тактах записей до 2026-11-10 её нет
+    moved: tuple[str, list] | None = None
 
     def start(t: float, latency: float) -> None:
         nonlocal codes, on
@@ -285,7 +290,9 @@ def replay_controller(
     for i, (t, e) in enumerate(events):
         kind = e.get("kind")
         try:
-            if kind == "follow" and "on" in e:  # без "on" — смена настроек: они есть в каждом такте
+            if kind == "follow" and "on" not in e and e.get("anchor") is not None:
+                moved = (e.get("composition"), e["anchor"])  # композиция и характер есть в каждом такте, метка — нет
+            elif kind == "follow" and "on" in e:
                 if e["on"] and on and implicit_t is not None and t - implicit_t <= LATE_FOLLOW_ON_S:
                     pass  # тот же запуск: регулятор уже сброшен перед первым тактом
                 elif e["on"]:
@@ -311,7 +318,10 @@ def replay_controller(
                     implicit_t = t
                     if len(bounds) == 1 and first is None:
                         res.partial_start = True  # запись началась посреди слежения
-                ctrl.set_composition(composition or _composition(e.get("composition"), ctrl.composition, e.get("anchor")))
+                anchor = e.get("anchor")
+                if anchor is None and moved is not None and moved[0] == e.get("composition"):
+                    anchor = moved[1]
+                ctrl.set_composition(composition or _composition(e.get("composition"), ctrl.composition, anchor))
                 ctrl.set_effort(effort or _effort(e.get("effort"), ctrl.effort))
                 if recorded_calib:
                     calib.set_speed_scale(e.get("speed_scale"))

@@ -75,6 +75,7 @@ class ImageState:
     detail: int | None = None  # резкость 0 выкл, 1 низкая, 2 высокая
     preset_speed: int | None = None  # скорость переезда в пресет 1…30
     scene: int | None = None  # сцена: 1 Full Auto, 2–4 Manual 1–3 (protocol.SCENES) ⚠
+    night: bool | None = None  # День / Ночь: True — ночной режим (чёрно-белая картинка)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -180,7 +181,10 @@ class CameraSession:
             from ptztracker.sim.ptz_model import SimPtz
             from ptztracker.sim.scene import SyntheticStage, VideoScene
 
-            self.sim = SimPtz(min_interval=self.cfg.min_interval)
+            # Программа шлёт команды ровно раз в min_interval, но приходят они неровно (потоки, занятая машина). Живые
+            # камеры за это не отказывают (838 команд поворота 2026-10-29/30 — 0 отказов), а симулятор с допуском 5 мс
+            # отвергал 16 % команд (запись F9 2026-11-10) и портил слежение сильнее настоящей камеры
+            self.sim = SimPtz(min_interval=self.cfg.min_interval, jitter_tolerance=0.5 * self.cfg.min_interval)
             self.sim.tilt_deg = SIM_START_TILT
             self._server = SimHttpServer(self.sim)
             self._server.start()
@@ -284,7 +288,8 @@ class CameraSession:
         """Начать запись видео в файл. Только читает камеру: команд не шлёт, слежение и флажки не трогает."""
         if self.video and self.video.is_running:
             return
-        source = {"frames": self.frames} if self.sim is not None else {"url": self._video_url}
+        source = ({"frames": self.frames} if self.sim is not None
+                  else {"url": self._video_url, "shared": self._video_preview})
         self.video = VideoRecorder(self.cfg.name, folder, mode, split_bytes=split_bytes, **source)
         self.video.start()
 
@@ -297,6 +302,12 @@ class CameraSession:
 
     def video_note(self) -> str | None:
         return self.video.take_note() if self.video else None
+
+    def _video_preview(self) -> RtspSource | None:
+        """Просмотр, если он уже принимает H.264 камеры по RTSP: второму клиенту камера такой поток не отдаёт
+        (AW-HE40, клуб, 2026-11-10), и запись берёт пакеты у него. Иначе None — запись подключается сама."""
+        f = self.frames
+        return f if isinstance(f, RtspSource) and f.shares_h264 else None
 
     def _video_url(self) -> str:
         """Вызывается из потока записи: хранилище паролей может отвечать долго."""
@@ -403,7 +414,7 @@ class CameraSession:
                 log.warning("Калибровка камеры %s не читается (%s) — беру средние значения", self.cfg.name, e)
         scale = self.cfg.speed_scale  # поправка, найденная слежением в прошлые разы
         if calib is None:
-            calib = default_calibration(safety=UNCALIBRATED_SAFETY)
+            calib = default_calibration(safety=UNCALIBRATED_SAFETY, model=self.model)
             if isinstance(scale, dict) and scale.get("table") != DEFAULT_TABLE_ID:
                 log.info("Поправка pan/tilt камеры %s найдена для прежней таблицы — не беру (зум оставляю)", self.cfg.name)
                 scale = {"zoom": scale["zoom"]} if "zoom" in scale else None  # зум от таблицы поворота не зависит
@@ -576,6 +587,7 @@ class CameraSession:
             ("q_gain", P.Q_GAIN), ("q_wb", P.Q_WB), ("q_ctemp", P.Q_COLOR_TEMP), ("q_iris", P.Q_IRIS),
             ("q_shutter", P.Q_SHUTTER), ("q_synchro", P.Q_SYNCHRO), ("q_pedestal", P.Q_PEDESTAL),
             ("q_detail", P.Q_DETAIL), ("q_preset_speed", P.Q_PRESET_SPEED), ("q_scene", P.Q_SCENE),
+            ("q_night", P.Q_NIGHT),
         ):
             self.scheduler.submit(key, cmd, Priority.QUERY, only_if_changed=False)
 
@@ -694,6 +706,8 @@ class CameraSession:
                 self._upd(scene=P.parse_scene(reply))
                 if str(cmd).startswith("XSF:"):
                     self.refresh_image()  # другая сцена — другие ирис, gain, баланс белого
+            elif ok and str(cmd).startswith(P.Q_NIGHT):  # и запрос #D6, и команда #D60/#D61 отвечают d6n
+                self._upd(night=P.parse_night(reply))
             elif ok and str(cmd).startswith(P.Q_PRESET_SPEED):
                 self._upd(preset_speed=P.parse_preset_speed(reply))
             elif ok and cmd == P.Q_IRIS:
@@ -823,6 +837,10 @@ class CameraSession:
         """Сцена камеры (Full Auto / Manual 1–3): выход из Full Auto — чтобы ирис, gain и баланс белого
         стали доступны."""
         self._submit("scene", P.scene(n), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
+
+    def set_night(self, on: bool) -> None:
+        """День / Ночь. Камеру не двигает и слежение не выключает; картинка меняется резко (цвет ↔ ч/б)."""
+        self._submit("night", P.night(on), only_if_changed=False, ttl=ONE_SHOT_TTL_S)
 
     def set_preset_speed(self, n: int) -> None:
         self._submit("preset_speed", P.preset_speed(n), only_if_changed=False)

@@ -523,16 +523,19 @@ def test_create_single_camera_nowhere(qtbot, tmp_path):
     w.close()
 
 
-def test_create_long_saves_moment(qtbot, tmp_path):
+def test_create_long_toggles_video_of_pads_camera(qtbot, tmp_path):
+    """Удержание Create — запись видео камеры этого геймпада (как R), а не журнал F9 (оператор, 2026-11-10)."""
     w, b = make(qtbot, tmp_path)
-    reasons = []
-    w.save_moment = lambda reason="F9": reasons.append(reason)
+    slots, moments = [], []
+    w.toggle_video = lambda slot: slots.append(slot)
+    w.save_moment = lambda reason="F9": moments.append(reason)
+    slot = w.grid.cells.index(w._pad_cell(w._first_pad()))
     b.pad = stick(buttons={"create"})
-    qtbot.waitUntil(lambda: reasons == ["геймпад"], timeout=3000)
+    qtbot.waitUntil(lambda: slots == [slot], timeout=3000)
     qtbot.waitUntil(lambda: b.of("rumble") == [RUMBLE_PRESET_STORED[0]], timeout=1000)
     b.pad = stick()
     qtbot.wait(200)
-    assert reasons == ["геймпад"] and b.of("rumble") == [RUMBLE_PRESET_STORED[0]]
+    assert slots == [slot] and moments == []  # одно переключение за удержание; журнал не сохраняется
     w.close()
 
 

@@ -26,8 +26,14 @@ LIGHT_MAX_RATE = 6_000_000
 LIGHT_FPS = 25
 OPEN_TIMEOUT_S = 5.0
 COPY_BAD_MAX = 25  # пакетов подряд не прошло запись — поток считается непригодным для копии
+COPY_RETRY_S = 10.0  # через столько после перехода на лёгкий файл пробуем копию заново
+COPY_RETRY_MAX_S = 300.0
+COPY_STABLE_S = 300.0  # копия после возврата продержалась меньше — следующая попытка вдвое позже
 FOLDER_CHECK_S = 1.0
 RATE_WINDOW_S = 60.0
+SHARED_POLL_S = 0.2  # столько ждём пакет от просмотра за раз
+SHARED_LOSS_S = 2.0  # пакетов от просмотра нет дольше — «нет сигнала»
+SHARED_KEY_WAIT_S = 3.0  # файл начинаем с ключевого кадра; не дождались — с любого
 _MODES = ("camera", "light")
 
 
@@ -58,9 +64,14 @@ def default_open_input(url: str):
 class VideoRecorder:
     def __init__(self, camera_name: str, folder: Path, mode: str = "camera", *,
                  url: Callable[[], str] | None = None, frames: FrameSource | None = None,
-                 open_input=default_open_input, split_bytes: int | None = None):
+                 open_input=default_open_input, split_bytes: int | None = None,
+                 shared: Callable[[], object | None] | None = None):
+        """shared() — источник просмотра (video.rtsp.RtspSource), если он уже принимает H.264 этой камеры по RTSP,
+        иначе None. Камера отдаёт такой поток одному клиенту (AW-HE40, клуб, 2026-11-10: второму — 5XX, и REC
+        показывал «нет сигнала» при выбранном H.264), поэтому запись берёт пакеты у просмотра."""
         if (url is None) == (frames is None):
             raise ValueError("нужен ровно один источник: url или frames")
+        self._shared = shared
         self.camera_name, self.folder, self.split_bytes = camera_name, Path(folder), split_bytes
         self._mode = mode if mode in _MODES else "camera"
         self._url, self._frames, self._open_input = url, frames, open_input
@@ -78,6 +89,10 @@ class VideoRecorder:
         self._next_check = 0.0
         self._announced_loss = False
         self._copy_bad = 0
+        self._retry_at: float | None = None  # когда снова пробовать копию; None — лёгкий файл выбран оператором
+        self._retry_s = COPY_RETRY_S
+        self._tried_at: float | None = None  # последняя попытка вернуться к копии
+        self._wait_key = False  # лёгкий файл после копии: декодер начинает с ключевого кадра
 
     @property
     def is_running(self) -> bool:
@@ -195,9 +210,19 @@ class VideoRecorder:
 
     # --- камера по RTSP ---
 
+    def _preview(self):
+        return self._shared() if self._shared is not None else None
+
     def _record_stream(self) -> None:
         tries = 0
         while not self._stop.is_set():
+            src = self._preview()
+            if src is not None:
+                try:
+                    self._follow_preview(src)
+                finally:
+                    self._close_writer()
+                continue  # просмотр перестал делиться потоком — дальше своим подключением
             url = self._url()
             try:
                 container = self._open_input(url)
@@ -218,6 +243,66 @@ class VideoRecorder:
             self._lost_signal()
             self._stop.wait(RETRY_DELAYS_S[min(tries, len(RETRY_DELAYS_S) - 1)])
             tries += 1
+
+    # --- просмотр уже держит H.264 камеры: пакеты берём у него ---
+
+    def _follow_preview(self, src) -> None:
+        """Писать, пока просмотр `src` принимает H.264. Копия — из его пакетов, лёгкий файл — из его кадров."""
+        tap = src.tap()
+        try:
+            epoch, last, wait_key_until, last_seq = None, time.monotonic(), None, -1
+            next_slot: list[float | None] = [None]
+            while not self._stop.is_set() and self._preview() is src:
+                self._check_folder()
+                now = time.monotonic()
+                if now - last > SHARED_LOSS_S:
+                    self._lost_signal()
+                if self._mode != "camera":
+                    f = src.latest()
+                    fresh = f is not None and f.seq != last_seq
+                    if fresh:
+                        last, last_seq = now, f.seq
+                        self._got_signal()
+                        self._write_frame_paced(f, next_slot)
+                        self._publish()
+                    item = tap.get(0.0 if fresh else 0.005)  # очередь пакетов не копим; заодно пауза
+                    if item is not None and self._copy_due(item[1], now):
+                        with tap.lock:
+                            if tap.alive(item[0]) and self._copy_again(item[1], item[2]):
+                                epoch = item[0]
+                        self._publish()
+                    continue
+                item = tap.get(SHARED_POLL_S)
+                if item is None:
+                    continue
+                ep, packet, stream = item
+                if ep != epoch:  # просмотр переподключился: у нового подключения свой поток — новый файл
+                    self._close_writer()
+                    epoch, wait_key_until = ep, None
+                with tap.lock:  # источник не закроет подключение, пока по его потоку создаётся файл
+                    if self._writer is None:
+                        if not tap.alive(ep):
+                            continue
+                        wait_key_until = wait_key_until or now + SHARED_KEY_WAIT_S
+                        if not packet.is_keyframe and now < wait_key_until:
+                            continue
+                    last = now
+                    self._got_signal()
+                    self._write_copy(packet, stream)
+                self._publish()
+        finally:
+            src.untap(tap)
+
+    def _write_frame_paced(self, f, next_slot) -> None:
+        """Кадр просмотра в лёгкий файл, не чаще LIGHT_FPS."""
+        t = f.t_capture
+        if next_slot[0] is not None and t + 1e-6 < next_slot[0]:
+            return
+        step = 1 / LIGHT_FPS
+        next_slot[0] = t + step if next_slot[0] is None or t - next_slot[0] > step else next_slot[0] + step
+        if self._writer is None:
+            self._writer = self._encoder(f.image.shape[1], f.image.shape[0])
+        self._writer.write_frame(f.image, t)
 
     def _lost_signal(self) -> None:
         if self._state.signal or not self._announced_loss:
@@ -255,7 +340,7 @@ class VideoRecorder:
             self._got_signal()
             if self._mode == "camera":
                 self._write_copy(packet, stream)
-            else:
+            elif not (self._copy_due(packet, time.monotonic()) and self._copy_again(packet, stream)):
                 self._write_encoded(packet, next_slot)
             self._publish()
         return got
@@ -277,8 +362,42 @@ class VideoRecorder:
             log.warning("Запись %s: поток нельзя скопировать (%s), перехожу на кодирование",
                         self.camera_name, type(e).__name__)
             self._abandon_copy()
-            self._mode = "light"
+            self._mode, self._wait_key = "light", True
             self._set(degraded=True)
+            now = time.monotonic()
+            quick = self._tried_at is not None and now - self._tried_at < COPY_STABLE_S
+            self._retry_s = min(self._retry_s * 2, COPY_RETRY_MAX_S) if quick else COPY_RETRY_S
+            self._retry_at = now + self._retry_s
+
+    # --- возврат к копии: лёгкий файл — страховка на время сбоя, а не до конца записи ---
+
+    def _copy_due(self, packet, now: float) -> bool:
+        """Пора ли снова пробовать копию: срок вышел, и пакет — ключевой кадр (с другого файл не начать)."""
+        return self._retry_at is not None and now >= self._retry_at and bool(packet.is_keyframe)
+
+    def _copy_again(self, packet, stream) -> bool:
+        """Начать с этого пакета файл-копию. Не вышло — лёгкий файл идёт дальше, будто попытки не было (False)."""
+        light, self._writer = self._writer, None
+        stamps = packet.pts, packet.dts
+        self._mode, self._copy_bad, self._tried_at = "camera", 0, time.monotonic()
+        try:
+            self._write_copy(packet, stream)
+        except BaseException:  # диск: запись сейчас остановится, но лёгкий файл должен быть закрыт и в списке
+            full, self._writer = self._writer, light
+            self._close_writer()
+            self._writer = full
+            raise
+        if self._mode != "camera":  # _write_copy снова отступил и назначил следующую попытку
+            self._writer, self._wait_key = light, False
+            packet.pts, packet.dts = stamps  # писатель мог их сдвинуть, а пакет ещё пойдёт декодеру
+            packet.stream = stream
+            return False
+        full, self._writer = self._writer, light
+        self._close_writer()  # лёгкий файл закрыт и стоит в списке перед новой копией
+        self._writer, self._retry_at = full, None
+        self._set(degraded=False)
+        log.info("Запись %s: поток снова копируется, полное качество", self.camera_name)
+        return True
 
     def _abandon_copy(self) -> None:
         w, self._writer = self._writer, None
@@ -293,6 +412,10 @@ class VideoRecorder:
         self._done_bytes += w.bytes_written
 
     def _write_encoded(self, packet, next_slot) -> None:
+        if self._wait_key:  # пока шла копия, декодер кадров не видел: с середины группы он выдал бы мусор
+            if not packet.is_keyframe:
+                return
+            self._wait_key = False
         try:
             frames = packet.decode()
         except av.error.FFmpegError:

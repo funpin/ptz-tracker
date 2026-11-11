@@ -31,10 +31,10 @@ from ptztracker.gamepad.intents import (
     PanTilt,
     Preset,
     PushFocus,
-    SaveMoment,
     SpeedStep,
     Stop,
     ToggleFollow,
+    ToggleVideo,
     Zoom,
 )
 from ptztracker.multicam.grid import Cell
@@ -411,9 +411,13 @@ class PadsMixin:
             elif isinstance(it, NextCamera):
                 if pad is not None:
                     self.pad_create(pad)
-            elif isinstance(it, SaveMoment):
-                self.save_moment("геймпад")  # запись — всего окна, не камеры
-                b.rumble(RUMBLE_PRESET_STORED)
+            elif isinstance(it, ToggleVideo):
+                c = self._pad_cell(pad)  # запись видео камеры этого геймпада, как R у выбранной (журнал — F9)
+                if c is None:
+                    b.rumble(RUMBLE_NOWHERE)
+                else:
+                    self.toggle_video(self.grid.cells.index(c))
+                    b.rumble(RUMBLE_PRESET_STORED)
             elif isinstance(it, MenuOpen):
                 self._pad_menu_open(pad)
             elif isinstance(it, (MenuNav, MenuAccept, MenuClose)):

@@ -4,6 +4,8 @@
 регулятор смешивает по нему цель, поэтому между «стоит» и «идёт» нет переключателя и рывка.
 
 Координаты — «мировые» (не зависят от зума и поворота камеры), пороги и размах — в долях кадра при текущем масштабе k.
+Пороги «ушёл от места» заданы для обычной зоны оператора и умножаются на её размер (control.zones): в плотной зоне
+человек «уходит» раньше — камера трогается раньше; в свободной — позже.
 """
 
 from __future__ import annotations
@@ -16,6 +18,8 @@ from ptztracker.control.motion_law import smoothstep
 F_MIN, FILTER_BETA, D_CUTOFF = 1.0, 13.0, 1.5
 VEL_WINDOW_S = 0.4  # наклон за окно
 VEL_START_N, VEL_STOP_N = 3, 2  # столько последних замеров — заметить раньше окна, что пошёл / что встал (при любой частоте кадров)
+# …но не короче этого по времени: при 25 к/с три замера — 0,08 с, и шум точек (0,004 кадра) давал в скорости ±0,1 кадра/с
+VEL_START_S, VEL_STOP_S = 0.15, 0.075
 GAP_S = 0.4  # замеров не было дольше: человек мог уйти куда угодно, начинаем заново (размах помним — привычка та же)
 START_BLEND = 0.5  # пошёл: скорость — середина между длинным и коротким окном
 DECEL_BLEND = 0.4  # тормозит: доля поправки к короткому окну; больше — и качание шага заметно гасит упреждение
@@ -27,6 +31,13 @@ SWAY_FALL_S = 6.0  # размах забывается медленно
 SWAY_MAX = 0.16  # доли кадра
 REVERSAL_V, REVERSAL_SWAY_MAX, REVERSAL_LEARN = 0.05, 0.3, 0.5  # разворот быстрее этого (кадр/с): размах за разворот, не больше — иначе это проход туда-обратно
 REVERSAL_WALK = 0.3  # развернулся — вес «идёт» падает до этой доли: шатание не считается ходьбой
+# Разворот — только если человек правда отошёл назад от крайней точки на столько (доли кадра): на медленном шаге
+# качание корпуса и шум точек на миг дают «скорость назад», хотя человек идёт дальше (стенд 2026-11-11: шаг 0,19 кадра/с
+# при 25 к/с — вес «идёт» падал до нуля каждые 2 с, размах «выучивался» до 0,13, камера шла рывками и отставала на 0,3)
+REVERSAL_BACK = 0.02
+AWAY_AHEAD_S = 0.2
+AWAY_CALM_SWAY, AWAY_SWAYER = 0.04, 0.08  # размах переминания, доли кадра: до первого — прогноз целиком, от второго — без него
+DECEL_SURE = 0.55
 EXCURSION_K, EXCURSION_MIN, EXCURSION_SPAN = 1.25, 0.05, 1.5  # вышел за размах: порог k·размах+мин, полный вес ·span
 EXCURSION_MAX = 0.24  # доли кадра: порог не больше — кто бы как ни шатался, ушедшего от центра камера ведёт
 RUSH_V_LOW, RUSH_V_HIGH, RUSH_AWAY_LOW, RUSH_AWAY_HIGH = 0.5, 0.75, 0.06, 0.14  # доли кадра/с и доли кадра
@@ -65,16 +76,20 @@ class PersonEstimator:
         self.sway = SWAY_START  # половина размаха переминания, доли кадра (в мире размах при наезде раздувался)
         self._dir = 0  # куда шёл в последний раз
         self._extreme: float | None = None  # где развернулся в прошлый раз
+        self._peak = 0.0  # самая дальняя точка в нынешнюю сторону
         self.walk = 0.0  # 0 — стоит, 1 — идёт
         self._dx = 0.0
         self._walked = False  # вес был высоким: следующий спад — остановка
         self._calm_until = float("-inf")  # до этого момента считаем, что человек только что остановился
         self._stopping = 0  # сколько замеров подряд короткое окно показывает остановку
         self._hist: list[tuple[float, float]] = []
+        self._zone = 1.0  # размер зоны оператора по этой оси относительно обычной
 
-    def update(self, t: float, z: float, k: float) -> None:
-        """Новый замер: z — мировая координата в момент съёмки t, k — масштаб зума в этот момент."""
+    def update(self, t: float, z: float, k: float, zone: float = 1.0) -> None:
+        """Новый замер: z — мировая координата в момент съёмки t, k — масштаб зума в этот момент,
+        zone — во сколько раз зона оператора по этой оси больше обычной."""
         z, k = float(z), float(k)
+        self._zone = float(zone)
         if self.t is None:
             self.t, self.pos, self.center = t, z, z
             self._hist = [(t, z)]
@@ -82,6 +97,7 @@ class PersonEstimator:
         if t - self.t > GAP_S:
             self.t, self.pos, self.center, self.vel, self.walk = t, z, z, 0.0, 0.0
             self._dx, self._stopping, self._hist, self._dir, self._extreme = 0.0, 0, [(t, z)], 0, None
+            self._peak = z
             return
         dt = max(1e-3, t - self.t)
         self.t = t
@@ -98,8 +114,8 @@ class PersonEstimator:
 
     def _velocity(self, t: float) -> float:
         long = _slope([(a, b) for a, b in self._hist if t - a <= VEL_WINDOW_S])
-        start = _slope(self._hist[-VEL_START_N:])
-        stop = _slope(self._hist[-VEL_STOP_N:])
+        start = _slope(self._recent(t, VEL_START_S, VEL_START_N))
+        stop = _slope(self._recent(t, VEL_STOP_S, VEL_STOP_N))
         stopping = stop * long <= 0 or abs(stop) < STOP_RATIO * abs(long)
         self._stopping = self._stopping + 1 if stopping else 0
         if self._stopping >= STOP_SAMPLES:
@@ -107,22 +123,35 @@ class PersonEstimator:
         if start * long > 0 and abs(start) > abs(long):
             return long + START_BLEND * (start - long)  # пошёл: не ждём длинное окно
         if start * long > 0:
-            return long + DECEL_BLEND * (start - long)  # тормозит: длинное окно ещё показывает прежнюю скорость
+            # тормозит: длинное окно ещё показывает прежнюю скорость. Скорость упала больше, чем бывает от качания
+            # шага (DECEL_SURE), — верим короткому окну целиком: камере пора тормозить
+            blend = 1.0 if abs(start) < DECEL_SURE * abs(long) else DECEL_BLEND
+            return long + blend * (start - long)
         return long
+
+    def _recent(self, t: float, span: float, n: int) -> list[tuple[float, float]]:
+        """Последние замеры за span секунд, но не меньше n штук."""
+        pts = [(a, b) for a, b in self._hist if t - a <= span + 1e-6]
+        return pts if len(pts) >= n else self._hist[-n:]
 
     def _note_reversal(self, k: float) -> None:
         """Разворот — признак шатания: уточняем размах по двум крайним точкам и не считаем это ходьбой."""
         v = self.vel * k
         d = 0 if abs(v) < REVERSAL_V else (1 if v > 0 else -1)
-        if d and self._dir and d != self._dir:
+        if not self._dir:
+            if d:
+                self._dir, self._peak = d, self.pos
+            return
+        if (self.pos - self._peak) * self._dir > 0:
+            self._peak = self.pos
+        if d == -self._dir and (self._peak - self.pos) * self._dir * k >= REVERSAL_BACK:
             if self._extreme is not None:
-                half = abs(self.pos - self._extreme) * k / 2
+                half = abs(self._peak - self._extreme) * k / 2
                 if self.sway < half <= REVERSAL_SWAY_MAX:  # только вверх: мелкие развороты внутри качания размах не уменьшают
                     self.sway += (min(half, SWAY_MAX) - self.sway) * REVERSAL_LEARN
-            self._extreme = self.pos
+            self._extreme = self._peak
             self.walk *= REVERSAL_WALK
-        if d:
-            self._dir = d
+            self._dir, self._peak = d, self.pos
 
     def _speed_ref(self, k: float) -> float:
         """Скорость, с которой человек уже считается идущим. Пошёл — порог минимальный: ровная медленная ходьба не обрывается."""
@@ -134,23 +163,29 @@ class PersonEstimator:
         away = abs(self.pos - self.center) * k
         speed = smoothstep(abs(self.vel) * k, SPEED_LOW * speed_ref, SPEED_HIGH * speed_ref)
         # далеко за любым переминанием: идёт, даже если скорость похожа на качание (медленная ровная ходьба)
+        zone = self._zone
         if abs(self.vel) * k >= SPEED_LOW * SPEED_MIN:
-            speed = max(speed, smoothstep(away, FAR_LOW, FAR_HIGH))
-        limit = min(EXCURSION_MAX, EXCURSION_K * self.sway + EXCURSION_MIN)
-        excursion = smoothstep(away, limit, EXCURSION_SPAN * limit)
+            speed = max(speed, smoothstep(away, zone * FAR_LOW, zone * FAR_HIGH))
+        limit = min(zone * EXCURSION_MAX, EXCURSION_K * self.sway + zone * EXCURSION_MIN)
+        # уходит от своего места: считаем, где он будет через AWAY_AHEAD_S — пока замер дойдёт и камера ответит
+        # (только для того, кто стоит спокойно: кто заметно шатается, тот так же быстро идёт обратно)
+        look = AWAY_AHEAD_S * (1 - smoothstep(self.sway, AWAY_CALM_SWAY, AWAY_SWAYER))
+        ahead = away + look * abs(self.vel) * k if (self.pos - self.center) * self.vel > 0 else away
+        excursion = smoothstep(ahead, limit, EXCURSION_SPAN * limit)
         # намного быстрее переминания — идёт, не дожидаясь выхода за размах (резкий уход из кадра)
         excursion = max(excursion, smoothstep(abs(self.vel) * k, SPEED_SURE_LOW * speed_ref, SPEED_SURE_HIGH * speed_ref))
         # уже идёт — достаточно скорости: центр идёт за человеком и «выхода за размах» больше нет
         # Уходит быстро и уже в стороне от центра: при шатании человек на этой скорости проходит центр, а тут уже ушёл
         if (self.pos - self.center) * self.vel > 0:
-            excursion = max(excursion, smoothstep(abs(self.vel) * k, RUSH_V_LOW, RUSH_V_HIGH) * smoothstep(away, RUSH_AWAY_LOW, RUSH_AWAY_HIGH))
+            excursion = max(excursion, smoothstep(abs(self.vel) * k, RUSH_V_LOW, RUSH_V_HIGH)
+                            * smoothstep(away, zone * RUSH_AWAY_LOW, zone * RUSH_AWAY_HIGH))
         target = speed * max(excursion, smoothstep(self.walk, 0.1, 0.5))
         if self.walk > 0.6:
             self._walked = True
         elif self.walk < 0.3 and self._walked:
             self._walked, self._calm_until = False, t + WALK_COOL_S
         if t < self._calm_until:
-            target *= smoothstep(away, FAR_LOW, FAR_HIGH)  # пошёл снова — только если правда ушёл от места
+            target *= smoothstep(away, zone * FAR_LOW, zone * FAR_HIGH)  # пошёл снова — только если правда ушёл от места
         rate = WALK_RISE_S if target > self.walk else WALK_FALL_S
         self.walk += (target - self.walk) * (1 - math.exp(-dt / rate))
 

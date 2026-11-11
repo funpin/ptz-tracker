@@ -29,6 +29,9 @@ class ModelProfile:
     min_interval: float
     pan_deg_s_codes: tuple[int, ...]  # коды единственной таблицы скоростей he42.PAN_DEG_S
     speed_note: str = ""  # справка: чем скорости модели отличаются от таблицы (на работу не влияет)
+    # отклик на команду поворота до калибровки мастером: мёртвое время и постоянная разгона, с
+    dead_time: float = he42.DEAD_TIME_S
+    tau: float = he42.RAMP_TAU_S
 
 
 _HE42 = ModelProfile(
@@ -48,6 +51,8 @@ _HE40 = ModelProfile(
     pan_deg_s_codes=tuple(sorted(he42.PAN_DEG_S)),
     speed_note=(f"на кодах {he42.HE40_FASTER_CODES[0]}–{he42.HE40_FASTER_CODES[1]} быстрее таблицы на "
                 f"{he42.HE40_FASTER_PCT[0]}–{he42.HE40_FASTER_PCT[1]}%"),
+    dead_time=he42.HE40_DEAD_TIME_S,
+    tau=he42.HE40_RAMP_TAU_S,
 )
 PROFILES: dict[str, ModelProfile] = {p.name: p for p in (_HE42, _HE40)}
 DEFAULT_PROFILE = _HE42

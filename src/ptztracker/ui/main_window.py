@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import dataclasses
 import logging
 import time
@@ -114,9 +115,15 @@ log = logging.getLogger(__name__)
 SIM_CAMERA = CameraConfig(id="sim", name="Симулятор", ip="sim", kind="sim")  # образец для sim1…sim4
 
 
+def sim_camera(**changes) -> CameraConfig:
+    """Виртуальная камера по образцу — со своими зонами и списками: dataclasses.replace их не копирует,
+    и зона, потянутая у одной камеры симулятора, оказывалась у всех (запись F9 2026-11-10)."""
+    return dataclasses.replace(copy.deepcopy(SIM_CAMERA), **changes)
+
+
 def sim_cameras() -> list[CameraConfig]:
     """Четыре виртуальные камеры для --sim: sim1…sim4, «Симулятор 1…4»."""
-    return [dataclasses.replace(SIM_CAMERA, id=f"sim{i}", name=f"Симулятор {i}") for i in range(1, GRID_SLOTS + 1)]
+    return [sim_camera(id=f"sim{i}", name=f"Симулятор {i}") for i in range(1, GRID_SLOTS + 1)]
 
 
 def make_pad_backend():
@@ -418,10 +425,10 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
             c.reset_target_btn.clicked.connect(lambda _=False, s=i: self._reset_target(s))
             c.skeleton_check.toggled.connect(lambda on, cell=c: self._on_skeleton(on, cell))
             c.preview.targetClicked.connect(lambda _id: self._update_status())
-            c.preview.zoneChanged.connect(lambda x, y, k, s=i: self._on_zone(s, Zone(x, y, k)))
+            c.preview.zoneChanged.connect(lambda x, y, w, h, s=i: self._on_zone(s, Zone(x, y, w, h)))
             c.preview.zoneCommitted.connect(lambda s=i: self._save_zone(s))
             c.preview.zoneReset.connect(lambda s=i: self._on_zone(s, None, save=True))
-            c.preview.zone_scale_of = lambda s=i: self._zone_scale(s)
+            c.preview.zone_size_of = lambda s=i: self._zone_size(s)
             c.preview.zoneHoverChanged.connect(lambda _h: self._update_hint_context())
             c.analysisRequested.connect(self.request_analysis)
             c.preview.mouseVector.connect(lambda x, y, s=i: self._on_mouse_vector(s, x, y))
@@ -662,7 +669,7 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         в её клетке, если она уже открыта; иначе в первой пустой клетке, а без пустых — в выбранной."""
         sim = next((c for c in self.cfg.cameras if c.kind == "sim"), None)
         if sim is None:
-            sim = dataclasses.replace(SIM_CAMERA, name="Тренировка")
+            sim = sim_camera(name="Тренировка")
             self.cfg.cameras.append(sim)
             self._save()
         slot = self.grid.slot_of(sim.id)

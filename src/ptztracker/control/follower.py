@@ -364,7 +364,7 @@ class Follower:
                 aspect=r.frame_size[0] / max(1, r.frame_size[1]),
                 out={"pan": out.pan, "tilt": out.tilt, "zoom": out.zoom, "state": out.state,
                      "error": list(out.error), "size_error": out.size_error},
-                codes=list(codes), composition=comp.key, effort=dataclasses.asdict(effort),
+                codes=list(codes), composition=comp.key, anchor=list(comp.anchor), effort=dataclasses.asdict(effort),
                 speed_scale=scale,  # поправка, с которой посчитаны коды: повтор даёт те же
             )
         except Exception as e:

@@ -902,3 +902,80 @@ def test_custom_rtsp_address_is_used_for_video():
     cfg = CameraConfig(id="r", name="Сцена", ip="10.0.0.5", rtsp_url="rtsp://10.0.0.5/my")
     assert CameraSession(cfg, analysis=False)._video_url() == "rtsp://10.0.0.5/my"
 
+
+
+def test_sim_session_camera_tolerates_arrival_jitter():
+    """Запись F9 2026-11-10: симулятор в программе отвергал 16 % команд («занята») из-за неровного прихода —
+    у живых камер таких отказов нет. Встроенный симулятор терпит неровность прихода до половины интервала."""
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        s.scheduler.stop()  # дальше команды в симулятор шлёт только тест
+        t = [100.0]
+        s.sim._clock = lambda: t[0]
+        s.sim._last_cmd_t = None
+        replies = []
+        for gap in (0.0, 0.09, 0.17, 0.08, 0.18):
+            t[0] += gap
+            replies.append(s.sim.handle("#APC"))
+        assert not any(r.lower().startswith("er2") for r in replies), replies
+    finally:
+        s.stop()
+
+
+def test_h264_preview_is_offered_to_the_recorder_and_mjpeg_is_not():
+    """Клуб, 2026-11-10: камера отдаёт H.264 одному клиенту — при просмотре по H.264 REC показывал «нет сигнала»."""
+    from ptztracker.video.rtsp import RtspSource
+
+    cfg = CameraConfig(id="r", name="Сцена", ip="10.0.0.5", stream="h264_1")
+    s = CameraSession(cfg, analysis=False)
+    s.frames = RtspSource("rtsp://10.0.0.5/MediaInput/h264/stream_1")
+    assert s._video_preview() is s.frames
+    s.frames = RtspSource("http://10.0.0.5/cgi-bin/mjpeg?resolution=640x360&framerate=25")
+    assert s._video_preview() is None
+
+
+def test_live_recorder_is_told_about_the_preview(tmp_path, monkeypatch):
+    from ptztracker.camera import session as S
+
+    made = {}
+
+    class FakeRecorder:
+        is_running = False
+
+        def __init__(self, *a, **kw):
+            made.update(kw)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(S, "VideoRecorder", FakeRecorder)
+    s = CameraSession(CameraConfig(id="r", name="Сцена", ip="10.0.0.5"), analysis=False)
+    s.start_video(tmp_path, "camera", None)
+    assert made["shared"] == s._video_preview and made["url"] == s._video_url
+
+
+def test_night_mode_reaches_camera_and_state():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.night is False)  # режим спрашиваем у камеры вместе с остальной картинкой
+        s.set_night(True)
+        assert _wait(lambda: s.image.night is True and s.sim.night)
+        s.set_night(False)
+        assert _wait(lambda: s.image.night is False and not s.sim.night)
+    finally:
+        s.stop()
+
+
+def test_night_mode_does_not_switch_following_off():
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: s.image.night is False)
+        manual = []
+        s._manual = lambda *a, **k: manual.append(1)
+        s.set_night(True)
+        assert _wait(lambda: s.image.night is True) and manual == []  # картинка камеру не двигает
+    finally:
+        s.stop()

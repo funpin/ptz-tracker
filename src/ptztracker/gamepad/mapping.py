@@ -23,10 +23,10 @@ from .intents import (
     PanTilt,
     Preset,
     PushFocus,
-    SaveMoment,
     SpeedStep,
     Stop,
     ToggleFollow,
+    ToggleVideo,
     Zoom,
 )
 
@@ -164,7 +164,7 @@ class Mapper:
             for b, hold in self._holds.items():
                 if not hold[1] and t - hold[0] >= PRESET_HOLD_S:
                     hold[1] = True
-                    out.append(SaveMoment() if b == "create" else Preset(_PRESET_BUTTONS[b], True))
+                    out.append(ToggleVideo() if b == "create" else Preset(_PRESET_BUTTONS[b], True))
             for b in sorted(self._repeat):
                 if t >= self._repeat[b] and b in pad.buttons:
                     out.append(_REPEAT_BUTTONS[b])  # не больше шага за опрос: после паузы без «очереди» шагов

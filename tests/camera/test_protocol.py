@@ -200,3 +200,12 @@ def test_osd_commands():
     assert P.osd(True) == "DUS:1" and P.osd(False) == "DUS:0"
     assert P.OSD_KEYS == {"up": "DUP", "down": "DDW", "enter": "DIT", "back": "DPG"}
     assert P.parse_osd("OUS:1") is True and P.parse_osd("OUS:0") is False
+
+
+def test_night_mode_commands():
+    # живые AW-HE40 (клуб, 2026-11-10): на запрос #D6 ответили d61 (ночь) и d60 (день)
+    assert PR.Q_NIGHT == "#D6" and PR.night(True) == "#D61" and PR.night(False) == "#D60"
+    assert PR.parse_night("d61") is True and PR.parse_night("d60") is False
+    assert PR.cgi_for(PR.night(True)) == "aw_ptz"
+    with pytest.raises(ValueError):
+        PR.parse_night("d10")

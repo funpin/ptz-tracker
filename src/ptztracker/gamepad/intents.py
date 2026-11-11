@@ -94,8 +94,8 @@ class NextCamera:
 
 
 @dataclass(frozen=True)
-class SaveMoment:
-    pass
+class ToggleVideo:
+    """Удержание Create: запись видео камеры этого геймпада — включить или остановить (как клавиша R)."""
 
 
 @dataclass(frozen=True)
@@ -104,4 +104,4 @@ class Disconnected:
 
 
 Intent = (PanTilt | Zoom | Preset | IrisStep | GainStep | Neighbor | ToggleFollow | Stop | PushFocus
-          | Composition | MenuOpen | Help | MenuNav | MenuAccept | MenuClose | NextCamera | SaveMoment | Disconnected)
+          | Composition | MenuOpen | Help | MenuNav | MenuAccept | MenuClose | NextCamera | ToggleVideo | Disconnected)

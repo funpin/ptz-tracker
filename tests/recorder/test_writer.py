@@ -190,3 +190,12 @@ def test_frame_queue_is_small_and_events_still_queue(tmp_path):
     assert bb.queued_frames() == 50 and bb.dropped_frames == 30
     bb.flush()
     assert len(list(bb.recent_events(0.0, 1000))) == 80
+
+
+def test_two_cameras_saving_in_one_second_keep_both_files(tmp_path, monkeypatch):
+    # F9 сохраняет все камеры разом (запись 2026-11-09): вторая брала то же имя, и запись первой пропадала
+    monkeypatch.setattr("ptztracker.recorder.writer.time.strftime", lambda *a: "2026-11-09_19-17-41")
+    boxes = [BlackBox(tmp_path, {"camera": n}, start_thread=False) for n in ("sim1", "sim2")]
+    paths = [f.result(timeout=5) for f in [b.save_snapshot("F9") for b in boxes]]
+    assert len(set(paths)) == 2 and all(p.exists() for p in paths)
+

@@ -21,6 +21,13 @@ def test_known_models():
     assert he42p.image_controls_verified is False
 
 
+def test_he40_profile_has_measured_response():
+    # клуб 2026-11-10: HE40 слушается за 0,05–0,07 с и после «стоп» проходит v·0,03–0,07 с — втрое быстрее модели HE42
+    he42p, he40p = profile_for("AW-HE42"), profile_for("AW-HE40")
+    assert (he40p.dead_time, he40p.tau) == (0.05, 0.05)
+    assert (he42p.dead_time, he42p.tau) == (he42.DEAD_TIME_S, he42.RAMP_TAU_S) == (0.08, 0.12)
+
+
 def test_model_name_is_matched_loosely():
     assert profile_for(" aw-he40 ").name == "AW-HE40"
     assert profile_for("AW-HE40SKEJ").name == "AW-HE40"  # у моделей Panasonic бывают суффиксы

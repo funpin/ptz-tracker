@@ -347,7 +347,7 @@ DEFAULT_TABLE_ID = "he42-deg-s-2026-10-29"
 DEFAULT_ZOOM_STEPS = 16
 
 
-def default_calibration(safety: float = 1.0) -> Calibration:
+def default_calibration(safety: float = 1.0, model: str | None = None) -> Calibration:
     """Средние значения до калибровки: камера держит постоянные °/с (he42.PAN_DEG_S) до 0xD54, поэтому
     в долях кадра скорость растёт при приближении как 1 / угол обзора; выше 0xD54 поворот замедляется
     (he42.TELE_PAN_DEG_S, AW-HE40 2026-10-30); точки — DEFAULT_ZOOM_STEPS + 1 положений зума. Наклон — по той
@@ -356,11 +356,17 @@ def default_calibration(safety: float = 1.0) -> Calibration:
 
     safety > 1 — считать камеру быстрее замеров: ошибиться в «медленную» сторону безопасно
     (регулятор устойчив до ρ≈0.5), а в «быструю» — раскачка (устойчив до ρ≈1.7).
+    model — ответ камеры на QID: отклик на команду (мёртвое время, разгон) берётся из профиля модели
+    (HE40 отвечает втрое быстрее HE42); не названа — как HE42.
     """
+    from ptztracker.camera.models import DEFAULT_PROFILE, profile_for
+
+    prof = profile_for(model) if model else DEFAULT_PROFILE
     span = P.LENS_MAX - P.LENS_MIN
     points = {}
     for k in range(DEFAULT_ZOOM_STEPS + 1):
         z = P.LENS_MIN + round(span * k / DEFAULT_ZOOM_STEPS)
         hfov = he42.hfov_deg((z - P.LENS_MIN) / span)
         points[z] = [(c, deg * he42.tele_pan_ratio(c, z) * safety / hfov) for c, deg in he42.PAN_DEG_S.items()]
-    return Calibration(pan=SpeedTable(points), zoom=ZoomTable(list(he42.ZOOM_LN_S.items())))
+    return Calibration(pan=SpeedTable(points), zoom=ZoomTable(list(he42.ZOOM_LN_S.items())),
+                       dead_time=prof.dead_time, tau=prof.tau)

@@ -7,6 +7,8 @@ import threading
 import time
 from collections import deque
 
+import cv2
+
 from ptztracker.sim.ptz_model import SimPtz
 from ptztracker.sim.scene import view_matrix
 from ptztracker.video.frames import FpsMeter, Frame, SourceStats
@@ -76,6 +78,13 @@ class SimFrameSource:
         return self._render()[0]
 
     def _render(self):
+        """Кадр и служебные данные; в ночном режиме камеры (#D61) кадр чёрно-белый, как у настоящей."""
+        img, meta = self._render_day()
+        if self.sim.night:
+            img = cv2.cvtColor(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+        return img, meta
+
+    def _render_day(self):
         """Кадр и служебные данные (истинная разметка, если сцена её умеет)."""
         w, h = self.scene.size
         with self.sim._lock:

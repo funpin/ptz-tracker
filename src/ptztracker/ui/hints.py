@@ -18,10 +18,11 @@ ZONE_PAIRS: list[Pair] = [("mouse", "L", "тяните — переместит�
 
 
 def hint_for(kind: str, why: str, has_target: bool, target_id: int | None = None, pad: bool = False,
-             zone_hover: bool = False) -> tuple[str, list[Pair]]:
-    """(состояние словами, пары) для плашки внизу видео. pad — камерой управляет геймпад: его кнопки."""
+             zone_hover: bool = False, zone_text: str = "") -> tuple[str, list[Pair]]:
+    """(состояние словами, пары) для плашки внизу видео. pad — камерой управляет геймпад: его кнопки.
+    zone_text — зону тянут: её размер и что она значит (control.zones.zone_hint); кнопки тогда не показываем."""
     if zone_hover:
-        return "", list(ZONE_PAIRS)
+        return (zone_text, []) if zone_text else ("", list(ZONE_PAIRS))
     who = f" №{target_id}" if target_id is not None else ""
     if kind == "on":
         pairs = ([("pad", "rstick", "нажать — выключить"), ("pad", "touchpad", "стоп")] if pad else
@@ -170,6 +171,7 @@ class HintBar(QFrame):
         while self._lay.count():
             w = self._lay.takeAt(0).widget()
             if w is not None:
+                w.hide()  # удаление отложено до цикла событий: без этого старый текст виден под новым (зона под мышью)
                 w.deleteLater()
         if self.device:
             self._lay.addWidget(DeviceIcon(self.device))

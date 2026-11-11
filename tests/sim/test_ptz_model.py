@@ -120,6 +120,21 @@ def test_too_fast_gives_er2():
     assert s.handle("#O") == "p1"
 
 
+def test_arrival_jitter_tolerance_accepts_paced_commands():
+    """Программа шлёт команды ровно раз в 0,13 с, но до камеры они доходят неровно (сеть, занятая машина).
+    Живые HE42/HE40 на это не отвечают «занята»: 838 команд поворота на записях 2026-10-29/30 — ни одного отказа,
+    HE40 принимала и раз в 50 мс. Симулятор с допуском на неровность прихода ведёт себя так же."""
+    c = FakeClock()
+    s = SimPtz(min_interval=0.13, jitter_tolerance=0.06, clock=c)
+    replies = [s.handle("#O")]
+    for gap in (0.09, 0.17, 0.08, 0.18, 0.13, 0.075):  # в среднем 0,13 с, приход «гуляет» на ±50 мс
+        c.t += gap
+        replies.append(s.handle("#O"))
+    assert replies == ["p1"] * 7
+    c.t += 0.05  # а вдвое чаще положенного — по-прежнему отказ
+    assert s.handle("#O").lower().startswith("er2")
+
+
 def test_unknown():
     assert SimPtz().handle("#XYZ").lower().startswith("er1")
 
@@ -246,3 +261,10 @@ def test_osd_menu():
     for k in ("DUP", "DDW", "DIT", "DPG"):
         assert not s.handle(k).upper().startswith("ER")
     assert s.handle("DUS:0") == "DUS:0" and not s.osd_open
+
+
+def test_night_mode_query_and_switch():
+    s = SimPtz()
+    assert s.handle("#D6") == "d60" and not s.night
+    assert s.handle("#D61") == "d61" and s.handle("#D6") == "d61" and s.night
+    assert s.handle("#D60") == "d60" and not s.night

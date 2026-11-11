@@ -3,8 +3,12 @@ import numpy as np
 from ptztracker.control.composition import COMPOSITIONS, DEFAULT_COMPOSITION, measure_body
 
 
-def kp(nose=None, ls=None, rs=None, le=None, re=None):
+def kp(nose=None, ls=None, rs=None, le=None, re=None, lh=None, rh=None):
     k = np.zeros((17, 3), np.float32)
+    if lh:
+        k[11] = (*lh, 0.9)
+    if rh:
+        k[12] = (*rh, 0.9)
     if nose:
         k[0] = (*nose, 0.9)
     if le:
@@ -100,3 +104,22 @@ def test_back_view_anchor_from_shoulders():
     # last_u по-прежнему главнее
     kept = measure_body(kp(None, le=(345, 98), re=(295, 98), **shoulders), box, size, 0.1)
     assert abs(kept.nose[1] - (160 / 360 - 0.1)) < 1e-6 and kept.u is None
+
+
+def test_torso_keeps_size_when_person_turns_sideways():
+    """Живой прогон 2026-11-10: человек встал боком и наклонился — «нос → плечи» и ширина плеч сжались в 4–6 раз, зум
+    наехал. Корпус «плечи → бёдра» при этом почти той же длины: он не даёт мерке упасть больше чем на 15 %."""
+    box, frame = (500, 100, 780, 700), (1280, 720)
+    front = measure_body(kp((640, 200), (720, 260), (560, 260), lh=(690, 458), rh=(590, 458)), box, frame, None)
+    assert abs(front.u - 60 / 720) < 1e-6  # лицом: мерка прежняя — «нос → плечи» (корпус её не раздувает)
+    side = measure_body(kp((650, 245), (655, 260), (625, 260), lh=(650, 458), rh=(630, 458)), box, frame, front.u)
+    assert side.u >= 0.85 * front.u - 1e-6
+    no_hips = measure_body(kp((650, 245), (655, 260), (625, 260)), box, frame, front.u)
+    assert no_hips.u < 0.3 * front.u  # бёдер не видно — мерка прежняя (её страхует фильтр размера)
+
+
+def test_hips_guessed_below_the_frame_do_not_inflate_size():
+    """На «Поясе» бёдра за нижним краем кадра, и точки там — догадка нейросети: по ним корпус не меряем."""
+    box, frame = (500, 100, 780, 720), (1280, 720)
+    m = measure_body(kp((640, 200), (720, 260), (560, 260), lh=(690, 900), rh=(590, 900)), box, frame, None)
+    assert abs(m.u - 60 / 720) < 1e-6

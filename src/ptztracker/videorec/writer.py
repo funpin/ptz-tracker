@@ -12,6 +12,7 @@ import numpy as np
 
 MOVFLAGS = "frag_keyframe+empty_moov+default_base_moof"
 FAT32_SPLIT_BYTES = 3_900_000_000  # FAT32 не хранит файлы больше 4 ГиБ
+CLOCK_JUMP_S = 1.0  # отметки времени ушли вперёд больше чем на столько без обрыва связи — прыжок часов потока
 _BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _MS = Fraction(1, 1000)
 
@@ -74,11 +75,14 @@ class CopyWriter(_Segments):
         self._template = template
         self._stream = None
         self._zero = 0  # dts первого пакета части: каждая часть начинается с нуля
+        self._last_dts: int | None = None  # последний записанный dts части
+        self._step: int | None = None  # обычный шаг между пакетами (самый короткий из встреченных)
 
     def _start_segment(self, packet: av.Packet) -> None:
         self._out = self._open_file()
         self._stream = self._out.add_stream_from_template(self._template)
         self._zero = packet.dts
+        self._last_dts = None
 
     def write_packet(self, packet: av.Packet) -> None:
         if packet.dts is None:
@@ -89,9 +93,24 @@ class CopyWriter(_Segments):
             self._out.close()
             self._start_segment(packet)
         size = packet.size
-        packet.dts -= self._zero
+        dts = packet.dts - self._zero
+        if self._last_dts is not None:
+            step = dts - self._last_dts
+            # Часы потока прыгнули: камера сверяет их по RTCP, и отметки отступают назад — на кадр-другой раз в
+            # 30–35 с, а бывает на секунды и насовсем (AW-HE40, клуб, 2026-11-10). MP4 пакет «из прошлого» не
+            # принимает, а без него картинка рассыпается до следующего ключевого кадра. Поэтому пакет не
+            # выбрасываем: он встаёт через обычный шаг после предыдущего, и дальше время идёт от него. Прыжок
+            # вперёд дольше CLOCK_JUMP_S — те же часы, а не пауза в съёмке: в файле дыры не будет.
+            jump = CLOCK_JUMP_S / packet.time_base if packet.time_base else None
+            if step <= 0 or (jump is not None and step > jump):
+                usual = self._step or packet.duration or 1
+                self._zero += step - usual
+                dts = self._last_dts + usual
+            else:
+                self._step = step if self._step is None else min(self._step, step)
         if packet.pts is not None:
-            packet.pts -= self._zero
+            packet.pts = max(packet.pts - self._zero, dts)
+        packet.dts = self._last_dts = dts
         packet.stream = self._stream
         self._out.mux(packet)
         self._count(size)

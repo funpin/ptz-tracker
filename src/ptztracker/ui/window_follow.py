@@ -199,10 +199,11 @@ class FollowMixin:
             self._save()
         self._apply_framing(cam, self._follower())
 
-    def _zone_scale(self, slot: int) -> float:
+    def _zone_size(self, slot: int) -> tuple[float, float]:
+        """(ширина, высота) своей зоны этой камеры относительно обычной."""
         g = self.grid.cells[slot]
         z = zone_of(g.cfg.zones, g.cfg.composition) if g else None
-        return z.scale if z else 1.0
+        return (z.w, z.h) if z else (1.0, 1.0)
 
     def _on_zone(self, slot: int, zone: Zone | None, save: bool = False) -> None:
         """Оператор тянет зону на видео (None — двойной клик, сброс). Слежение не выключается:
@@ -215,6 +216,7 @@ class FollowMixin:
         else:
             g.cfg.zones[g.cfg.composition] = zone.to_json()
         self._apply_framing(g.cfg, g.session.follower)
+        self._update_hint_context()  # плашка зоны: размер меняется прямо под мышью
         if save:
             self._save_zone(slot)
 

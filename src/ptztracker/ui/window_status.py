@@ -383,7 +383,8 @@ class StatusMixin:
         tid = r.target_id if r is not None else None
         pad = self.last_input == "pad" and bool(sel is not None and self.pad_router.pads_on(sel))
         hover = sel is not None and self.cells[sel].preview.zone_hovered()
-        self.follow_panel.set_hint_context(tid is not None, tid, pad, hover)
+        text = self.cells[sel].preview.zone_text() if hover and self.cells[sel].preview.zone_dragging() else ""
+        self.follow_panel.set_hint_context(tid is not None, tid, pad, hover, text)
 
     @staticmethod
     def _update_target_label(cell: CameraCell, s: CameraSession | None) -> None:

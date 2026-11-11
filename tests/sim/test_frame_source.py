@@ -73,3 +73,19 @@ def test_synthetic_stage_deterministic():
 def test_person_walks():
     st = SyntheticStage()
     assert st.person_x(0.0) != st.person_x(8.0)
+
+
+def _colour(img):
+    """Насколько картинка цветная: наибольшая разница между каналами."""
+    i = img.astype(np.int16)
+    return int(max(np.abs(i[..., 0] - i[..., 1]).max(), np.abs(i[..., 1] - i[..., 2]).max()))
+
+
+def test_night_mode_makes_sim_picture_black_and_white():
+    sim = SimPtz()
+    fs = SimFrameSource(sim, SyntheticStage(), latency_s=0.0)
+    assert _colour(fs.render_now()) > 20  # днём сцена цветная
+    sim.handle("#D61")
+    assert _colour(fs.render_now()) == 0
+    sim.handle("#D60")
+    assert _colour(fs.render_now()) > 20

@@ -15,10 +15,19 @@ class EffortProfile:
     v_max: float  # fw/s — потолок характера; выше не даст камера (Calibration.pan_max_fw на текущем зуме)
     a_max: float  # fw/s² — предел ускорения при разгоне (тормозит камера твёрже, framing.BRAKE)
     j_max: float  # fw/s³ — предел рывка: плавность задаётся им, а не запретом разгона
-    lead: float  # «место для взгляда»: доля кадра на 1 fw/s скорости человека
     zoom_dead: float  # ln
     zoom_gain: float  # 1/с
     zoom_max: float  # ln/с
+    # Размер зоны оператора относительно обычной (control.zones): от него — пороги «идёт / стоит». Сами полуразмеры
+    # (dead_*, soft_*) могут быть обрезаны краем кадра, а это — то, что задал оператор.
+    zone_w: float = 1.0
+    zone_h: float = 1.0
+    # Пороги сторожа раскачки (framing.SwingWatch): 0 — те же, что граница (soft_*) и покой (dead_*). control.zones
+    # ставит их так, чтобы сторож не стал слабее прежнего, когда зона перестала зависеть от характера.
+    watch_soft_x: float = 0.0
+    watch_soft_y: float = 0.0
+    watch_dead_x: float = 0.0
+    watch_dead_y: float = 0.0
 
     @staticmethod
     def at(x: float) -> EffortProfile:
@@ -34,6 +43,6 @@ class EffortProfile:
 
 # v_max — потолок характера; сверху его ограничивают возможности камеры на текущем зуме
 # (Calibration.pan_max_fw). Все три догоняют идущего человека (~0,77 fw/s на «Поясе»).
-_SOFT = EffortProfile(0.07, 0.06, 0.25, 0.20, 1.2, 0.80, 0.6, 2.0, 0.0, 0.15, 0.5, 0.15)
-_NORMAL = EffortProfile(0.05, 0.045, 0.22, 0.18, 1.7, 1.20, 1.0, 4.0, 0.0, 0.12, 0.8, 0.25)
-_SHARP = EffortProfile(0.03, 0.03, 0.18, 0.15, 1.85, 1.20, 1.5, 8.0, 0.0, 0.08, 1.2, 0.40)
+_SOFT = EffortProfile(0.07, 0.06, 0.25, 0.20, 1.2, 0.80, 0.6, 2.0, 0.15, 0.5, 0.15)
+_NORMAL = EffortProfile(0.05, 0.045, 0.22, 0.18, 1.7, 1.20, 1.0, 4.0, 0.12, 0.8, 0.25)
+_SHARP = EffortProfile(0.03, 0.03, 0.18, 0.15, 1.85, 1.20, 1.5, 8.0, 0.08, 1.2, 0.40)

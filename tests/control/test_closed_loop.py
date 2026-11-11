@@ -10,7 +10,6 @@ from ptztracker.config import CameraConfig
 from ptztracker.control.camera_model import default_calibration
 from ptztracker.control.composition import COMPOSITIONS
 from ptztracker.control.effort import EffortProfile
-from ptztracker.control.framing import CATCH_UP
 from ptztracker.sim.scene import SCRIPTS, SyntheticStage
 
 pytestmark = pytest.mark.slow
@@ -100,10 +99,11 @@ def test_walk_and_stop_like_operator():
     # средняя ошибка гуляет ±0.02 от прогона к прогону (реальное время); в неё входят и стояния с переминанием ±8 см
     assert np.mean(errs) < 0.14 and max(errs) <= 0.45
     # Резкость — по ускорению самой камеры (доли кадра/с², по скорости поворота симулятора), а не по коду.
-    # Обычный разгон — не больше a_max (далеко от метки до CATCH_UP·a_max), торможение — BRAKE·a_max;
-    # запас 20% — на шаг замера 0,1 с и неточность τ.
+    # Обычный разгон — не больше a_max, торможение — BRAKE·a_max; порог — прежний (2·a_max, был framing.CATCH_UP):
+    # на лекционном шаге времени до границы зоны хватает, и срочный разгон (этап 2, framing.A_CAMERA) не нужен.
+    # Запас 20% — на шаг замера 0,1 с и неточность τ.
     acc = [abs(b["cam"] - a["cam"]) / max(0.05, b["t"] - a["t"]) for a, b in zip(rows, rows[1:])]
-    assert max(acc) <= 1.2 * CATCH_UP * e.a_max, max(acc)
+    assert max(acc) <= 1.2 * 2.0 * e.a_max, max(acc)
     assert reversals([r["pan"] for r in rows]) <= 5  # две ходьбы и остановки, плюс подправки при переминании
 
 

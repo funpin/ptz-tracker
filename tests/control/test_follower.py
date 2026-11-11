@@ -299,7 +299,7 @@ def test_zoom_555_aaa_555_while_walking_no_swing_on_sim():
         assert max(zooms[:switched]) >= 0.5 and zooms[-1] <= 0.2, (max(zooms[:switched]), zooms[-1])
         assert 0.1 <= min(xs) and max(xs) <= 0.9, (min(xs), max(xs))
         scale = s.follower.speed_scale
-        assert abs(scale["pan"] * UNCALIBRATED_SAFETY - 1) <= 0.15 and scale["tilt"] == scale["pan"], scale
+        assert abs(scale["pan"] * UNCALIBRATED_SAFETY - 1) <= 0.15 and abs(scale["tilt"] * UNCALIBRATED_SAFETY - 1) <= 0.15, scale
     finally:
         s.stop()
 

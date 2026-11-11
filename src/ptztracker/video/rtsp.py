@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import queue
 import re
 import threading
 import time
@@ -117,6 +118,45 @@ def _options(url: str) -> dict[str, str]:
     return opts
 
 
+TAP_QUEUE = 600  # пакетов: ~12 с при 50 к/с; запись отстала сильнее (диск) — пакеты теряются, просмотр не ждёт
+
+
+class PacketTap:
+    """Пакеты потока для второго получателя — записи в файл. Камера отдаёт H.264 по RTSP одному клиенту
+    (AW-HE40, клуб, 2026-11-10: второму — «5XX Server Error»), поэтому запись не подключается сама, а берёт
+    пакеты у просмотра.
+
+    Элемент очереди — (номер подключения, пакет, поток). Поток закрытого подключения трогать нельзя («Container is
+    not open»): получатель под `lock` проверяет `alive(номер)`, прежде чем создавать по нему файл, а источник под
+    тем же замком отмечает подключение закрытым до того, как закроет его."""
+
+    def __init__(self, maxsize: int = TAP_QUEUE):
+        self._q: queue.Queue = queue.Queue(maxsize)
+        self.lock = threading.Lock()
+        self.retired = 0  # подключения с номером до этого включительно закрыты
+        self.dropped = 0
+
+    def put(self, epoch: int, packet, stream) -> None:
+        try:
+            self._q.put_nowait((epoch, packet, stream))
+        except queue.Full:
+            self.dropped += 1
+
+    def get(self, timeout: float):
+        """Следующий (номер подключения, пакет, поток) или None, если за timeout ничего не пришло."""
+        try:
+            return self._q.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def alive(self, epoch: int) -> bool:
+        return epoch > self.retired
+
+    def retire(self, epoch: int) -> None:
+        with self.lock:
+            self.retired = max(self.retired, epoch)
+
+
 class RtspSource:
     """Приём потока. Если адресов несколько — пробует по очереди, пока один не заработает,
     и дальше держится за него (сообщая о нём через on_found)."""
@@ -141,6 +181,8 @@ class RtspSource:
         self._size = (0, 0)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._taps: tuple[PacketTap, ...] = ()
+        self._epoch = 0  # номер подключения: растёт с каждым открытием потока
 
     @property
     def urls(self) -> list[str]:
@@ -149,6 +191,23 @@ class RtspSource:
     @property
     def url(self) -> str:
         return self._urls[self._idx]
+
+    @property
+    def shares_h264(self) -> bool:
+        """Просмотр идёт по RTSP (H.264 камеры): записи нельзя подключаться вторым клиентом — пусть берёт пакеты
+        отсюда. В «Авто» — только когда адрес уже найден: до этого источник перебирает адреса."""
+        return self.url.startswith("rtsp://") and (self._found or len(self._urls) == 1)
+
+    def tap(self) -> PacketTap:
+        """Подписаться на пакеты потока (как есть, без пережатия)."""
+        t = PacketTap()
+        with self._lock:
+            self._taps += (t,)
+        return t
+
+    def untap(self, tap: PacketTap) -> None:
+        with self._lock:
+            self._taps = tuple(t for t in self._taps if t is not tap)
 
     def start(self) -> None:
         if self._thread:
@@ -208,25 +267,39 @@ class RtspSource:
             options=_options(self.url),
             timeout=(self.open_timeout_s, self.open_timeout_s),
         )
+        self._epoch += 1
+        epoch = self._epoch
         try:
             stream = container.streams.video[0]
             stream.thread_type = "AUTO"
-            for vf in container.decode(stream):
+            # пакеты, а не container.decode(): те же пакеты уходят подписчикам (запись в файл). Последний пустой
+            # пакет demux выталкивает из декодера оставшиеся кадры — как делал decode()
+            for packet in container.demux(stream):
                 if self._stop.is_set():
                     return
-                img = vf.to_ndarray(format="bgr24")
-                now = time.monotonic()
-                if not self._found:
-                    self._found = True
-                    log.info("Видеопоток найден: %s", redact_url(self.url))
-                    if self.on_found:
-                        self.on_found(self.url)
-                with self._lock:
-                    self._seq += 1
-                    self._latest = Frame(img, now, self._seq)
-                    self._size = (img.shape[1], img.shape[0])
-                    self._connected = True
-                    self._error = None
-                    self._fps.tick(now)
+                for vf in packet.decode():
+                    self._publish(vf)
+                taps = self._taps
+                if taps and not (packet.dts is None and packet.size == 0):
+                    for t in taps:
+                        t.put(epoch, packet, stream)
         finally:
+            for t in self._taps:
+                t.retire(epoch)  # до close(): получатель не начнёт файл по потоку закрытого подключения
             container.close()
+
+    def _publish(self, vf) -> None:
+        img = vf.to_ndarray(format="bgr24")
+        now = time.monotonic()
+        if not self._found:
+            self._found = True
+            log.info("Видеопоток найден: %s", redact_url(self.url))
+            if self.on_found:
+                self.on_found(self.url)
+        with self._lock:
+            self._seq += 1
+            self._latest = Frame(img, now, self._seq)
+            self._size = (img.shape[1], img.shape[0])
+            self._connected = True
+            self._error = None
+            self._fps.tick(now)

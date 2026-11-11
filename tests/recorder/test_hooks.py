@@ -112,6 +112,7 @@ def test_sim_session_records_all_kinds(tmp_path):
     assert {"nose", "u", "confident"} <= c["measure"].keys()
     assert {"pan", "tilt", "zoom", "state", "error", "size_error"} <= c["out"].keys()
     assert len(c["codes"]) == 3 and c["composition"] == "waist_center" and "zoom_pos" in c
+    assert c["anchor"] == [0.5, 0.25]  # метка — в каждом такте: повтор не зависит от того, попала ли в запись её смена
     assert any(e["cmd"].startswith("#PTS") and e["ok"] for e in ep.events("cmd"))
     p = next(ep.events("position"))
     assert isinstance(p["pan"], int) and isinstance(p["tilt"], int) and isinstance(p["zoom"], int)

@@ -7,7 +7,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from ptztracker.control.zones import Zone
+from ptztracker.control.zones import Zone, zone_hint
 from ptztracker.ui.state import no_video_text
 from ptztracker.ui.theme import FONT_FAMILY, FS_CAPTION, R_TAG, REC_BLINK_S, SP, C, qcolor
 from ptztracker.ui.widgets import paint_brackets
@@ -64,8 +64,8 @@ class PreviewWidget(QWidget):
 
     targetClicked = Signal(int)
     imageSizeChanged = Signal()  # пришёл первый кадр или сменилось разрешение — плашки поверх видео к картинке
-    # своя зона (control.zones): оператор тянет её мышью — точка лица (доли кадра) и масштаб зон
-    zoneChanged = Signal(float, float, float)
+    # своя зона (control.zones): оператор тянет её мышью — точка лица (доли кадра), ширина и высота зоны
+    zoneChanged = Signal(float, float, float, float)
     zoneCommitted = Signal()  # отпустил кнопку — можно сохранять
     zoneReset = Signal()  # двойной клик по зоне
     zoneHoverChanged = Signal(bool)  # мышь над зоной — подсказка внизу видео показывает, как её тянуть
@@ -78,7 +78,8 @@ class PreviewWidget(QWidget):
     doubleClicked = Signal()  # двойной клик по видео вне зоны — войти в режим мыши
 
     click_guard: Callable[[], bool] | None = None  # False — клик не выбирает человека
-    zone_scale_of: Callable[[], float] | None = None  # масштаб сохранённой зоны этой камеры (по умолчанию 1)
+    # (ширина, высота) сохранённой зоны этой камеры относительно обычной (по умолчанию 1 и 1)
+    zone_size_of: Callable[[], tuple[float, float]] | None = None
     DRAG_PX = 6  # меньше — это клик (выбор человека), больше — перенос зоны
     HANDLE_PX = 12  # скобка-уголок мягкой зоны ловится в этом радиусе
 
@@ -126,14 +127,15 @@ class PreviewWidget(QWidget):
 
     def follow_zones(self):
         """(точка x, точка y, мёртвая зона, мягкая зона, сдвиг x) в долях кадра — или None, если слежение выключено.
-        Сдвиг — «место для взгляда» идущему человеку: его показывает только точка, рамка стоит, где её поставили."""
+        Сдвига точки больше нет (всегда 0): точка и рамка стоят, где их поставил оператор, а идущего регулятор сам
+        держит чуть впереди точки (framing.LEAD)."""
         f = self._follower
         if f is None or not f.enabled or f.output is None:
             return None
         c = f.controller
         e = c.effort
         ax, ay = c.composition.anchor
-        return (ax, ay, (e.dead_x, e.dead_y), (e.soft_x, e.soft_y), c.x.lead)
+        return (ax, ay, (e.dead_x, e.dead_y), (e.soft_x, e.soft_y), 0.0)
 
     def has_frame(self) -> bool:
         return self._image is not None
@@ -346,8 +348,8 @@ class PreviewWidget(QWidget):
             self._select_at(pos)  # вне зоны — выбор человека сразу, как раньше
             return
         f = self._follower.controller
-        scale = self.zone_scale_of() if self.zone_scale_of is not None else 1.0
-        self._press = (pos, hit, f.composition.anchor, self._zone_rects()[0], scale)
+        size = self.zone_size_of() if self.zone_size_of is not None else (1.0, 1.0)
+        self._press = (pos, hit, f.composition.anchor, self._zone_rects()[0], size)
         if hit != "move":
             self._drag = hit  # за уголок тянут сразу
 
@@ -360,19 +362,20 @@ class PreviewWidget(QWidget):
             self._mouse_mode_move(pos)
             return
         if self._press is not None:
-            p0, hit, (ax, ay), soft0, scale0 = self._press
+            p0, hit, (ax, ay), soft0, (w0, h0) = self._press
             if self._drag is None and (pos - p0).manhattanLength() > self.DRAG_PX:
                 self._drag = hit
             if self._drag is not None:
                 r = self._image_rect()
                 if self._drag == "move":
-                    x, y, s = ax + (pos.x() - p0.x()) / r.width(), ay + (pos.y() - p0.y()) / r.height(), scale0
-                else:  # уголок: зона растёт от своего центра одинаково по обеим осям
+                    x, y, w, h = ax + (pos.x() - p0.x()) / r.width(), ay + (pos.y() - p0.y()) / r.height(), w0, h0
+                else:  # уголок: зона растёт от своего центра, ширина и высота — каждая сама по себе
                     c = soft0.center()
-                    k = (abs(pos.x() - c.x()) / (soft0.width() / 2) + abs(pos.y() - c.y()) / (soft0.height() / 2)) / 2
-                    x, y, s = ax, ay, scale0 * k
-                z = Zone.clamped(x, y, s)
-                self.zoneChanged.emit(z.x, z.y, z.scale)
+                    x, y = ax, ay
+                    w = w0 * abs(pos.x() - c.x()) / (soft0.width() / 2)
+                    h = h0 * abs(pos.y() - c.y()) / (soft0.height() / 2)
+                z = Zone.clamped(x, y, w, h)
+                self.zoneChanged.emit(z.x, z.y, z.w, z.h)
                 self.update()
                 return
         hover = self._zone_hit(pos)
@@ -413,6 +416,17 @@ class PreviewWidget(QWidget):
 
     def zone_hovered(self) -> bool:
         return self._hover is not None or self._drag is not None
+
+    def zone_dragging(self) -> bool:
+        return self._drag is not None
+
+    def zone_text(self) -> str:
+        """Плашка зоны: её размер в процентах кадра и что она значит для этой камеры и потока («» — зоны нет)."""
+        z = self.follow_zones()
+        if z is None:
+            return ""
+        soft = z[3]
+        return zone_hint(soft[0], soft[1], float(getattr(self._follower.controller, "t_late", 0.0)))
 
     def leaveEvent(self, e):  # noqa: N802
         self._rec_mouse = None

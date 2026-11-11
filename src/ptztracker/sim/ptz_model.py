@@ -70,6 +70,8 @@ class SimPtz:
         # «Speed With Zoom Pos.» ON: камера сама замедляет pan/tilt на теле (в 20 раз). У живой HE42 выключена
         speed_with_zoom: bool = False,
         min_interval: float | None = None,
+        # на столько команда может прийти раньше min_interval без отказа «занята»: неровность прихода по сети
+        jitter_tolerance: float = 0.005,
         clock: Callable[[], float] = time.monotonic,
         tau: float = TAU_S,
         dead_time: float = DEAD_TIME_S,
@@ -83,6 +85,7 @@ class SimPtz:
         self._t = 0.0  # время симуляции (сумма dt), по нему отсчитывается мёртвое время
         self._pending: list[tuple[float, str, int]] = []  # (когда вступит, ось, код)
         self.min_interval = min_interval
+        self.jitter_tolerance = jitter_tolerance
         self._clock = clock
         self._lock = threading.RLock()
         self._last_cmd_t: float | None = None
@@ -109,6 +112,7 @@ class SimPtz:
         self.shutter, self.synchro, self.pedestal, self.detail, self.preset_speed = 0x0, 0x001, 0x096, 1, 625
         self.scene = 2  # Manual 1 (protocol.SCENES): в симуляторе картинку можно настраивать
         self.osd_open = False  # меню Panasonic на камере (DUS); картинку меню симулятор не рисует
+        self.night = False  # День / Ночь (#D6): ночью SimFrameSource отдаёт чёрно-белую картинку
         self.received: deque[str] = deque(maxlen=5000)
         self._target: tuple[float, float] | None = None
         self._zoom_target: float | None = None
@@ -172,7 +176,7 @@ class SimPtz:
             if (
                 self.min_interval is not None
                 and self._last_cmd_t is not None
-                and now - self._last_cmd_t < self.min_interval - 0.005
+                and now - self._last_cmd_t < self.min_interval - self.jitter_tolerance
             ):
                 self._last_cmd_t = now
                 return "eR2:" + cmd.lstrip("#")
@@ -331,6 +335,11 @@ class SimPtz:
         if m := re.fullmatch(r"#D1([01])", cmd):
             self.focus_auto = m[1] == "1"
             return f"d1{m[1]}"
+        if cmd == "#D6":
+            return f"d6{int(self.night)}"
+        if m := re.fullmatch(r"#D6([01])", cmd):
+            self.night = m[1] == "1"
+            return f"d6{m[1]}"
         if m := re.fullmatch(r"#D3([01])", cmd):
             self.iris_auto = m[1] == "1"
             return f"d3{m[1]}"

@@ -129,6 +129,21 @@ def test_wizard_latency_matches_sim():
 
 
 @pytest.mark.slow
+def test_wizard_latency_matches_known_sim_latency():
+    """Задержка 0,15 с (MJPEG (1) по прямому замеру 2026-11-10) и камера, быстрая как живая HE40: мастер даёт 0,15 ± 0,02.
+
+    У камер клуба мастер записал 0,079 с при прямом замере ≈ 0,15 с — проверяем, не занижает ли он сам."""
+    sim, srv, src, client = make(latency_s=0.15, tau=0.05, dead_time=0.05)
+    try:
+        msgs = []
+        cal = CalibrationRunner(client.send, src, msgs.append, zooms=[0xAAA], codes=(60, 70), stream_kind="sim").run()
+        assert abs(cal.video_latency["sim"] - 0.15) <= 0.02, (cal.video_latency, msgs)
+    finally:
+        src.stop()
+        srv.stop()
+
+
+@pytest.mark.slow
 def test_wizard_tau_matches_sim():
     """τ разгона — по #APC: ±0,1 с от симулятора (и не значение по умолчанию 0,37)."""
     sim, srv, src, client = make(tau=0.6)

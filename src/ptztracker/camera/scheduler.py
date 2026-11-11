@@ -35,6 +35,13 @@ ZOOM_WINDOW_AFTER_S = 0.25
 # регулятор считал скорости по зуму 10-секундной давности. Запрос — одна команда в секунду, поворот теряет из-за него
 # не больше одного окна.
 QUERY_MAX_WAIT_S = 0.4
+# Стоп поворота и заметное изменение его кода (от PT_URGENT_CODES: торможение, разгон, разворот) идут раньше
+# состарившегося запроса, но запрос ждёт не дольше QUERY_HARD_WAIT_S. Запись F9 2026-11-10: «стоп» доходил до камеры
+# через 0,3–1,2 с после решения регулятора — впереди шли опрос, пульс и зум, и камера проезжала человека.
+# Стоп поворота слежения опрос пропускает ещё на одно окно (стенд 2026-11-11: стоп ждал 0,26 с за двумя опросами):
+# опрос тогда ждёт до QUERY_HARD_WAIT_S + 2 окна = 0,86 с.
+QUERY_HARD_WAIT_S = 0.6  # с запасом меньше таймаута запроса положения (1 с, CameraSession): иначе опрос бросают, не дождавшись
+PT_URGENT_CODES = 3
 # Стопы поворота и зума не отбрасываются по счётчику ошибок: потерянный стоп оставляет камеру ехать.
 _NEVER_DROP = frozenset({STOP_PT, STOP_ZOOM})
 # Одно и то же предупреждение о сбое команды — не чаще раза в столько секунд: при долгом обрыве аварийные стопы
@@ -120,6 +127,7 @@ class CommandScheduler:
         # по которому видно, что камера спит, не прошёл бы никогда.
         self.probe_key: str | None = None
         self._probe_next = False
+        self._busy_streak = 0  # отказов «занята» (er2) подряд, без единого успешного ответа между ними
 
     # --- публичный API -------------------------------------------------
 
@@ -269,8 +277,18 @@ class CommandScheduler:
         item = min(candidates, key=lambda i: (i.priority, i.seq))
         if item.priority in (Priority.TRACKING, Priority.TRACKING_ZOOM) and self._st.queries:
             oldest = self._st.queries[0]
-            if now - oldest.submitted >= QUERY_MAX_WAIT_S:
-                item = oldest  # состарившийся запрос впереди слежения; аварийные и ручные команды он не обгоняет
+            age = now - oldest.submitted
+            # состарившийся запрос впереди слежения; аварийные и ручные команды он не обгоняет, срочный поворот
+            # (стоп, заметное изменение) — пропускает вперёд, пока сам не прождал QUERY_HARD_WAIT_S; стоп поворота —
+            # ещё одно окно сверх этого: стоп — одна команда, а каждое окно ожидания — проезд камеры мимо человека
+            hard = QUERY_HARD_WAIT_S + (self.min_interval if item.cmd == STOP_PT else 0.0)
+            if age >= QUERY_MAX_WAIT_S and not (age < hard and self._pt_urgent(item)):
+                item = oldest
+        elif item.priority == Priority.QUERY and item.key is not None and self._st.queries:
+            # состарившийся опрос, которого ждут (положение: #APC, #GZ), — раньше опросов настроек картинки: тех
+            # бывает десяток разом, а ответа на них никто не ждёт
+            if now - self._st.queries[0].submitted >= QUERY_MAX_WAIT_S:
+                item = self._st.queries[0]
         if self._probe_next and self.probe_key in self._st.slots:
             item = self._st.slots[self.probe_key]
         self._probe_next = False
@@ -287,12 +305,28 @@ class CommandScheduler:
         self._inflight = item
         return item
 
+    def _pt_urgent(self, item: _Item) -> bool:
+        """Поворот слежения, который камере нужен сейчас: стоп, код от PT_URGENT_CODES мимо исполняемого или повтор
+        после сбоя (исполняемый код неизвестен)."""
+        if item.key != "pt" or item.priority != Priority.TRACKING:
+            return False
+        last = self._st.last_sent.get("pt")
+        if item.cmd == STOP_PT or last is None:
+            return True
+        try:
+            new, old = (int(item.cmd[4:6]), int(item.cmd[6:8])), (int(last[4:6]), int(last[6:8]))
+        except ValueError:
+            return False
+        return max(abs(new[0] - old[0]), abs(new[1] - old[1])) >= PT_URGENT_CODES
+
     def _zoom_window_due(self, best: _Item, now: float) -> bool:
         """Отдать окно ожидающему зуму слежения вместо поворота слежения (см. ZOOM_WINDOW_AFTER_S)."""
         zoom = self._st.slots.get("zoom")
         if (best.key != "pt" or best.priority != Priority.TRACKING or zoom is None
                 or zoom.priority != Priority.TRACKING_ZOOM or self._pt_yielded):
             return False
+        if best.cmd == STOP_PT:
+            return False  # стоп поворота окно не уступает: после него поворот очередь больше не занимает
         return now - zoom.waiting_since >= ZOOM_WINDOW_AFTER_S
 
     def _drop_expired(self, now: float) -> None:
@@ -344,6 +378,7 @@ class CommandScheduler:
                 if item.key is not None:
                     self._st.last_sent[item.key] = item.cmd
                 self._unreachable_streak = 0
+                self._busy_streak = 0
                 self.last_error = None
                 # команда больше не «в пути»: снять под тем же замком, иначе submit между записью last_sent и
                 # finally в _execute увидит устаревшую команду в пути
@@ -373,9 +408,11 @@ class CommandScheduler:
                 log.info("Камера не принимает %s (автофокус) — не повторяю", item.cmd)
                 return
             elif isinstance(err, CameraError) and err.code == "er2":
-                # er2 «занята» (работает пульт) или «в ожидании» — повторять, пока команду не заменит новая;
-                # но следующим пусть уйдёт пульс: по нему видно, что камера спит
-                self._probe_next = item.key != self.probe_key
+                # er2 «занята» (работает пульт) или «в ожидании» — повторять, пока команду не заменит новая.
+                # Второй отказ подряд — следующим пусть уйдёт пульс: по нему видно, что камера спит. После одного
+                # отказа пульс вперёд не лезет: живая камера отказала разово, а повтор (стоп!) ждать не должен
+                self._busy_streak += 1
+                self._probe_next = item.key != self.probe_key and self._busy_streak >= 2
             elif item.priority != Priority.EMERGENCY and item.cmd not in _NEVER_DROP:
                 item.errors += 1
             else:

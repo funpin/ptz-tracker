@@ -41,6 +41,21 @@ def phase_fade(u: float, length: float, edge: float = 0.5) -> float:
 
 
 WALK_RAMP_S = 0.5  # человек разгоняется и тормозит не мгновенно
+# Человек встаёт боком или наклоняется: «нос → плечи» и ширина плеч в кадре сжимаются (живой прогон 2026-11-10: размер
+# падал в 5–6 раз за 2,5 с). В среднем раз в TURN_EVERY_S, на 1–3 с, размер умножается на 0,2–0,5.
+TURN_EVERY_S, TURN_LENGTH_S, TURN_SHRINK = 12.0, (1.0, 3.0), (0.2, 0.5)
+
+
+def turn_events(seed: int, T: float) -> tuple[tuple[float, float, float], ...]:
+    """Когда человек поворачивается боком или наклоняется: (начало, длительность, множитель размера) до момента T."""
+    rng = random.Random(seed * 7919 + 13)
+    out, t = [], rng.uniform(3.0, TURN_EVERY_S)
+    while t < T:
+        length = rng.uniform(*TURN_LENGTH_S)
+        out.append((t, length, rng.uniform(*TURN_SHRINK)))
+        t += max(length + 1.0, rng.uniform(4.0, 2 * TURN_EVERY_S - 4.0))
+    return tuple(out)
+
 WALK_BOB_M = 0.025  # качание корпуса на ходу, метры
 
 
@@ -67,10 +82,11 @@ class RandomRoute:
     swaying=True — докладчик больше стоит и сильно шатается из стороны в сторону.
     """
 
-    def __init__(self, seed: int, half_width_m: float = 2.5, swaying: bool = False):
+    def __init__(self, seed: int, half_width_m: float = 2.5, swaying: bool = False, max_speed: float = 1.4):
         self.rng = random.Random(seed)
         self.half = half_width_m
         self.swaying = swaying
+        self.max_speed = max(0.3, max_speed)  # м/с: не быстрее этого идёт (спокойный шаг — 0,6)
         self.legs: list[Leg] = []
         self._end = 0.0
         self._x = 0.0
@@ -96,7 +112,7 @@ class RandomRoute:
         if abs(self._x + side * dist) > self.half:
             side = -side
         target = max(-self.half, min(self.half, self._x + side * dist))
-        speed = self.rng.uniform(0.25, 1.4)
+        speed = self.rng.uniform(0.25, self.max_speed)
         length = max(1.2, abs(target - self._x) / speed + WALK_RAMP_S)
         self.legs.append(Leg(self._end, length, self._x, target))
         self._end += length

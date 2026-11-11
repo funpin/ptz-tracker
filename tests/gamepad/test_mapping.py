@@ -14,10 +14,10 @@ from ptztracker.gamepad.intents import (
     PanTilt,
     Preset,
     PushFocus,
-    SaveMoment,
     SpeedStep,
     Stop,
     ToggleFollow,
+    ToggleVideo,
     Zoom,
 )
 from ptztracker.gamepad.mapping import Mapper
@@ -194,11 +194,11 @@ def test_create_short_next_camera():
     assert m.update(pad(), 0.3) == [NextCamera()]
 
 
-def test_create_long_saves_moment_once_release_silent():
+def test_create_long_toggles_video_once_release_silent():
     m = mk()
     m.update(pad({"create"}), 0.0)
     m.update(pad({"create"}), 0.5)
-    assert m.update(pad({"create"}), 1.0) == [SaveMoment()]
+    assert m.update(pad({"create"}), 1.0) == [ToggleVideo()]  # было «сохранить момент» — решение оператора 2026-11-10
     assert m.update(pad({"create"}), 1.5) == []
     assert m.update(pad(), 1.6) == []
 

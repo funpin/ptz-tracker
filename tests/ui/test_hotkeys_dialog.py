@@ -22,7 +22,7 @@ def test_dialog_tables(qtbot):
     assert any("тачпад" in k and "стоп камеры" in v for k, v in text.items())
     assert any("r3" in k and "слежение" in v for k, v in text.items())
     assert any("create" in k and "следующая камера" in v for k, v in text.items())
-    assert any("create" in k and "момент" in v for k, v in text.items())
+    assert any("create" in k and "запись видео" in v and "момент" not in v for k, v in text.items())
     assert any("options" in k and "меню" in v for k, v in text.items())
 
 

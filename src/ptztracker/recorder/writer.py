@@ -44,6 +44,10 @@ _IDLE_S = 0.02
 EventItem = tuple[float, str]
 FrameItem = tuple[float, tuple[int, int, int, bytes]]
 
+# Имена, которые сейчас пишутся, — общие на все камеры: F9 сохраняет их разом, в одну секунду, в одну папку
+_reserved: set[Path] = set()
+_reserved_lock = threading.Lock()
+
 
 def _clock() -> dict:
     """Пара часов для привязки monotonic-меток записи к настенному времени."""
@@ -107,7 +111,6 @@ class BlackBox:
         self._events = RingBuffer(buffer_s)
         self._lock = threading.Lock()  # кольцевые буферы и имена файлов
         self._pump_lock = threading.Lock()  # один обработчик очередей за раз — порядок сохраняется
-        self._reserved: set[Path] = set()
         self._last_log = float("-inf")
         self._closed = False
         self._stop = threading.Event()
@@ -173,8 +176,8 @@ class BlackBox:
                     log.exception("Не удалось сохранить запись %s", path)
                     fut.set_exception(e)
                 finally:
-                    with self._lock:
-                        self._reserved.discard(path)
+                    with _reserved_lock:
+                        _reserved.discard(path)
 
             threading.Thread(target=write, name="blackbox-save", daemon=True).start()
         except Exception as e:
@@ -322,10 +325,11 @@ class BlackBox:
         base = f"ПТЗ_{time.strftime('%Y-%m-%d_%H-%M-%S')}_{_safe_reason(reason)}"
         path = self.out_dir / f"{base}.zip"
         n = 1
-        while path in self._reserved or path.exists():
-            n += 1
-            path = self.out_dir / f"{base}_{n}.zip"
-        self._reserved.add(path)
+        with _reserved_lock:
+            while path in _reserved or path.exists():
+                n += 1
+                path = self.out_dir / f"{base}_{n}.zip"
+            _reserved.add(path)
         return path
 
     def _warn(self, what: str, e: Exception) -> None:

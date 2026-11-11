@@ -173,3 +173,42 @@ def test_max_rate_limits_bursts(tmp_path):
     assert _peak_second_bits(capped.paths[0]) < 300_000 * 1.6
     assert _peak_second_bits(free.paths[0]) > _peak_second_bits(capped.paths[0])
 
+
+
+def _copy_with_timestamp_step_back(src, folder, at=(30, 31), back=2):
+    """Копия, в которой у пакетов `at` отметки времени отступили назад на `back` шагов кадра — так камера
+    подправляет часы потока (AW-HE40, клуб, 2026-11-10: раз в 30–35 с)."""
+    with av.open(str(src)) as c:
+        s = c.streams.video[0]
+        w = CopyWriter(folder, "cam", s)
+        packets = [p for p in c.demux(s) if p.dts is not None]
+        step = packets[1].dts - packets[0].dts
+        for i, p in enumerate(packets):
+            if i in at:
+                p.dts -= back * step
+                p.pts -= back * step
+            w.write_packet(p)
+        w.close()
+    return w
+
+
+def test_copy_keeps_packets_whose_timestamps_stepped_back(h264_file, tmp_path):
+    """Пропущенный пакет — это рассыпанная картинка до следующего ключевого кадра (жалоба оператора 2026-11-10)."""
+    w = _copy_with_timestamp_step_back(h264_file, tmp_path)
+    assert count_frames(w.paths[0]) == 75
+    with av.open(str(w.paths[0])) as c:
+        dts = [p.dts for p in c.demux(c.streams.video[0]) if p.dts is not None]
+    assert all(b > a for a, b in zip(dts, dts[1:]))
+
+
+def test_copy_keeps_real_time_when_stream_clock_jumps_for_good(h264_file, tmp_path):
+    """Живая AW-HE40 (2026-11-10): на 5-й секунде отметки всех следующих пакетов ушли назад и не вернулись.
+    Запись не должна ни терять пакеты, ни сжимать 10 секунд в мгновение, ни оставлять дыру в минуты."""
+    for name, back in (("назад", 250), ("вперёд", -250)):  # ±10 с при 25 к/с
+        folder = tmp_path / name
+        w = _copy_with_timestamp_step_back(h264_file, folder, at=range(30, 75), back=back)
+        with av.open(str(w.paths[0])) as c:
+            v = c.streams.video[0]
+            t = [float(p.dts * v.time_base) for p in c.demux(v) if p.dts is not None]
+        steps = [round(b - a, 3) for a, b in zip(t, t[1:])]
+        assert len(t) == 75 and set(steps) == {0.04}, (name, sorted(set(steps)))
