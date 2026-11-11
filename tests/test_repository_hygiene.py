@@ -10,6 +10,7 @@ ALLOWED_ZIPS = {  # эпизоды без паролей (в meta username = nul
     "tests/data/episodes/2026-10-29-r4d-sharp.zip",
     "tests/data/episodes/2026-10-29-r4-sharp.zip",
     "tests/data/episodes/2026-10-30-he40-tele.zip",
+    "tests/data/episodes/2026-11-10-sim-close-up.zip",  # F9 на симуляторе: ip = sim, без кадров (проверено 2026-11-11)
 }
 
 
