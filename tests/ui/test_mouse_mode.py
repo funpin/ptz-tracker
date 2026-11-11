@@ -70,9 +70,12 @@ def test_esc_and_cell_change_leave_mouse_mode(qtbot, tmp_path):
 def test_double_click_on_video_enters(qtbot, tmp_path):
     w = make(qtbot, tmp_path)
     p = w.preview
-    at = QPoint(10, p.height() - 10)  # вне зоны слежения
-    qtbot.waitUntil(lambda: p.widget_to_frame(QPointF(at)) is not None, timeout=5000)  # до первого кадра клик не по видео
-    qtbot.mouseDClick(p, Qt.LeftButton, pos=at)
+
+    def at():  # вне зоны слежения. Считаем заново: на занятой машине первый кадр приходит раньше, чем окно разложит
+        return QPoint(10, p.height() - 10)  # клетки, и высота видео ещё меняется (CI macos-15, 2026-11-11: 306 → 271)
+
+    qtbot.waitUntil(lambda: p.widget_to_frame(QPointF(at())) is not None, timeout=5000)  # до первого кадра клик не по видео
+    qtbot.mouseDClick(p, Qt.LeftButton, pos=at())
     assert w.mouse_slot == w.grid.selected
     w.close()
 

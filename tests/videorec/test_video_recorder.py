@@ -410,16 +410,20 @@ def test_light_recording_takes_frames_from_h264_preview(tmp_path, h264_file_50, 
     src = OneClientPreview(h264_file_50)
     r, inputs = shared_rec(tmp_path, src, mode="light")
     src.start()
+    t0 = time.monotonic()
     r.start()
     try:
         assert wait_for(lambda: r.snapshot().bytes_total > 0)
         time.sleep(1.0)
     finally:
         s = finish(r)
+        took = time.monotonic() - t0
         src.stop()
     assert inputs.calls == [] and s.error is None
     n = count_frames(s.paths[0])
-    assert 5 <= n <= 40  # около секунды по 25 к/с, а не 50
+    # около 25 к/с, а не 50. Счёт по времени, которое запись шла на самом деле: на занятой машине «секунда» длиннее
+    # (CI macos-15, 2026-11-11: 41 кадр при прежнем пределе 40). При 50 к/с было бы 50·took — заметно больше предела
+    assert 5 <= n <= 30 * took + 8, (n, took)
 
 
 def test_preview_on_mjpeg_keeps_recorders_own_connection(tmp_path, h264_file, fast_retry):

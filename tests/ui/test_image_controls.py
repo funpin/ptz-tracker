@@ -164,7 +164,9 @@ def test_dpad_from_auto_unticks_auto_boxes(qtbot, tmp_path):
     assert c.iris_auto.isChecked() and s.sim.iris_auto
     pad = w.pad_connected()
     w._on_pad_intents([IrisStep(+1)], pad)
-    qtbot.waitUntil(lambda: not s.sim.iris_auto, timeout=2000)
+    # 5 с: шаг ириса ждёт своей очереди за опросом настроек картинки, который вызвала смена gain (10–11 запросов по
+    # 0,13 с — 1,4–1,5 с на свободной машине; с запросом «День / Ночь» их стало на один больше, и 2 с на CI не хватало)
+    qtbot.waitUntil(lambda: not s.sim.iris_auto, timeout=5000)
     qtbot.waitUntil(lambda: not c.iris_auto.isChecked() and c.iris_slider.isEnabled(), timeout=2000)
     assert abs(c.iris_slider.value() - round(100 * (s.image.iris - P.LENS_MIN) / (P.LENS_MAX - P.LENS_MIN))) <= 1
     n = len(s.sim.received)

@@ -200,7 +200,10 @@ def test_summary_stays_after_successful_run(qtbot):
     d.off_air_check.setChecked(True)
     d.start_button.click()
     qtbot.waitUntil(lambda: bool(saved), timeout=5000)
-    assert "0,25 с" in d.numbers_view.toPlainText()
+    # результат идёт в окно своим сигналом и может прийти чуть позже сохранения (Windows CI, 2026-11-11)
+    qtbot.waitUntil(lambda: "0,25 с" in d.numbers_view.toPlainText(), timeout=2000)
+    qtbot.wait(100)
+    assert "0,25 с" in d.numbers_view.toPlainText()  # и остаётся
 
 
 def test_menu_has_calibration(qtbot, tmp_path):
