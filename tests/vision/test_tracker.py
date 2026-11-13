@@ -319,3 +319,45 @@ def test_one_frame_false_detection_is_not_adopted():
     t = lose_target(tr, motion)
     feed(tr, t, [person(150, 200), person(410, 140, 124, 305)], motion)  # вспышка в один кадр
     assert tr.target_state == "lost" and tr.pop_adoptions() == []
+
+
+# --- площадка 2026-11-13: группа на сцене, в кадре 4–12 человек ---
+
+
+def test_target_prefers_the_strong_detection_over_a_weak_fragment():
+    """Нейросеть дала на вокалиста две рамки: уверенную на всего человека и слабую (0,1) на его часть. Цель ушла на
+    слабую, уверенная стала «новым человеком»; слабая через секунду пропала — и цель «потеряна» на 51 с, хотя человек
+    всё это время был в кадре."""
+    tr = PersonTracker()
+    step(tr, 0.0, (400, 100, RED, 200, 580))
+    tr.select_at(400, 300)
+    for i in range(1, 12):  # 0,7 с: две рамки на одного человека; слабая — на «чистый» кусок одежды и по цвету
+        # совпадает с целью точнее, чем уверенная (в ту попал сосед за спиной): так было в записи 2026-11-13
+        step(tr, i * DT, (400, 100, (70, 70, 190), 200, 580), (420, 110, RED, 150, 580, 0.1))
+    tgt = tr.target
+    assert tr.target_state == "tracking"
+    assert tgt.score >= 0.8 and tgt.box[2] - tgt.box[0] >= 190  # цель — на уверенной рамке
+    assert len(tr.tracks) == 1  # и второго «человека» на его месте не появилось
+
+
+def test_lost_target_is_not_recognised_across_the_frame():
+    """Цель пропала, а через секунду похожий по одежде человек появился в другом конце кадра (музыканты в чёрном) —
+    в записи цель за 4 с шесть раз «узнавалась» в разных людях, и камера бросалась за ними. Человек за секунду через
+    весь кадр не переходит."""
+    tr = PersonTracker()
+    step(tr, 0.0, (300, 200, RED))
+    tr.select_at(300, 300)
+    for i in range(1, 6):
+        step(tr, i * DT, (300, 200, RED))
+    t = 6 * DT
+    for _ in range(10):  # 0,7 с без цели
+        tr.update([], t, np.full((720, 1280, 3), 25, np.uint8))
+        t += DT
+    for _ in range(6):  # такой же по одежде — в 800 пикселях от места потери
+        step(tr, t, (1100, 200, RED))
+        t += DT
+    assert tr.target_state == "lost"
+    for _ in range(6):  # а рядом с местом потери — узнаём
+        step(tr, t, (340, 200, RED))
+        t += DT
+    assert tr.target_state == "tracking"

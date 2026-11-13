@@ -298,3 +298,17 @@ def test_sdl_backend_led_takes_one_tuple_and_failures_are_logged(caplog):
         b.rumble(0.5, 0.5, 100)
     msgs = [r.getMessage() for r in caplog.records]
     assert sum("set_led" in m for m in msgs) == 1 and sum("rumble" in m for m in msgs) == 1
+
+
+def test_finish_waits_for_the_video_reader_before_exit():
+    """Выход из --lab сразу после stop(): поток приёма видео ещё в чтении, Python завершается — падение
+    (отчёт macOS 2026-11-13). Перед выходом ждём поток приёма."""
+    from unittest.mock import Mock
+
+    from ptztracker import lab
+
+    session, order = Mock(), []
+    session.stop.side_effect = lambda: order.append("stop")
+    session.wait_video_stopped.side_effect = lambda timeout: order.append(("wait", timeout)) or True
+    assert lab._finish(session, {"command": "record", "zip": "x.zip"}, 0, stopped=True) == 0
+    assert order[0] == "stop" and order[1][0] == "wait" and order[1][1] >= 5.0  # не меньше сетевого таймаута чтения

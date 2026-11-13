@@ -48,6 +48,23 @@ SPEED_SURE_LOW, SPEED_SURE_HIGH = 4.4, 7.0  # доли этой скорости
 WALK_RISE_S, WALK_FALL_S = 0.1, 0.08
 WALK_COOL_S = 1.2  # остановился: столько вес не поднимается снова — после ходьбы человек обычно шатается на месте (запись F9)
 KEEP_S = 0.5
+# Замеру верим не всякому (площадка 2026-11-13, группа в клубе, docs/field/2026-11-13-live.md):
+# — кадры после затора в сети приходят пачкой, с интервалом в миллисекунды, а момент съёмки мы знаем только по приходу
+#   кадра: скорость по такой паре замеров получается в разы больше настоящей (отъезд «от края» кодом 10);
+# — нейросеть на один кадр ставит ключевые точки цели в другое место (нос 0,34 → 0,79 → 0,34 высоты кадра): по такому
+#   замеру камера за 0,1 с ушла на отъезд кодом 1 и наклон кодом 40.
+BURST_S = 0.02  # замер раньше этого после прошлого — из пачки: пропускаем
+# Скачок — замер дальше этого от места, где человек должен быть при нынешней скорости (доли кадра; JUMP_V — кадр/с на
+# время от прошлого замера, но не дольше JUMP_DT: пока замеры спорные, порог не растёт). Что дальше — решает следующий
+# замер: вернулся — это был сбой; стоит в новом месте — цель там (перескочила на соседа); уходит дальше в ту же
+# сторону — это быстрый ход, оба замера идут в дело.
+JUMP_V, JUMP_MIN, JUMP_DT = 1.5, 0.08, 0.1
+JUMP_GIVE_UP = 3  # столько спорных замеров подряд — верим последнему: это уже не сбой, а новое место
+# Цель оказалась в новом месте скачком — чаще всего трекер перепутал её с соседом (площадка 2026-11-13: зрители в кадре,
+# цель «перепрыгивала» на них десятки раз в минуту). Пока новое место не продержалось столько секунд, камера за ним не
+# идёт и по нему не отъезжает.
+SETTLE_S = 0.6
+GAP_SLACK = 1.0  # после паузы в замерах: насколько (в долях пройденного бы пути) он мог оказаться ближе или дальше
 
 
 def _alpha(dt: float, cutoff_hz: float) -> float:
@@ -84,6 +101,9 @@ class PersonEstimator:
         self._stopping = 0  # сколько замеров подряд короткое окно показывает остановку
         self._hist: list[tuple[float, float]] = []
         self._zone = 1.0  # размер зоны оператора по этой оси относительно обычной
+        self._doubt: tuple[float, float] | None = None  # спорный замер (t, z): скачок, который ещё не подтвердился
+        self._doubts = 0
+        self._jump_t: float | None = None  # когда цель скачком оказалась в новом месте
 
     def update(self, t: float, z: float, k: float, zone: float = 1.0) -> None:
         """Новый замер: z — мировая координата в момент съёмки t, k — масштаб зума в этот момент,
@@ -95,10 +115,22 @@ class PersonEstimator:
             self._hist = [(t, z)]
             return
         if t - self.t > GAP_S:
-            self.t, self.pos, self.center, self.vel, self.walk = t, z, z, 0.0, 0.0
-            self._dx, self._stopping, self._hist, self._dir, self._extreme = 0.0, 0, [(t, z)], 0, None
-            self._peak = z
+            # вернулся после паузы не там, куда шёл (мог встать, мог пойти вдвое быстрее — но не назад и не в сторону), —
+            # сначала присмотреться: это может быть другой человек. Кто шёл и на полсекунды скрылся за соседом, тот
+            # продолжает путь — его ведём сразу
+            last, gap = (self._hist[-1][1] if self._hist else z), t - self.t
+            moved = abs(z - (last + self.vel * gap)) * k > JUMP_MIN + GAP_SLACK * abs(self.vel) * k * gap
+            self._restart(t, z)
+            self._jump_t = t if moved else None
             return
+        if t - self.t < BURST_S:
+            return  # кадр из пачки: когда он снят на самом деле — неизвестно
+        if self._jumped(t, z, k):
+            return
+        self._apply(t, z, k)
+
+    def _apply(self, t: float, z: float, k: float) -> None:
+        """Замер, которому верим: фильтр положения, скорость, вес «идёт», середина переминания."""
         dt = max(1e-3, t - self.t)
         self.t = t
         self._dx += _alpha(dt, D_CUTOFF) * ((z - self.pos) / dt - self._dx)
@@ -111,6 +143,47 @@ class PersonEstimator:
         center_t = CENTER_STILL_S + (CENTER_WALK_S - CENTER_STILL_S) * self.walk
         self.center += (self.pos - self.center) * (1 - math.exp(-dt / center_t))
         self._forget_sway(dt)
+
+    def _restart(self, t: float, z: float) -> None:
+        """Человек оказался в новом месте (долгая пауза в замерах, подтверждённый скачок): всё, кроме размаха, заново."""
+        self.t, self.pos, self.center, self.vel, self.walk = t, z, z, 0.0, 0.0
+        self._dx, self._stopping, self._hist, self._dir, self._extreme = 0.0, 0, [(t, z)], 0, None
+        self._peak = z
+        self._doubt, self._doubts = None, 0
+
+    def _jumped(self, t: float, z: float, k: float) -> bool:
+        """Замер-скачок. True — замер отложен до следующего (или принят как новое место): обычным путём не идёт."""
+        last = self._hist[-1][1] if self._hist else self.pos
+        dt = t - self.t
+        # от того места, где он должен быть при нынешней скорости: кто ровно идёт, тот не «скачет»
+        off_course = abs(z - (last + self.vel * dt)) * k > max(JUMP_MIN, JUMP_V * min(dt, JUMP_DT))
+        doubt, self._doubt = self._doubt, None
+        if not off_course:
+            self._doubts = 0  # на своём месте: спорный замер, если был, — сбой
+            return False
+        if doubt is None:
+            self._doubt, self._doubts = (t, z), 1
+            return True
+        if abs(z - doubt[1]) * k <= JUMP_MIN:
+            self._restart(t, z)  # стоит в новом месте: цель там (или это уже другой человек)
+            self._jump_t = t
+            return True
+        if (z - doubt[1]) * (doubt[1] - last) > 0:
+            self._doubts = 0
+            self._apply(doubt[0], doubt[1], k)  # уходит дальше в ту же сторону: быстрый ход — оба замера в дело
+            return False
+        self._doubts += 1
+        if self._doubts >= JUMP_GIVE_UP:  # мечется: верим последнему, как новому месту
+            self._restart(t, z)
+            self._jump_t = t
+            return True
+        self._doubt = (t, z)
+        return True
+
+    @property
+    def settling(self) -> bool:
+        """Цель недавно скачком сменила место и ещё не продержалась там SETTLE_S: ей пока не верим."""
+        return self._jump_t is not None and self.t is not None and self.t - self._jump_t < SETTLE_S
 
     def _velocity(self, t: float) -> float:
         long = _slope([(a, b) for a, b in self._hist if t - a <= VEL_WINDOW_S])

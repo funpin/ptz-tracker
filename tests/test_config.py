@@ -3,6 +3,7 @@ import os
 
 import pytest
 
+from ptztracker import config
 from ptztracker.config import (
     CameraConfig,
     ConfigStore,
@@ -518,3 +519,23 @@ def test_default_video_folder_is_separate_from_blackbox():
 
     assert video_dir(AppConfig()).name == "Записи камер" and video_dir(AppConfig()) != record_dir(AppConfig())
 
+
+
+def test_stage_area_round_trip_and_old_config(tmp_path):
+    store = ConfigStore(tmp_path / "config.json")
+    cfg = config.AppConfig(cameras=[CameraConfig(id="a", name="A", ip="10.0.0.1"),
+                             CameraConfig(id="b", name="B", ip="10.0.0.2",
+                                          stage_area={"pan": [-20.0, 20.0], "tilt": [-5.0, 30.0], "on": True})])
+    store.save(cfg)
+    back = store.load()
+    assert back.cameras[0].stage_area is None  # не задана — как в старых настройках
+    assert back.cameras[1].stage_area == {"pan": [-20.0, 20.0], "tilt": [-5.0, 30.0], "on": True}
+
+
+def test_bad_stage_area_ignored(tmp_path):
+    store = ConfigStore(tmp_path / "config.json")
+    store.save(config.AppConfig(cameras=[CameraConfig(id="a", name="A", ip="10.0.0.1")]))
+    raw = json.loads(store.path.read_text(encoding="utf-8"))
+    raw["cameras"][0]["stage_area"] = {"pan": "мусор"}
+    store.path.write_text(json.dumps(raw), encoding="utf-8")
+    assert store.load().cameras[0].stage_area is None

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 import platform
 import re
 import threading
@@ -26,6 +27,8 @@ from ptztracker.camera.models import IMAGE_FEATURES, ModelProfile, profile_for
 from ptztracker.camera.scheduler import CommandScheduler, Priority
 from ptztracker.camera.speed import velocity_to_code
 from ptztracker.config import AppConfig, CameraConfig, get_password, record_dir
+from ptztracker.control.stage_area import CameraView, StageArea, hfov_of_zoom_x, moved_view
+from ptztracker.control.stage_area import flags as stage_flags
 from ptztracker.recorder import NullRecorder, Recorder, safe_event
 from ptztracker.video.frames import FrameSource
 from ptztracker.video.rtsp import RtspSource, stream_url, stream_urls, with_credentials
@@ -47,6 +50,10 @@ STEP_CACHE_S = 1.0  # столько живёт значение ириса/gain
 PENDING_STEP_TTL_S = 2.0  # шаг, ждущий ответа камеры, устаревает
 _BUSY_RE = re.compile(r"\ber2\b", re.IGNORECASE)  # ответ «занята»: планировщик повторит запрос
 PTZ_HISTORY_S = 30.0  # история положения для служебной клетки «графики»
+VIEW_MAX_AGE_S = 3.0  # область сцены: ответ #APC старше — вид камеры неизвестен, область не действует
+VIEW_STILL_DEG = 0.05  # два ответа #APC подряд ближе — камера стоит (шаг шкалы 0,0083°)
+VIEW_STILL_ZOOM_LN = 0.01  # то же для зума: ln отношения масштабов
+VIEW_SETTLE_S = 0.5  # после ручной команды камера ещё докатывается: ответы за это время виду не годятся
 PTZ_POLL_MIN_S = 0.4  # опрос положения не чаще: свежий ответ (любого источника) — не спрашиваем
 
 
@@ -162,6 +169,12 @@ class CameraSession:
         self._ptz_hist: deque[PtzPosition] = deque()
         self._zoom_x: float | None = None
         self._ptz_poll_t = -1e9
+        self._gz_reply_t = -1e9  # последний ответ #GZ
+        self._manual_t = -1e9  # последняя ручная команда движения
+        # для области сцены: (pan°, tilt°, момент ответа #APC, камера стоит) и (масштаб, момент ответа #GZ, зум стоит)
+        self._view_apc: tuple | None = None
+        self._view_gz: tuple | None = None
+        self.stage_area = StageArea.from_json(cfg.stage_area)
         self._apc_t = -1e9  # последний ответ #APC: свежий — опрос не нужен (#GZ не в счёт)
         self._gz_t = -1e9  # последний ответ #GZ или запрос его (poll_zoom)
         # сведения о камере: стартуют с настроек, уточняются ответами камеры; настройки сессия не меняет —
@@ -221,6 +234,7 @@ class CameraSession:
         from ptztracker.vision.analyzer import Analyzer
 
         self.analyzer = Analyzer(self.frames, self._detector_factory(), recorder=self.recorder)
+        self.analyzer.stage = self._stage_flags
         self.analyzer.start()
         self._start_follower()
 
@@ -283,6 +297,16 @@ class CameraSession:
         rec, self.recorder = self.recorder, NullRecorder()
         # close() дописывает постоянную запись на диск — в фоне, чтобы окно не ждало
         threading.Thread(target=rec.close, name="blackbox-close", daemon=True).start()
+
+    def wait_video_stopped(self, timeout: float) -> bool:
+        """После stop(), перед выходом из программы: дождаться потока приёма видео (stop() его не ждёт, чтобы окно не
+        висло). True — поток закончился или его нет."""
+        wait = getattr(self.frames, "wait", None)
+        try:
+            return bool(wait(timeout)) if wait else True
+        except Exception:  # noqa: BLE001 — на выходе не падаем
+            log.debug("Ожидание потока видео прервалось", exc_info=True)
+            return True
 
     def start_video(self, folder: Path, mode: str, split_bytes: int | None) -> None:
         """Начать запись видео в файл. Только читает камеру: команд не шлёт, слежение и флажки не трогает."""
@@ -380,6 +404,7 @@ class CameraSession:
         r = self.analyzer.latest() if self.analyzer else None
         return {
             "stream_kind": self.stream_kind(),
+            "stage_area": None if self.stage_area is None else self.stage_area.to_json(),
             "camera_model": self.model,
             "camera_firmware": self.firmware,
             "camera_unsupported": list(self.camera_info().unsupported),
@@ -457,9 +482,11 @@ class CameraSession:
             query_pan_tilt=query_pan_tilt,
         )
         self.analyzer.motion = self.follower.picture_motion
+        self.follower.stage_on = self.stage_area is not None and self.stage_area.on
 
     def _manual(self) -> None:
         """Ручное действие оператора: слежение и агент уступают немедленно, до отправки команды."""
+        self._manual_t = time.monotonic()
         if self.on_manual:
             try:
                 self.on_manual()
@@ -614,6 +641,46 @@ class CameraSession:
             while self._ptz_hist and self._ptz_hist[0].t < old:
                 self._ptz_hist.popleft()
 
+    def set_stage_area(self, area: StageArea | None) -> None:
+        """Область сцены этой камеры (None — не задана). Камере ничего не шлёт, слежение не трогает."""
+        self.stage_area = area
+        self.cfg.stage_area = None if area is None else area.to_json()
+        if self.follower is not None:
+            self.follower.stage_on = area is not None and area.on
+
+    def _stage_flags(self, people, t: float, frame_size) -> list[bool] | None:
+        area = self.stage_area
+        if area is None or not area.on:
+            return None
+        return stage_flags(area, self.stage_view(t), people, frame_size)
+
+    def stage_view(self, t: float) -> CameraView | None:
+        """Куда смотрела камера в кадре, пришедшем в момент t: последний ответ #APC и зум, досчитанные моделью
+        слежения. None — не знаем: ответа нет дольше VIEW_MAX_AGE_S или после него камеру двигали вручную."""
+        apc, gz = self._view_apc, self._view_gz  # каждая пара (значение, момент, «стоит») читается целиком
+        if apc is None or gz is None:
+            return None
+        (pan, tilt, apc_t, apc_still), (zoom_x, gz_t, gz_still) = apc, gz
+        if abs(t - apc_t) > VIEW_MAX_AGE_S or abs(t - gz_t) > 2 * VIEW_MAX_AGE_S:
+            return None  # ответ устарел — или кадр намного старше ответа (видео зависло)
+        if min(apc_t, gz_t) < self._manual_t + VIEW_SETTLE_S:
+            return None
+        view = CameraView(pan, tilt, hfov_of_zoom_x(zoom_x))
+        f = self.follower
+        if f is None or not f.enabled:
+            # без слежения модели движения нет: верим положению, только если камера стоит (два ответа подряд сошлись);
+            # иначе это проезд пресета или чужой пульт — вид неизвестен
+            return view if apc_still and gz_still else None
+        try:
+            # зум и положение камера сообщила в разные моменты: каждое досчитываем от своего ответа
+            lat = f.video_latency()
+            r = f.picture_motion(gz_t + lat, t)[0]
+            _, sx, sy = f.picture_motion(apc_t + lat, t)
+            return moved_view(moved_view(view, (r, 0.0, 0.0)), (1.0, sx, sy))
+        except Exception as e:  # модель камеры не должна ронять анализ и окно
+            log.debug("Вид камеры по модели не получен: %s", e)
+            return None
+
     def poll_position(self) -> None:
         """Спросить #APC/#GZ (очередь QUERY), если свежего ответа нет; в ожидании камера ответит ER2 — не шлём."""
         if self.scheduler is None or self._quiet or self._power in ("standby", "switching"):
@@ -644,13 +711,23 @@ class CameraSession:
         if cmd == P.Q_ZOOM:
             frac = (P.parse_zoom(reply) - P.LENS_MIN) / (P.LENS_MAX - P.LENS_MIN)
             self._zoom_x = he42.ZOOM_RATIO ** min(1.0, max(0.0, frac))
-            self._gz_t = time.monotonic()
+            self._gz_t = self._gz_reply_t = time.monotonic()
+            prev = self._view_gz
+            still = (prev is not None and self._gz_t - prev[1] <= 2 * VIEW_MAX_AGE_S
+                     and abs(math.log(self._zoom_x / prev[0])) < VIEW_STILL_ZOOM_LN)
+            self._view_gz = (self._zoom_x, self._gz_t, still)
             p = self._ptz
             if p is not None:
                 self._add_ptz(dataclasses.replace(p, t=time.monotonic(), zoom_x=self._zoom_x))
             return
         pan, tilt = P.parse_pan_tilt(reply)
         self._apc_t = time.monotonic()
+        pan_deg = (pan - he42.APC_CENTER) * he42.APC_DEG_PER_UNIT
+        tilt_deg = (tilt - he42.APC_CENTER) * he42.APC_DEG_PER_UNIT
+        prev = self._view_apc
+        still = (prev is not None and self._apc_t - prev[2] <= VIEW_MAX_AGE_S
+                 and abs(pan_deg - prev[0]) < VIEW_STILL_DEG and abs(tilt_deg - prev[1]) < VIEW_STILL_DEG)
+        self._view_apc = (pan_deg, tilt_deg, self._apc_t, still)
         self._add_ptz(PtzPosition(
             self._apc_t,
             (pan - he42.APC_CENTER) * he42.APC_DEG_PER_UNIT,

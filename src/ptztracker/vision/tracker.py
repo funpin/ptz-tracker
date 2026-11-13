@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -17,6 +18,7 @@ from typing import Literal
 import cv2
 import numpy as np
 
+from ptztracker.control.stage_area import head_point
 from ptztracker.vision.types import KP_L_HIP, KP_L_SHOULDER, KP_R_HIP, KP_R_SHOULDER, Person
 
 KP_MIN_CONF = 0.3
@@ -30,6 +32,10 @@ MAX_EXTRAPOLATION_S = 0.3  # дальше прогноз не тянем: чел
 ADOPT_WINDOW_S = 0.5
 ADOPT_IOU = 0.1
 ADOPT_AREA_RATIO = 1.6
+# Область сцены: рамку вне области цель берёт, только если вышла туда без скачка — голова не дальше этой доли высоты
+# рамки цели от прежнего места. Записи 2026-11-13 (DECISIONS): на краю области шаг 0,02–0,21, перескок на другого — 0,41–0,82.
+STAGE_STEP = 0.3
+REACH_START, REACH_PER_S = 0.12, 0.25  # доли ширины кадра и доли в секунду: где искать потерянную цель по внешности
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +132,7 @@ class Track:
     velocity: tuple[float, float] = (0.0, 0.0)  # px/с центра рамки
     appearance: np.ndarray | None = None
     created: float = 0.0
+    on_stage: bool = True  # голова в области сцены (control.stage_area); области нет — все «на сцене»
 
     def predicted_boxes(self, t: float, view: _View | None = None) -> list[tuple[float, float, float, float]]:
         """Где ждать рамку: с поправкой на сдвиг картинки от камеры и без неё. Модель камеры идёт с запаздыванием
@@ -194,6 +201,8 @@ class PersonTracker:
         self._target_lost_since: float | None = None
         self._view: _View | None = None
         self._adoptions: list[dict] = []
+        self._frame_w: float | None = None
+        self._stage: list[bool] | None = None  # на этот кадр: кто из людей на сцене
 
     # --- состояние ------------------------------------------------------
 
@@ -263,15 +272,29 @@ class PersonTracker:
         cands = []
         for di, p in enumerate(people):
             iou = max(_iou(pb, p.box) for pb in pbs)
-            if iou >= self.match_iou:
+            if iou >= self.match_iou and self._may_leave_stage(tr, p, di, t):
                 d = self._target_distance(hists[di])
                 if d is None or d <= self.reid_hard_distance:
-                    cands.append((d if d is not None else 0.0, -iou, di))
+                    # слабая рамка — обрывок того же человека: по внешности она бывает «точнее» уверенной, но через
+                    # кадр пропадает, а уверенная тем временем уходит другому треку — цель потеряна на десятки секунд
+                    # (площадка 2026-11-13). Слабую берём, только если уверенной нет.
+                    weak = p.score < self.new_track_score
+                    cands.append((weak, d if d is not None else 0.0, -iou, di))
         if not cands:
             return None
-        if len(cands) == 1:
-            return cands[0][2]
-        return min(cands)[2]  # ближе по внешности, при равенстве — больше перекрытие
+        return min(cands)[3]  # уверенная; ближе по внешности; при равенстве — больше перекрытие
+
+    def _may_leave_stage(self, tr: Track, p: Person, di: int, t: float) -> bool:
+        """Рамка вне области сцены годится ведомой цели, только если та вышла туда сама: уже была вне области или
+        голова сместилась без скачка (вокалист спустился в зал). Скачок — это рамка другого человека."""
+        if self._stage is None or self._stage[di] or not tr.on_stage:
+            return True
+        box = tr.predicted_box(t, self._view)
+        hx, hy = head_point(tr)
+        hx += (box[0] + box[2] - tr.box[0] - tr.box[2]) / 2  # куда голову унесли ход человека и сама камера
+        hy += (box[1] + box[3] - tr.box[1] - tr.box[3]) / 2
+        nx, ny = head_point(p)
+        return math.hypot(nx - hx, ny - hy) <= STAGE_STEP * max(1.0, tr.box[3] - tr.box[1])
 
     def update(
         self,
@@ -281,14 +304,19 @@ class PersonTracker:
         hists: list[np.ndarray | None] | None = None,
         motion: Motion | None = None,
         frame_size: tuple[int, int] | None = None,
+        on_stage: list[bool] | None = None,
     ) -> list[Track]:
-        """motion — как картинку сдвинула сама камера между двумя моментами; нужен размер кадра (из image или frame_size)."""
+        """motion — как картинку сдвинула сама камера между двумя моментами; нужен размер кадра (из image или frame_size).
+        on_stage — для каждого человека: голова в области сцены (None — области нет, все «на сцене»)."""
         self._t = t
         if image is not None:
             frame_size = (image.shape[1], image.shape[0])
         self._view = _View(motion, float(frame_size[0]), float(frame_size[1])) if motion and frame_size else None
+        self._frame_w = float(frame_size[0]) if frame_size else self._frame_w
         if hists is None:
             hists = compute_histograms(image, people)
+        stage = [True] * len(people) if on_stage is None else [bool(v) for v in on_stage]
+        self._stage = None if on_stage is None else stage
         tracks = list(self._tracks.values())
         used_t, used_d = set(), set()
 
@@ -298,6 +326,7 @@ class PersonTracker:
             used_t.add(ti)
             used_d.add(tdi)
             self._apply(tracks[ti], people[tdi], hists[tdi], t, isolated=self._isolated(tdi, people))
+            tracks[ti].on_stage = stage[tdi]
 
         pairs = []
         for ti, tr in enumerate(tracks):
@@ -316,6 +345,7 @@ class PersonTracker:
             used_t.add(ti)
             used_d.add(di)
             self._apply(tr, people[di], hists[di], t, isolated=self._isolated(di, people))
+            tr.on_stage = stage[di]
 
         for ti, tr in enumerate(tracks):
             if ti not in used_t:
@@ -327,7 +357,7 @@ class PersonTracker:
                 continue
             tr = Track(
                 id=next(self._ids), box=p.box, score=p.score, keypoints=p.keypoints,
-                last_seen=t, appearance=hists[di], created=t,
+                last_seen=t, appearance=hists[di], created=t, on_stage=stage[di],
             )
             self._tracks[tr.id] = tr
             new_ids.append(tr.id)
@@ -387,13 +417,27 @@ class PersonTracker:
         candidates = [
             tr for tr in self._tracks.values()
             if tr.id != self.target_id and tr.last_seen == t and tr.created >= self._target_lost_since
-            and tr.appearance is not None
+            and tr.appearance is not None and tr.on_stage  # в зале потерянную цель не ищем
         ]
-        scored = [(appearance_distance(self._target_app, tr.appearance), tr) for tr in candidates]
+        scored = [(appearance_distance(self._target_app, tr.appearance), tr) for tr in candidates
+                  if self._within_reach(tr, t)]
         scored = [s for s in scored if s[0] <= self.reid_max_distance]
         if scored:
             _, best = min(scored, key=lambda s: s[0])
             self._take_over(best, t, "appearance")
+
+    def _within_reach(self, tr: Track, t: float) -> bool:
+        """Мог ли потерянный человек оказаться там, где этот трек: от места потери — не дальше REACH_START кадра плюс
+        REACH_PER_S кадра за каждую секунду без цели. По одной внешности цель «узнавалась» в других музыкантах через
+        весь кадр — шесть раз за 4 с (площадка 2026-11-13)."""
+        tgt, w = self.target, self._frame_w
+        if tgt is None or not w or self._target_lost_since is None:
+            return True  # трек цели уже удалён (потеряна давно) или размер кадра неизвестен — как раньше
+        reach = (REACH_START + REACH_PER_S * (t - tgt.last_seen)) * w
+        box = tgt.predicted_box(tgt.last_seen, self._view)
+        dx = abs((tr.box[0] + tr.box[2]) / 2 - (box[0] + box[2]) / 2)
+        dy = abs((tr.box[1] + tr.box[3]) / 2 - (box[1] + box[3]) / 2)
+        return max(dx, dy) <= reach
 
     def _take_over(self, best: Track, t: float, how: str) -> None:
         """Узнанный трек получает номер цели — для оператора это тот же человек."""
@@ -401,7 +445,8 @@ class PersonTracker:
         self._tracks.pop(best.id)
         self._adoptions.append({"t": t, "how": how, "id": self.target_id, "from_id": best.id,
                                 "box": [round(float(v), 1) for v in best.box],
-                                "lost_s": None if old is None else round(t - old.last_seen, 3)})
+                                "lost_s": None if old is None else round(t - old.last_seen, 3),
+                                "stage": bool(best.on_stage)})
         best.id = self.target_id
         self._tracks[best.id] = best
         self._target_lost_since = None
@@ -415,6 +460,8 @@ class PersonTracker:
         for tr in self._tracks.values():
             if tr.id == self.target_id or tr.last_seen != t or tr.created < self._target_lost_since:
                 continue  # только трек, появившийся уже после потери цели: старый — это другой человек
+            if not tr.on_stage:
+                continue  # вне области сцены программа сама цель не берёт
             ratio = _area(tr.box) / max(1e-9, _area(tgt.box))
             if not (1 / ADOPT_AREA_RATIO <= ratio <= ADOPT_AREA_RATIO):
                 continue

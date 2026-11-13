@@ -227,3 +227,10 @@ def install_russian(app: QApplication) -> None:
 
 # цвет и номер клетки на виде сверху и в графиках служебных клеток
 SLOT_COLORS = (C.TEXT, C.LIME, C.LOST, C.TEXT_DIM)
+
+
+# Область сцены на видео (макет stage-area.html): затемнение вне области и линия её края, обычно и при настройке
+STAGE_DIM, STAGE_DIM_EDIT = 0.34, 0.50
+STAGE_LINE_ALPHA, STAGE_LINE_ALPHA_EDIT = 0.45, 0.90
+STAGE_LINE_W, STAGE_LINE_W_EDIT = 1.5, 2.5
+STAGE_HANDLE = (44, 8)  # ручка стороны при настройке: длина и толщина, px

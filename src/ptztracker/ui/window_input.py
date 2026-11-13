@@ -104,12 +104,10 @@ class InputMixin:
         (иначе первое же движение руки выключило бы слежение)."""
         c = self.grid.cells[slot] if slot == self.mouse_slot else None
         a = c.session.analyzer if c is not None else None
-        r = a.latest() if a is not None else None
+        t = a.central_track() if a is not None else None  # при области сцены — среди людей на сцене
         self.exit_mouse_mode()
-        if r is None or not r.tracks:
+        if t is None:
             return
-        cx, cy = r.frame_size[0] / 2, r.frame_size[1] / 2
-        t = min(r.tracks, key=lambda t: ((t.box[0] + t.box[2]) / 2 - cx) ** 2 + ((t.box[1] + t.box[3]) / 2 - cy) ** 2)
         if a.select_at((t.box[0] + t.box[2]) / 2, (t.box[1] + t.box[3]) / 2) is not None:
             self._on_follow_requested(True)
 
@@ -125,6 +123,7 @@ class InputMixin:
         выключить слежение и остановить все камеры."""
         # каждый подготовительный шаг — отдельно: сбой одного не отменяет стоп
         steps = (
+            ("отмена настройки области сцены", lambda: self.finish_stage_edit("cancel")),
             ("выход из режима мыши", self.exit_mouse_mode),  # Esc выходит из режима мыши и останавливает камеры
             ("снятие разрешений агента", self.agent_panel.revoke_all),
             ("обнуление геймпадов", self._pad_stop_motion),  # снова поедет после возврата стика в центр

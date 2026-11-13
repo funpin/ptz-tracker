@@ -58,3 +58,37 @@ def test_neighbor_without_target_from_center():
 def test_neighbor_ignores_unseen_tracks():
     a = _setup([200, 500, 800], target=0, unseen=(1,))
     assert a.select_neighbor(+1) == 2
+
+
+def _off_stage(a, *ids):
+    for t in a.latest().tracks:
+        if t.id in ids:
+            t.on_stage = False
+
+
+def test_neighbor_skips_people_outside_stage_area():
+    a = _setup([200, 500, 800], target=0)
+    _off_stage(a, 1)
+    assert a.select_neighbor(+1) == 2
+
+
+def test_neighbor_as_before_when_nobody_else_is_on_stage():
+    a = _setup([200, 500, 800], target=0)
+    _off_stage(a, 1, 2)
+    assert a.select_neighbor(+1) == 1
+
+
+def test_central_person_is_chosen_among_people_on_stage():
+    a = _setup([200, 520, 760])
+    assert a.central_track().id == 1
+    _off_stage(a, 1)
+    assert a.central_track().id == 2  # ближе всех к центру (500) из тех, кто на сцене
+    _off_stage(a, 0, 2)
+    assert a.central_track().id == 1  # на сцене никого — как раньше
+
+
+def test_click_outside_area_selects():
+    """Клик оператора главнее области: человек вне её выбирается как обычно."""
+    a = _setup([200, 500, 800])
+    _off_stage(a, 1)
+    assert a.select_at(500, 200) == 1 and a.latest().target_id == 1

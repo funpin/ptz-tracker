@@ -31,6 +31,7 @@ from ptztracker.video.rtsp import redact_url
 
 MOVING = ("follow", "calibrate")
 SELECT_WAIT_S = 5.0  # сколько ждать, пока распознавание найдёт человека в точке --select
+VIDEO_EXIT_WAIT_S = 6.0  # чуть больше сетевого таймаута чтения потока (5 с)
 SAVE_WAIT_S = 30.0
 EXIT_BAD_ARGS, EXIT_NOT_ON_AIR, EXIT_NO_PERSON, EXIT_INTERRUPTED = 2, 3, 4, 130
 
@@ -296,6 +297,8 @@ def _finish(session: CameraSession, data: dict, code: int, stopped: bool = False
                 _say(f"Запись сохранена: {path}")
     finally:
         session.stop()
+        # stop() потока приёма видео не ждёт; выйти, пока он читает камеру, — уронить процесс при завершении Python
+        session.wait_video_stopped(VIDEO_EXIT_WAIT_S)
     data["exit_code"] = code
     _result(**data)
     return code

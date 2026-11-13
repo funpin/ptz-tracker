@@ -4,12 +4,28 @@ import time
 from typing import Callable
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from ptztracker.control import stage_area as sa
 from ptztracker.control.zones import Zone, zone_hint
 from ptztracker.ui.state import no_video_text
-from ptztracker.ui.theme import FONT_FAMILY, FS_CAPTION, R_TAG, REC_BLINK_S, SP, C, qcolor
+from ptztracker.ui.theme import (
+    FONT_FAMILY,
+    FS_CAPTION,
+    R_TAG,
+    REC_BLINK_S,
+    SP,
+    STAGE_DIM,
+    STAGE_DIM_EDIT,
+    STAGE_HANDLE,
+    STAGE_LINE_ALPHA,
+    STAGE_LINE_ALPHA_EDIT,
+    STAGE_LINE_W,
+    STAGE_LINE_W_EDIT,
+    C,
+    qcolor,
+)
 from ptztracker.ui.widgets import paint_brackets
 from ptztracker.video.frames import FrameSource
 from ptztracker.videorec.controller import format_clock
@@ -59,6 +75,11 @@ KP_MIN_CONF = 0.3
 REC_MARGIN, REC_H, REC_PAD_X, REC_DOT = 10, 24, 8, 8
 
 
+def dataclass_on(area: sa.StageArea) -> sa.StageArea:
+    """Та же область, но включённая: при настройке людей считаем и в выключенной."""
+    return area if area.on else sa.StageArea(area.pan0, area.pan1, area.tilt0, area.tilt1, True)
+
+
 class PreviewWidget(QWidget):
     """Превью последнего кадра камеры с рамками людей; клик по человеку выбирает цель."""
 
@@ -76,12 +97,14 @@ class PreviewWidget(QWidget):
     rightClicked = Signal()
     rec_clicked = Signal()  # кнопка или плашка записи в углу видео
     doubleClicked = Signal()  # двойной клик по видео вне зоны — войти в режим мыши
+    stageEdited = Signal()  # при настройке области сцены сторону перетащили (stage_draft уже новая)
 
     click_guard: Callable[[], bool] | None = None  # False — клик не выбирает человека
     # (ширина, высота) сохранённой зоны этой камеры относительно обычной (по умолчанию 1 и 1)
     zone_size_of: Callable[[], tuple[float, float]] | None = None
     DRAG_PX = 6  # меньше — это клик (выбор человека), больше — перенос зоны
     HANDLE_PX = 12  # скобка-уголок мягкой зоны ловится в этом радиусе
+    STAGE_GRAB = 0.025  # сторона области сцены ловится не дальше этой доли ширины кадра
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -104,6 +127,11 @@ class PreviewWidget(QWidget):
         self._rec: RecState | None = None  # None — камеры нет, кнопки записи нет
         self._rec_mouse: QPointF | None = None
         self._rec_key = None  # что нарисовано: перерисовать, когда сменилось
+        # область сцены: (момент кадра) → (StageArea | None, CameraView | None); ставит окно (сессия камеры)
+        self.stage_source: Callable[[float], tuple] | None = None
+        self.stage_draft: sa.StageArea | None = None  # идёт настройка: эту область рисуем и тянем мышью
+        self._stage_side: str | None = None  # сторона, которую тянут
+        self._frame_t = 0.0  # момент показанного кадра
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(33)
@@ -155,6 +183,7 @@ class PreviewWidget(QWidget):
             # .copy(): QImage не владеет буфером numpy
             self._image = QImage(fr.image.data, w, h, fr.image.strides[0], QImage.Format_BGR888).copy()
             self._seq = fr.seq
+            self._frame_t = fr.t_capture
             changed = True
         r = self._result()
         key = (None if r is None else (r.seq, r.target_id, r.target_state), self.follow_zones())
@@ -329,6 +358,10 @@ class PreviewWidget(QWidget):
         super().wheelEvent(e)
 
     def mousePressEvent(self, e):  # noqa: N802
+        if self.stage_draft is not None:  # настройка области сцены: мышь только тянет её стороны
+            if e.button() == Qt.LeftButton:
+                self._stage_side = self._stage_side_at(e.position())
+            return
         if self.mouse_mode:
             if e.button() == Qt.LeftButton:
                 self.leftClicked.emit()
@@ -358,6 +391,14 @@ class PreviewWidget(QWidget):
         self._rec_mouse = pos
         if self._rec_view_changed():
             self.update()
+        if self.stage_draft is not None:
+            if self._stage_side is not None:
+                self._stage_drag_to(pos)
+            else:
+                side = self._stage_side_at(pos)
+                self.setCursor(Qt.ArrowCursor if side is None else Qt.SizeHorCursor if side.startswith("pan")
+                               else Qt.SizeVerCursor)
+            return
         if self.mouse_mode:
             self._mouse_mode_move(pos)
             return
@@ -393,6 +434,9 @@ class PreviewWidget(QWidget):
             self.setCursor(Qt.SizeAllCursor if hover else Qt.ArrowCursor)
 
     def mouseReleaseEvent(self, e):  # noqa: N802
+        if self.stage_draft is not None:
+            self._stage_side = None
+            return
         if e.button() != Qt.LeftButton or self._press is None:
             return
         p0 = self._press[0]
@@ -404,6 +448,14 @@ class PreviewWidget(QWidget):
         self.update()
 
     def mouseDoubleClickEvent(self, e):  # noqa: N802
+        if self.stage_draft is not None:  # вернуть в кадр стороны, ушедшие за него
+            _, view = self._stage()
+            if view is not None and e.button() == Qt.LeftButton:
+                self.stage_draft = sa.fit_hidden_sides(self.stage_draft, view)
+                self.stageEdited.emit()
+                self.update()
+            e.accept()
+            return
         if self.mouse_mode or e.button() != Qt.LeftButton or self._rec_hit(e.position()):
             return
         if self.click_guard is not None and not self.click_guard():
@@ -455,6 +507,110 @@ class PreviewWidget(QWidget):
         if tid is not None:
             self.targetClicked.emit(tid)
             self.update()
+
+    # --- область сцены --------------------------------------------------
+
+    def _stage(self) -> tuple[sa.StageArea | None, sa.CameraView | None]:
+        """Область, которую сейчас показываем (при настройке — черновик), и вид камеры в показанном кадре."""
+        if self.stage_source is None or self._image is None:
+            return None, None
+        try:
+            area, view = self.stage_source(self._frame_t)
+        except Exception:
+            return None, None
+        if self.stage_draft is not None:
+            return self.stage_draft, view
+        return (area, view) if area is not None and area.on else (None, view)
+
+    def stage_outline(self) -> list[QPointF]:
+        """Контур области на виджете; пусто — области нет, она выключена или вид камеры неизвестен."""
+        area, view = self._stage()
+        r = self._image_rect()
+        if area is None or view is None or r is None:
+            return []
+        return [QPointF(r.x() + x * r.width(), r.y() + y * r.height()) for x, y in area.outline(view)]
+
+    def shown_tracks(self) -> list:
+        """Люди, которым рисуем рамки: вне области сцены — только цель."""
+        r = self._result()
+        if r is None:
+            return []
+        area, view = self._stage()
+        if area is None or view is None or self.stage_draft is not None:
+            return list(r.tracks)
+        return [t for t in r.tracks if t.on_stage or t.id == r.target_id]
+
+    def stage_counts(self) -> tuple[int, int] | None:
+        """(людей в области, людей в кадре) — для плашки при настройке; None — посчитать не по чему."""
+        area, view = self._stage()
+        r = self._result()
+        if area is None or view is None or r is None:
+            return None
+        seen = [t for t in r.tracks if t.last_seen == r.t_capture]
+        flags = sa.flags(dataclass_on(area), view, seen, r.frame_size) or []
+        return sum(flags), len(seen)
+
+    def begin_stage_edit(self, area: sa.StageArea) -> None:
+        self.stage_draft, self._stage_side = area, None
+        self.update()
+
+    def end_stage_edit(self) -> None:
+        self.stage_draft = self._stage_side = None
+        self.unsetCursor()
+        self.update()
+
+    def _frame_frac(self, pos: QPointF) -> tuple[float, float] | None:
+        r = self._image_rect()
+        if r is None or r.width() <= 0:
+            return None
+        return (pos.x() - r.x()) / r.width(), (pos.y() - r.y()) / r.height()
+
+    def _stage_side_at(self, pos: QPointF) -> str | None:
+        area, view = self._stage()
+        fp = self._frame_frac(pos)
+        if area is None or view is None or fp is None:
+            return None
+        return sa.side_at(area, view, fp[0], fp[1], self.STAGE_GRAB)
+
+    def _stage_drag_to(self, pos: QPointF) -> None:
+        _, view = self._stage()
+        fp = self._frame_frac(pos)
+        if view is None or fp is None or self._stage_side is None:
+            return
+        x, y = min(1.0, max(0.0, fp[0])), min(1.0, max(0.0, fp[1]))
+        self.stage_draft = sa.drag_side(self.stage_draft, self._stage_side, *sa.to_world(view, x, y))
+        self.stageEdited.emit()
+        self.update()
+
+    def _paint_stage(self, p: QPainter) -> None:
+        pts = self.stage_outline()
+        r = self._image_rect()
+        if not pts or r is None:
+            return
+        edit = self.stage_draft is not None
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setClipRect(r)
+        poly = QPainterPath()
+        poly.addPolygon(QPolygonF(pts))
+        poly.closeSubpath()
+        shade = QPainterPath()
+        shade.addRect(r)
+        p.fillPath(shade.subtracted(poly), qcolor(C.BG, round(255 * (STAGE_DIM_EDIT if edit else STAGE_DIM))))
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(qcolor(C.TEXT, round(255 * (STAGE_LINE_ALPHA_EDIT if edit else STAGE_LINE_ALPHA))),
+                      STAGE_LINE_W_EDIT if edit else STAGE_LINE_W))
+        p.drawPath(poly)
+        if edit:
+            area, view = self._stage()
+            p.setPen(Qt.NoPen)
+            p.setBrush(qcolor(C.TEXT))
+            long, thick = STAGE_HANDLE
+            for side, (x, y) in sa.handles(area, view).items():
+                c = QPointF(r.x() + x * r.width(), r.y() + y * r.height())
+                w, h = (thick, long) if side.startswith("pan") else (long, thick)
+                p.drawRoundedRect(QRectF(c.x() - w / 2, c.y() - h / 2, w, h), 4, 4)
+        p.restore()
 
     # --- отрисовка ------------------------------------------------------
 
@@ -537,6 +693,7 @@ class PreviewWidget(QWidget):
         p.restore()
 
     def _paint_overlay(self, p: QPainter) -> None:
+        self._paint_stage(p)
         if self.mouse_mode:
             self._paint_mouse_mode(p)
         self._paint_zones(p)
@@ -546,7 +703,7 @@ class PreviewWidget(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         fw = r.frame_size[0]
         k = self._image_rect().width() / fw
-        for t in r.tracks:
+        for t in self.shown_tracks():
             rect = self._box_rect(t.box, fw)
             is_target = t.id == r.target_id
             if is_target:

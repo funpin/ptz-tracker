@@ -197,3 +197,20 @@ def test_shares_h264_only_for_a_settled_rtsp_address():
     assert RtspSource("rtsp://10.0.0.5/MediaInput/h264/stream_1").shares_h264
     assert not RtspSource("http://10.0.0.5/cgi-bin/mjpeg?resolution=640x360").shares_h264
     assert not RtspSource(["rtsp://10.0.0.5/a", "http://10.0.0.5/b"]).shares_h264  # «Авто»: адрес ещё не найден
+
+
+def test_wait_joins_a_reader_that_outlived_stop(monkeypatch):
+    """Падение при выходе (отчёт macOS 2026-11-13, EXC_BAD_ACCESS в PyGILState_Ensure): поток приёма ещё читал
+    поток камеры, когда Python уже завершался. stop(0) потока не ждёт (окно не должно виснуть) — перед выходом из
+    программы его дожидается wait()."""
+    import threading
+
+    release = threading.Event()
+    src = RtspSource("rtsp://127.0.0.1:9/x")
+    monkeypatch.setattr(src, "_run", lambda: release.wait(5))
+    src.start()
+    src.stop(timeout=0.0)
+    assert src.wait(0.05) is False  # ещё читает
+    release.set()
+    assert src.wait(2.0) is True
+    assert src.wait(0.0) is True  # ждать больше некого

@@ -33,6 +33,7 @@ class CameraGrid:
         self._make = make_session
         self.cells: list[Cell | None] = [None] * GRID_SLOTS
         self.selected: int | None = None
+        self._closed: list = []  # сессии, закрытые close_all: их потоки приёма видео дожидаемся перед выходом
 
     def open(self, slot: int, cfg: CameraConfig, analysis: bool) -> Cell:
         other = self.slot_of(cfg.id)
@@ -64,6 +65,7 @@ class CameraGrid:
         """Остановить все сессии параллельно; ждать не дольше `timeout` в сумме."""
         cells = [c for c in self.cells if c is not None]
         self.cells = [None] * GRID_SLOTS
+        self._closed += [c.session for c in cells]
         for c in cells:
             self._disarm(c)
         for c in cells:  # стопы — в очередь сразу, до медленной остановки потоков
@@ -76,6 +78,17 @@ class CameraGrid:
         deadline = time.monotonic() + timeout
         for t in threads:
             t.join(max(0.0, deadline - time.monotonic()))
+
+    def wait_video_stopped(self, timeout: float) -> bool:
+        """Перед выходом из программы: дождаться потоков приёма видео закрытых камер (close_all их не ждёт). Поток,
+        который ещё читает камеру, когда Python завершается, роняет процесс (отчёт macOS 2026-11-13)."""
+        sessions, self._closed = self._closed, []
+        deadline, ok = time.monotonic() + timeout, True
+        for s in sessions:
+            wait = getattr(s, "wait_video_stopped", None)
+            if wait is not None:
+                ok = bool(wait(max(0.01, deadline - time.monotonic()))) and ok
+        return ok
 
     @staticmethod
     def _stop_one(cell: Cell) -> None:

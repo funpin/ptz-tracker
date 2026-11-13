@@ -21,6 +21,7 @@ from typing import Literal
 import platformdirs
 
 from ptztracker.control.manual_curve import PAD_GEAR_DEG_S, clamp_sens
+from ptztracker.control.stage_area import StageArea
 from ptztracker.control.zones import zone_of
 from ptztracker.video.rtsp import with_mjpeg_framerate
 from ptztracker.videohub.protocol import hub_output_of
@@ -58,6 +59,8 @@ class CameraConfig:
     atem_input: int = 0  # вход ATEM (1…), 0 — не задан
     videohub_input: int = 0  # вход Videohub (1…), на который заведена камера; 0 — выход не переключать
     pad_number: int | None = None  # устарело: точки на геймпаде = номер клетки; читается из старых конфигов
+    # область сцены (control.stage_area.StageArea.to_json): {"pan": [a, b], "tilt": [a, b], "on": bool}; None — не задана
+    stage_area: dict | None = None
     tracking: bool = True  # камеру можно вести слежением (иначе только ручное управление)
     model: str | None = None  # ответ камеры на QID («AW-HE40»); ставит сессия при подключении, окно сохраняет
     firmware: str | None = None  # версия прошивки, если камера её сообщает; None — не известна
@@ -226,6 +229,8 @@ def _camera_from(d) -> CameraConfig | None:
     c.zones = {k: z.to_json() for k in COMPOSITION_KEYS if (z := zone_of(c.zones, k)) is not None}
     if not isinstance(c.tracking, bool):
         c.tracking = True
+    area = StageArea.from_json(c.stage_area)
+    c.stage_area = None if area is None else area.to_json()
     c.effort = min(1.0, max(0.0, float(c.effort)))
     if isinstance(c.rtsp_url, str):
         c.rtsp_url = with_mjpeg_framerate(c.rtsp_url)

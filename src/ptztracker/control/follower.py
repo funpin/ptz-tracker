@@ -114,6 +114,7 @@ class Follower:
         self._last_manual = float("-inf")
         self._pt_move_t = float("-inf")  # когда слежение в последний раз слало ненулевой поворот/наклон
         self._zoom_move_t = float("-inf")  # то же для зума
+        self.stage_on = False  # у камеры включена область сцены: положение спрашиваем и без записи и слежения
         self.polling_paused = False  # калибровка: опросы зума и положения молчат, поток живёт
         self._stop = threading.Event()
         self._poll_now = threading.Event()  # enable(): потоку опроса спросить #GZ и #APC сразу
@@ -289,7 +290,7 @@ class Follower:
                 continue
             now = time.monotonic()
             if not self.enabled:
-                if (not recording or now - last_idle_poll < IDLE_POSITION_POLL_S
+                if (not (recording or self.stage_on) or now - last_idle_poll < IDLE_POSITION_POLL_S
                         or now - self._last_manual < MANUAL_QUIET_S):
                     continue
                 last_idle_poll = now
@@ -318,7 +319,7 @@ class Follower:
                 if not self.enabled and time.monotonic() - self._last_manual < MANUAL_QUIET_S:
                     continue  # пока шёл запрос зума, оператор взялся за камеру — положение не спрашиваем
             # при слежении положение нужно всегда (сторож раскачки, подстройка скорости), без него — для записи
-            if do_apc and (recording or self.enabled) and self.query_pan_tilt is not None:
+            if do_apc and (recording or self.enabled or self.stage_on) and self.query_pan_tilt is not None:
                 last_apc = now
                 self._poll_position(z if z is not None else self._zoom_pos, recording)
 

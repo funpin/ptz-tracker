@@ -100,6 +100,7 @@ from ptztracker.ui.window_input import InputMixin
 from ptztracker.ui.window_pads import PadsMixin
 from ptztracker.ui.window_presets import PresetsMixin
 from ptztracker.ui.window_recording import RecordingMixin
+from ptztracker.ui.window_stage import StageMixin
 from ptztracker.ui.window_status import StatusMixin
 from ptztracker.ui.window_videohub import VideohubMixin
 from ptztracker.updates import UpdateChecker, UpdateInfo
@@ -137,7 +138,7 @@ def make_pad_hub():
 
 
 class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMixin, InputMixin, PadsMixin,
-                 VideohubMixin, QMainWindow):
+                 VideohubMixin, StageMixin, QMainWindow):
     _saveFinished = Signal(object)  # (пачка, Future записи); приходит из рабочего потока, обрабатывается в Qt-потоке
 
     def __init__(self, store: ConfigStore, use_sim: bool = False, parent=None, atem_port: int = 9910,
@@ -167,6 +168,7 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         grid_host, side_col = self._build_side_panel()
         self._build_central(store, grid_host, side_col)
         self._build_status_bar()
+        self._init_stage()
         self._build_menus(stream_menu)
         self._start_services()
 
@@ -528,6 +530,8 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         # про одну камеру — в ⋯ её клетки (спека «Меню ☰ (только общее)»); действия общие для всех клеток
         self.calib_action = QAction("Калибровка камеры…", self)
         self.calib_action.triggered.connect(self._run_calibration)
+        self.stage_action = QAction("Область сцены…", self)
+        self.stage_action.triggered.connect(self.start_stage_edit)
         self.diag_action = QAction("Диагностика камеры…", self)
         self.diag_action.triggered.connect(self._run_diagnostics)
         self.power_action = QAction("Перевести камеру в режим ожидания…", self)

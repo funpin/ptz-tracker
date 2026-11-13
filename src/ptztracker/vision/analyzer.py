@@ -56,6 +56,8 @@ class Analyzer:
         self.error: str | None = None
         # как камера сама сдвинула картинку между двумя кадрами (Follower.picture_motion); None — камера стоит
         self.motion: Callable[[float, float], tuple[float, float, float]] | None = None
+        # область сцены: (люди, момент кадра, размер кадра) → кто из них на сцене; None — области нет (ставит сессия)
+        self.stage: Callable[[list, float, tuple[int, int]], list[bool] | None] | None = None
         self._lock = threading.Lock()  # трекер и последний результат
         self._latest: AnalysisResult | None = None
         self._fps = FpsMeter()
@@ -101,9 +103,8 @@ class Analyzer:
             tgt = next((t for t in r.tracks if t.id == self.tracker.target_id), None)
             ref = (tgt.box[0] + tgt.box[2]) / 2 if tgt is not None else r.frame_size[0] / 2
             best, best_d = None, None
-            for t in r.tracks:
-                if t.last_seen != r.t_capture or (tgt is not None and t.id == tgt.id):
-                    continue
+            for t in self._own_choice([t for t in r.tracks if t.last_seen == r.t_capture
+                                       and (tgt is None or t.id != tgt.id)]):
                 dx = ((t.box[0] + t.box[2]) / 2 - ref) * (1 if direction > 0 else -1)
                 if dx > 0 and (best_d is None or dx < best_d):
                     best, best_d = t, dx
@@ -116,6 +117,21 @@ class Analyzer:
         safe_event(self.recorder, "target", id=tid, how="pad_right" if direction > 0 else "pad_left",
                    x=round(float(cx), 1), y=round(float(cy), 1))
         return tid
+
+    @staticmethod
+    def _own_choice(tracks: list) -> list:
+        """Из кого программа выбирает сама (сосед, «ближе всех к центру»): люди в области сцены; там никого — все."""
+        return [t for t in tracks if t.on_stage] or tracks
+
+    def central_track(self):
+        """Человек ближе всех к центру кадра — для выбора одной кнопкой; None — в кадре никого."""
+        with self._lock:
+            r = self._latest
+            if r is None or not r.tracks:
+                return None
+            cx, cy = r.frame_size[0] / 2, r.frame_size[1] / 2
+            return min(self._own_choice(list(r.tracks)),
+                       key=lambda t: ((t.box[0] + t.box[2]) / 2 - cx) ** 2 + ((t.box[1] + t.box[3]) / 2 - cy) ** 2)
 
     def clear_target(self) -> None:
         with self._lock:
@@ -147,6 +163,16 @@ class Analyzer:
             rec, "analysis", seq=r.seq, t_capture=r.t_capture, frame_size=list(r.frame_size), tracks=tracks,
             target_id=r.target_id, target_state=r.target_state, infer_ms=round(r.infer_ms, 2),
         )
+
+    def _on_stage(self, people, fr) -> list[bool] | None:
+        if self.stage is None:
+            return None
+        try:
+            out = self.stage(people, fr.t_capture, (fr.image.shape[1], fr.image.shape[0]))
+        except Exception as e:  # область не должна ронять анализ
+            log.debug("Область сцены не посчитана: %s", e)
+            return None
+        return out if out is not None and len(out) == len(people) else None
 
     def _run(self) -> None:
         try:
@@ -185,8 +211,10 @@ class Analyzer:
             failures = 0
             infer_ms = (time.monotonic() - t_start) * 1000
             hists = compute_histograms(fr.image, people)  # дорого — вне блокировки, чтобы окно не ждало
+            on_stage = self._on_stage(people, fr)
             with self._lock:
-                seen = self.tracker.update(people, fr.t_capture, fr.image, hists, motion=self.motion)
+                seen = self.tracker.update(people, fr.t_capture, fr.image, hists, motion=self.motion,
+                                           on_stage=on_stage)
                 adopted = self.tracker.pop_adoptions()
                 tracks = list(seen)
                 tgt = self.tracker.target
@@ -210,7 +238,7 @@ class Analyzer:
                 result = self._latest
             for a in adopted:  # цель перешла на другой трек — в чёрный ящик
                 safe_event(self.recorder, "target", how="adopt_" + a["how"], id=a["id"], from_id=a["from_id"],
-                           box=a["box"], lost_s=a["lost_s"], t_capture=a["t"])
+                           box=a["box"], lost_s=a["lost_s"], t_capture=a["t"], stage=a.get("stage", True))
             self._record(fr, result)
             wait = t_start + period - time.monotonic()
             if wait > 0:

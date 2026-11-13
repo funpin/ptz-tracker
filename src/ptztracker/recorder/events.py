@@ -31,6 +31,7 @@ def track_to_json(tr: Track) -> dict:
         "misses": int(tr.misses),
         "last_seen": float(tr.last_seen),
         "created": float(tr.created),
+        "stage": bool(getattr(tr, "on_stage", True)),  # голова в области сцены; области нет — True
     }
 
 

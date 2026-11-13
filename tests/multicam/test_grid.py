@@ -252,3 +252,23 @@ def test_close_all_stops_every_camera_even_if_one_preparation_fails(part):
     g.close_all()
     assert g.cells == [None] * len(g.cells)
     assert "#PTS5050" in a.session.sim.received and "#PTS5050" in b.session.sim.received
+
+
+def test_wait_video_stopped_waits_for_readers_of_closed_cameras():
+    """Отчёт macOS 2026-11-13: программа падала при выходе — поток приёма видео ещё читал камеру, когда Python уже
+    завершался. Закрытие окна потоки не ждёт (окно не должно виснуть); перед самым выходом их дожидаемся."""
+    waited = []
+
+    class S(FakeSession):
+        def wait_video_stopped(self, timeout):
+            waited.append((self.cfg.id, timeout))
+            return True
+
+    g = CameraGrid(lambda cfg, a: S(cfg))
+    g.open(0, sim_cfg(0), False)
+    g.open(1, sim_cfg(1), False)
+    assert g.wait_video_stopped(3.0) is True and waited == []  # пока камеры открыты, ждать некого
+    g.close_all()
+    assert g.wait_video_stopped(3.0) is True
+    assert [w[0] for w in waited] == [sim_cfg(0).id, sim_cfg(1).id] and all(0 < w[1] <= 3.0 for w in waited)
+    assert g.wait_video_stopped(3.0) is True and len(waited) == 2  # второй раз ждать уже некого

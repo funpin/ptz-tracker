@@ -112,6 +112,7 @@ class WindowBackend:
             "codes": [int(v) for v in f.codes] if f else None,
             "composition": c.composition,
             "effort": c.effort,
+            "stage_area": {"set": s.stage_area is not None, "on": bool(s.stage_area and s.stage_area.on)},
             "recording": bool(s.recorder.active),
         }
 

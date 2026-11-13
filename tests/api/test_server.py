@@ -522,3 +522,13 @@ def test_start_does_not_ask_host_name(monkeypatch):
         assert call(srv.port, "/status", token="tok-123")[0] == 200
     finally:
         srv.stop()
+
+
+def test_status_reports_stage_area_state(qtbot, tmp_path):
+    from ptztracker.control.stage_area import StageArea
+
+    w, port, tok = make_window(qtbot, tmp_path)
+    assert json.loads(call(port, "/status", token=tok)[1])["stage_area"] == {"set": False, "on": False}
+    w.session.set_stage_area(StageArea(-10.0, 10.0, -5.0, 5.0, on=False))
+    assert json.loads(call(port, "/status", token=tok)[1])["stage_area"] == {"set": True, "on": False}
+    assert call(port, "/stage_area", token=tok, body={"pan": [0, 1], "tilt": [0, 1]})[0] == 404  # менять по API нельзя

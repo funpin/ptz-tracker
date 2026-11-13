@@ -200,3 +200,5 @@ def test_gui_start_arms_the_watch_after_the_single_instance_check(monkeypatch, c
     assert entry.run_gui(use_sim=True) == 0
     installed.assert_called_once_with(hang_watch.hang_log_path(), app)
     installed.return_value.start.assert_called_once_with()
+    # после закрытия окна, перед выходом: дождаться потоков приёма видео (иначе падение при завершении Python)
+    main_window.MainWindow.return_value.grid.wait_video_stopped.assert_called_once()

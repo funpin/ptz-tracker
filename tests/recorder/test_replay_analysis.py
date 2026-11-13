@@ -192,3 +192,63 @@ def test_analysis_replay_with_pose_detector(tmp_path):
     s = r.summary()
     assert s.switches_new == 0 and s.losses_new == 0
     assert all(st == "tracking" for _, st in r.new[3:])
+
+
+def _positions(pan_units=0x8000, tilt_units=0x8000, zoom=0x555, n=8):
+    return tuple(("position", {"t": T0 - 0.5 + i * 0.7, "pan": pan_units, "tilt": tilt_units, "zoom": zoom}) for i in range(n))
+
+
+class StageSpy:
+    """Трекер-обёртка: запоминает, какие флажки «на сцене» ему передал повтор."""
+
+    def __init__(self):
+        from ptztracker.vision.tracker import PersonTracker
+
+        self.inner, self.flags = PersonTracker(), []
+
+    def update(self, people, t, image, hists=None, **kw):
+        self.flags.append(kw.get("on_stage"))
+        return self.inner.update(people, t, image, hists, **kw)
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
+def test_analysis_replay_applies_stage_area(tmp_path):
+    """Область из аргумента и положения камеры из записи: правый человек (pan > 0) — вне области."""
+    from ptztracker.control.stage_area import StageArea
+
+    ep = Episode.open(build_episode(tmp_path, extra_events=_positions()))
+    spy = StageSpy()
+    replay_analysis(ep, detector=FixedDetector(), tracker=spy, stage=StageArea(-90.0, 0.0, -90.0, 90.0))
+    known = [f for f in spy.flags if f is not None]
+    assert len(known) >= 15 and all(f == [True, False] for f in known)
+
+
+def test_analysis_replay_without_area_or_positions_passes_no_flags(tmp_path):
+    from ptztracker.control.stage_area import StageArea
+
+    spy = StageSpy()
+    replay_analysis(Episode.open(build_episode(tmp_path / "a", extra_events=_positions())), detector=FixedDetector(),
+                    tracker=spy)
+    assert all(f is None for f in spy.flags)  # области в записи нет
+    spy = StageSpy()
+    replay_analysis(Episode.open(build_episode(tmp_path / "b")), detector=FixedDetector(), tracker=spy,
+                    stage=StageArea(-90.0, 0.0, -90.0, 90.0))
+    assert all(f is None for f in spy.flags)  # положение камеры не записано — вид неизвестен
+
+
+def test_analysis_replay_takes_area_from_recording_meta(tmp_path):
+    path = build_episode(tmp_path, extra_events=_positions())
+    out = tmp_path / "с областью.zip"
+    with zipfile.ZipFile(path) as src, zipfile.ZipFile(out, "w") as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename.endswith("meta.json"):
+                meta = json.loads(data)
+                meta["stage_area"] = {"pan": [-90.0, 0.0], "tilt": [-90.0, 90.0], "on": True}
+                data = json.dumps(meta).encode()
+            dst.writestr(item, data)
+    spy = StageSpy()
+    replay_analysis(Episode.open(out), detector=FixedDetector(), tracker=spy)
+    assert [True, False] in spy.flags

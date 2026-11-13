@@ -181,6 +181,7 @@ class RtspSource:
         self._size = (0, 0)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._leftover: list[threading.Thread] = []  # потоки, которых stop() не дождался: их дожидается wait()
         self._taps: tuple[PacketTap, ...] = ()
         self._epoch = 0  # номер подключения: растёт с каждым открытием потока
 
@@ -221,7 +222,19 @@ class RtspSource:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout)
+            if self._thread.is_alive():
+                self._leftover.append(self._thread)
             self._thread = None
+
+    def wait(self, timeout: float) -> bool:
+        """Дождаться потоков приёма, которых не дождался stop(). Зовётся перед выходом из программы: поток, который
+        ещё читает камеру, когда Python завершается, роняет процесс (ffmpeg зовёт в нём Python, которого уже нет —
+        отчёт macOS 2026-11-13). True — все закончились."""
+        end = time.monotonic() + timeout
+        for t in self._leftover:
+            t.join(max(0.0, end - time.monotonic()))
+        self._leftover = [t for t in self._leftover if t.is_alive()]
+        return not self._leftover
 
     def latest(self) -> Frame | None:
         with self._lock:

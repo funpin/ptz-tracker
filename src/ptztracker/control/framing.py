@@ -69,14 +69,32 @@ REVERSE_EDGE_FROM, REVERSE_EDGE_TO = 0.2, 0.35  # доли кадра: чело�
 REVERSE_STOPPED_V = 0.03  # доли кадра/с: медленнее камера уже стоит
 # Доводка: ближе этого (доли мёртвой зоны) камера не двигается вовсе, иначе вечно ползёт на нижних кодах
 HOLD_FROM, HOLD_TO = 0.5, 0.9
+# Доводку начинаем, когда она нужна не слабее самого малого кода камеры, и ведём, пока не станет слабее его половины.
+# Без этого музыкант, стоящий в 0,6 покоя от точки, давал поправку 0,003–0,007 кадра/с — на самом пороге кода ±1
+# (0,008 кадра/с на теле): код скакал 50 ↔ 51, камера трогалась и вставала по 23 раза в минуту по повороту и 32 по
+# наклону (площадка 2026-11-13). Порог — только у доводки: скорость идущего и доворот при зуме идут как раньше.
+FIX_START, FIX_STOP = 1.0, 0.5  # доли скорости самого малого кода
+# И только когда середина переминания вышла из покоя целиком: при плотной зоне (покой ±0,026) доводка начиналась на
+# 0,7 покоя — 1,8 % кадра, и камера поправлялась по 28 раз в минуту по повороту и 42 по наклону (площадка 2026-11-13,
+# 20:22). Начав, доводит до HOLD_FROM, как раньше.
+FIX_FROM_DEAD = 0.9  # 1,0 оставляло стоящего на 1,25 покоя от точки (test_tilt_follows_vertical: предел 1,2)
 LATENCY_GAIN_REF = 0.3  # с: задержка видео больше — коэффициент обратной связи падает пропорционально (MJPEG 0,12–0,26 не трогаем)
 # Отъезд «от края» — крайняя мера: только когда человек уходит из самого кадра — он ближе FRAME_EDGE_MARGIN к краю
 # или окажется там раньше, чем камера его догонит (прогноз Axis.escape). Скорость — EDGE_ZOOM·zoom_max, полная при
 # недостаче EDGE_SHORTFALL. Было: от 0,3–0,4 кадра от точки — на крупном плане отъезд на каждом быстром шаге («насос»).
 FRAME_EDGE_MARGIN = 0.06
 EDGE_ZOOM, EDGE_ZOOM_ACCEL = 1.5, 2.0
-ESCAPE_ZOOM, ESCAPE_ZOOM_ACCEL = 0.6, 10.0  # пропал за краем: идём за ним и шире
+ESCAPE_ZOOM, ESCAPE_ZOOM_ACCEL = 0.6, 10.0  # уходит далеко за край кадра на глазах: шире быстрее, чем позволяет характер
+# Пропавшего ищем спокойно: кадр расширяется со скоростью характера и не больше чем в SEARCH_WIDEN раз, а не нашли —
+# крупность возвращается. Площадка 2026-11-13, вечер: в зале зрители, цель переходила на них и пропадала — камера
+# каждый раз за 2 с уходила кодом 1 на полный общий план (3263 → 1365) и оставалась там; по наклону шла вниз кодами
+# 29–40 (31461 → 29267). По наклону пропавшего больше не ищем: со сцены уходят вбок, а не вниз.
+SEARCH_WIDEN = math.log(1.4)
 EDGE_SHORTFALL = 0.08
+# Отъезд «от края» начинается, когда уход из кадра виден на стольких замерах подряд: по одному замеру (цель на кадр
+# перескочила на соседа) камера за 0,1 с уходила на отъезд кодом 1 (площадка 2026-11-13)
+EDGE_CONFIRM_N = 2
+Y_PREDICT_N = 4  # столько замеров подряд прогноз ухода по высоте должен держаться, чтобы по нему отъезжать
 # Терпение зума: наезд — когда размер меньше нужного дольше ZOOM_IN_PATIENCE_S и человек в зоне; отъезд по размеру —
 # через ZOOM_OUT_PATIENCE_S (крупный план режет голову — ждать меньше); после отъезда «от края» наезд — не раньше, чем
 # человек ZOOM_CALM_AFTER_ESCAPE_S спокойно в зоне.
@@ -101,6 +119,10 @@ ZOOM_LIMIT_RELEASE = 0.05
 ZOOM_LIMIT_LEAD_S = 0.1  # команда наезда, ещё не дошедшая до камеры (очередь планировщика), — в прогнозе положения
 LOST_STOP_S = 0.5
 LOST_SEARCH_V = 0.35  # доли кадра/с: не медленнее этого ищем пропавшего
+# Пропавшего ищем, только если он был за границей зоны столько замеров подряд. Площадка 2026-11-13: цель на один кадр
+# перескочила на другого человека и пропала — камера 5 с шла вправо и вниз кодами 63 и 40 и отъехала на общий план
+# («ушла вниз»).
+EXIT_CONFIRM_N = 2
 LOST_COAST_S = 2.5  # человек ушёл за край быстрее камеры и пропал — столько ещё идём за ним и расширяем кадр, пока не найдём
 STILL_V = 0.02  # медленнее — считаем, что человек стоит
 MOVING_CMD, MOVING_WALK = 0.01, 0.3  # «движение» для состояния: команда быстрее этого или вес «идёт» больше этого
@@ -291,6 +313,9 @@ class _Axis:
         self.zone = 1.0  # граница зоны оператора по этой оси на последнем такте
         self.escape = 0.0  # прогноз наибольшей ошибки, пока камера догоняет (доли кадра)
         self.exit_cmd = 0.0  # команда «за уходящим за край», если он пропадёт
+        self.fixing = False  # доводка идёт (FIX_START / FIX_STOP)
+        self._out_t: float | None = None  # замер, по которому в последний раз считали _out_n
+        self._out_n = 0  # сколько замеров подряд человек за границей зоны
         self.active_t = 0.0
         self.watch.reset()
 
@@ -352,6 +377,7 @@ class _Axis:
         walk_hint: float = 0.0,  # вес «идёт» по другой оси: идёт человек, а не ось
         keep_follow: bool = False,  # замера по этой оси нет, но человека ведёт другая ось: недолго едем, как ехали
         watch: tuple[float, float] | None = None,  # пороги сторожа раскачки (граница, покой); None — zone и dead
+        v_floor: float = 0.0,  # скорость самого малого кода камеры на этом зуме, доли кадра/с (0 — порога доводки нет)
     ) -> float:
         v_cap = e.v_max if v_cap is None else v_cap
         p = self.person
@@ -418,7 +444,19 @@ class _Axis:
             if x * cam_img < 0 and abs(cam_img) > REVERSE_STOPPED_V:
                 fix_cap = max(fix_cap, abs(cam_img))
             v_fix = min(v_fix, fix_cap)
-            want = self.sign * (self.v_follow + hold * math.copysign(v_fix, x))
+            fix = hold * v_fix
+            if self.fixing:
+                self.fixing = fix >= FIX_STOP * v_floor
+            else:  # с места — только когда середина переминания вышла из покоя: внутри покоя камера стоит
+                # (идёт зум — доводим сразу: наезд сам сдвигает человека в кадре, ждать выхода из покоя нельзя)
+                self.fixing = fix >= FIX_START * v_floor and (abs(x) > FIX_FROM_DEAD * dead or w > 0.5 or not v_floor
+                                                              or abs(zoom_rate) > 1e-3)
+            if not self.fixing:
+                fix = 0.0
+            want = self.sign * (self.v_follow + math.copysign(fix, x))
+            if p.settling:  # цель скачком оказалась в новом месте (person_estimator.SETTLE_S): пока не продержится — стоим
+                want, self.v_follow = 0.0, 0.0
+                self.escape = a
             self.mode = "moving" if abs(want) > MOVING_CMD or abs(self.v_cmd) > MOVING_CMD or w > MOVING_WALK else "holding"
             # Наезд/отъезд сдвигает человека в кадре — доворачиваем одновременно, как оператор. Но если человек
             # уходит за край, а доворот при отъезде повёл бы камеру от него — не доворачиваем: отъезд сам
@@ -431,7 +469,13 @@ class _Axis:
             # появляется в кадре, а не теряется насовсем.
             # Туда, где его видели в последний раз: и если он ушёл, и если это камера проскочила мимо остановившегося.
             side = img_person - anchor
-            self.exit_cmd = self.sign * math.copysign(max(abs(v_w), LOST_SEARCH_V), side) if a > zone else 0.0
+            # Ищем того, кто был за границей зоны на нескольких замерах подряд: идёт он сам или это камера проскочила
+            # мимо стоящего — не важно. Цель, на один кадр перескочившая на соседа, сюда не попадает; сбой в один
+            # замер отсекает оценка человека, прыжок цели — settling.
+            if p.t != self._out_t:
+                self._out_t, self._out_n = p.t, (self._out_n + 1 if a > zone else 0)
+            leaving = a > zone and self._out_n >= EXIT_CONFIRM_N and not p.settling
+            self.exit_cmd = self.sign * math.copysign(max(abs(v_w), LOST_SEARCH_V), side) if leaving else 0.0
             self.active_t = now
         elif coast and self.exit_cmd and now - self.active_t <= LOST_COAST_S:
             want, zoom_feed = self.exit_cmd, 0.0
@@ -507,6 +551,10 @@ class FramingController:
         self._size_t: float | None = None  # с какого момента размер не тот в эту сторону
         self._calm_s = 0.0  # сколько секунд подряд человек в зоне (после отъезда «от края» наезд ждёт этого покоя)
         self._escaped = False  # был отъезд «от края»: наезд ждёт ZOOM_CALM_AFTER_ESCAPE_S покоя
+        self._meas_n = 0  # счётчик замеров
+        self._y_pred_meas, self._y_pred_n = -1, 0  # прогноз ухода по высоте: на каком замере считали и сколько подряд
+        self._search_ln0: float | None = None  # зум (ln) в момент, когда начали искать пропавшего
+        self._edge_n0: int | None = None  # с какого замера человек «уходит из кадра» без перерыва
         self._gz_t: float | None = None  # момент последнего учтённого ответа #GZ
         self._gz_ref: float | None = None  # ln масштаба (по #GZ), которому соответствует k = 1
         self._apc_t: float | None = None  # момент последнего учтённого ответа #APC
@@ -559,6 +607,7 @@ class FramingController:
 
         if inp.measure is not None and inp.t_capture is not None and inp.t_capture != self._last_cap:
             self._last_cap = inp.t_capture
+            self._meas_n += 1
             self.clock.note(inp.t_capture)
             self.t_late = self._late()
             self._t_seen = now
@@ -591,14 +640,17 @@ class FramingController:
         ratio = inp.aspect / (16 / 9)
         watch_x = (e.watch_soft_x or e.soft_x, e.watch_dead_x or e.dead_x)
         watch_y = (e.watch_soft_y or e.soft_y, (e.watch_dead_y or e.dead_y) * ratio)
+        # скорость самого малого кода на этом зуме: слабее неё доводка не начинается (FIX_START)
+        floor_x = abs(self.calib.pan_fw(51, inp.zoom_pos))
+        floor_y = abs(self.calib.pan_fw(51, inp.zoom_pos, axis="tilt")) / TILT_FROM_FH
         pan = self.x.step(now, dt, comp.anchor[0], e.dead_x, e.soft_x, e, self.t_late, active, k_now, zr, v_cap, coast,
-                          watch=watch_x)
+                          watch=watch_x, v_floor=floor_x)
         # наклон ведёт голову, как только поворот увидел ходьбу: на проходе наискось уход по высоте медленный и сам
         # на ходьбу долго не похож (стенд 2026-11-11: голова уходила на 0,35–0,75 высоты кадра)
         tilt = self.y.step(now, dt, comp.anchor[1], dead_y, e.soft_y, e, self.t_late, active_y, k_now, zr,
                            min(e.v_max, self.calib.pan_max_fw(inp.zoom_pos, axis="tilt") / TILT_FROM_FH),
-                           coast and not active, walk_hint=self.x.person.walk,
-                           keep_follow=active and self._unsure, watch=watch_y)
+                           False, walk_hint=self.x.person.walk,  # по наклону пропавшего не ищем
+                           keep_follow=active and self._unsure, watch=watch_y, v_floor=floor_y)
         if not active_y:
             self.y.mode = "holding"
 
@@ -622,10 +674,23 @@ class FramingController:
             if ax is self.y and not active_y:
                 continue  # замеру высоты не верим — по нему не отъезжаем
             ahead = max(0.0, ax.escape - max(abs(ax.err), ax.reach))  # столько он ещё пройдёт
-            if ax.off > edge:
-                shortfall = max(shortfall, ax.off - edge + ahead)
+            off = ax.off
+            if ax is self.y:
+                # По высоте прогнозу верим, только когда он держится Y_PREDICT_N замеров подряд; до тех пор — тому, что
+                # видно. Скорость головы по вертикали у выступающего скачет на 0,5–0,8 кадра/с (наклонился, поднял
+                # микрофон, ключевые точки «гуляют»), и прогноз «уйдёт за край» давал отъезд кодом 1 при человеке в
+                # центре кадра (площадка 2026-11-13, вечер: 6 раз за 5 минут). Проход наискось длится дольше.
+                predicted = ax.off > edge or ahead > 0
+                if self._meas_n != self._y_pred_meas:
+                    self._y_pred_meas, self._y_pred_n = self._meas_n, (self._y_pred_n + 1 if predicted else 0)
+                if self._y_pred_n < Y_PREDICT_N:
+                    ahead, off = 0.0, abs((ax.person.pos - ax.sign * ax._cam(now)) * k_now)
+            if off > edge:
+                shortfall = max(shortfall, off - edge + ahead)
             elif ahead > 0:
-                shortfall = max(shortfall, ax.off + ahead - edge)
+                shortfall = max(shortfall, off + ahead - edge)
+        if self.x.person.settling or self.y.person.settling:
+            shortfall = 0.0  # цель только что скачком сменила место: по ней не отъезжаем
         zoom, size_err = self._zoom(now, dt, active, e, inp.zoom_pos, shortfall, caps)
         return FramingOutput(pan, tilt, zoom, state, (self.x.err, self.y.err), size_err)
 
@@ -673,10 +738,14 @@ class FramingController:
         want = 0.0
         size_err = None
         escaping = False
+        if shortfall <= 0:
+            self._edge_n0 = None
+        elif self._edge_n0 is None:
+            self._edge_n0 = self._meas_n
         if active:
-            at_edge = shortfall > 0
+            at_edge = shortfall > 0 and self._meas_n - self._edge_n0 >= EDGE_CONFIRM_N - 1
             inside = all(max(abs(ax.err), ax.reach) <= ax.zone for ax, _cap, _soft in caps)
-            if at_edge:
+            if shortfall > 0:  # наезд придерживаем по первому же признаку ухода, как раньше; отъезжаем — по подтверждению
                 self._escaped, self._calm_s = True, 0.0
             else:
                 self._calm_s = self._calm_s + dt if inside else 0.0  # вышел из зоны — покой считается заново
@@ -709,8 +778,20 @@ class FramingController:
                     escaping = True
                     want = min(want, -ESCAPE_ZOOM * min(1.0, shortfall / EDGE_SHORTFALL - 1.0))
         elif any(ax.exit_cmd and now - ax.active_t <= LOST_COAST_S for ax in (self.x, self.y)) and not self.diverged:
-            want, escaping = -ESCAPE_ZOOM, True  # ушёл за край и пропал: идём за ним и шире, чтобы снова увидеть
+            # ушёл за край и пропал: идём за ним и шире, чтобы снова увидеть, — спокойно и не дальше SEARCH_WIDEN
+            if self._search_ln0 is None:
+                self._search_ln0 = self.zdyn.position(now)
+            if self._search_ln0 - self.zdyn.position(now) < SEARCH_WIDEN:
+                want = -e.zoom_max * EDGE_ZOOM
             self._escaped, self._calm_s = True, 0.0
+        elif self._search_ln0 is not None and not self.diverged:
+            # не нашли: возвращаем крупность, с которой начали искать, — на общем плане без цели не остаёмся
+            if self.zdyn.position(now) < self._search_ln0 - 0.02:
+                want = e.zoom_max
+            else:
+                self._search_ln0 = None
+        if active:
+            self._search_ln0 = None  # нашёлся: дальше крупностью занимается обычный закон
         capped = self._zoom_limit_reached(now, zoom_pos)
         if capped:
             # У предела наезда нет: идущий наезд гасится сразу (торможение учтено в прогнозе), даже если размер цели

@@ -497,14 +497,50 @@ def _recorded_target(e: dict | None, k: float) -> tuple[tuple[int | None, str] |
     return (tid, e.get("target_state") or "none"), box
 
 
-def replay_analysis(ep: Episode, detector=None, tracker=None) -> AnalysisReplay:
+REPLAY_VIEW_GAP_S = 3.0  # между двумя записанными положениями камеры дольше — вид в этот момент неизвестен
+
+
+def _stage_views(ep: Episode):
+    """Вид камеры на момент кадра по записанным положениям (#APC и зум): между соседними — по прямой."""
+    import bisect
+
+    from ptztracker.control import stage_area as sa
+
+    pos = []
+    for e in ep.events("position"):
+        t, pan, tilt, zoom = _time(e), _num(e.get("pan")), _num(e.get("tilt")), _num(e.get("zoom"))
+        if None not in (t, pan, tilt, zoom):
+            pos.append((t, sa.view_from((int(pan), int(tilt)), int(zoom))))
+    pos.sort(key=lambda p: p[0])
+    times = [p[0] for p in pos]
+    try:
+        from ptztracker.control.camera_model import Calibration
+
+        latency = Calibration.from_json(ep.meta["calibration"]).latency_for(ep.meta.get("stream_kind"))
+    except Exception:
+        latency = 0.3
+
+    def view(t_frame: float):
+        t = t_frame - latency  # кадр показывает камеру такой, какой она была на задержку видео раньше
+        i = bisect.bisect(times, t)
+        if i == 0 or i >= len(pos) or pos[i][0] - pos[i - 1][0] > REPLAY_VIEW_GAP_S:
+            return None
+        (ta, a), (tb, b) = pos[i - 1], pos[i]
+        k = (t - ta) / (tb - ta) if tb > ta else 0.0
+        return sa.CameraView(a.pan_deg + k * (b.pan_deg - a.pan_deg), a.tilt_deg + k * (b.tilt_deg - a.tilt_deg),
+                             a.hfov_deg * (b.hfov_deg / a.hfov_deg) ** k)
+
+    return view
+
+
+def replay_analysis(ep: Episode, detector=None, tracker=None, stage=None) -> AnalysisReplay:
     """Прогоняет кадры эпизода через детектор и PersonTracker — синхронно, по порядку записи.
 
     Так же, как Analyzer._run: детекция → гистограммы → tracker.update. Цель выбирается первым
     записанным щелчком (`target`, how="click") в тех же координатах, пересчитанных из кадра анализа
     в кадр записи (кадры в записи бывают уменьшены до 640×360). Щелчок применяется к состоянию
     трекера после последнего кадра до него — как в жизни, между двумя анализами.
-    Без детектора берётся нейросеть (PoseDetector).
+    Без детектора берётся нейросеть (PoseDetector). stage — область сцены (StageArea); None — та, что в записи.
     """
     from ptztracker.video.frames import Frame
     from ptztracker.vision.tracker import PersonTracker, compute_histograms
@@ -514,6 +550,11 @@ def replay_analysis(ep: Episode, detector=None, tracker=None) -> AnalysisReplay:
 
         detector = PoseDetector()
     tracker = tracker or PersonTracker()
+    from ptztracker.control import stage_area as sa
+
+    if stage is None:
+        stage = sa.StageArea.from_json(ep.meta.get("stage_area") or (ep.meta.get("camera") or {}).get("stage_area"))
+    view_at = _stage_views(ep) if stage is not None and stage.on else None
     res = AnalysisReplay()
     analysis, bad = _analysis_events(ep)
     res.skipped_events = getattr(ep, "bad_lines", 0) + bad
@@ -545,7 +586,10 @@ def replay_analysis(ep: Episode, detector=None, tracker=None) -> AnalysisReplay:
             res.failed_frames += 1
             continue
         hists = compute_histograms(img, people)
-        tracker.update(people, t, img, hists)
+        on_stage = None
+        if view_at is not None:
+            on_stage = sa.flags(stage, view_at(t), people, (img.shape[1], img.shape[0]))
+        tracker.update(people, t, img, hists, on_stage=on_stage)
         n += 1
         if pending and t >= click[0]:  # щелчок раньше первого кадра (или ровно на нём)
             apply_click(img.shape[1])

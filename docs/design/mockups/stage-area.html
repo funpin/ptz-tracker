@@ -1,0 +1,185 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Область сцены</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#17191D;--surface:#1E2126;--raised:#272B31;--raised-hi:#30353C;--line:#33373E;--white:#F5F5F2;--dim:#B4B8BD;--faint:#858A91;--grey:#777C83;--lime:#B7F34A;--lost:#F0A020}
+*{box-sizing:border-box}body{margin:0;background:#0E0F12;color:var(--white);font-family:Inter,system-ui,sans-serif;padding:16px 18px 48px;font-size:13px}
+h1{font-size:18px;margin:0 0 4px}h2{font-size:15px;margin:28px 0 6px}
+.sub{color:var(--dim);font-size:12.5px;margin:0 0 14px;line-height:1.45;max-width:1150px}.sub b{color:var(--white)}
+.bar{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin-bottom:12px;color:var(--faint);font-size:12px}
+.grp{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.b{padding:6px 12px;border-radius:7px;border:1px solid var(--line);color:var(--dim);cursor:pointer;font-size:13px;user-select:none}
+.b:hover{border-color:var(--grey);color:var(--white)}
+.b.on{background:var(--white);color:var(--bg);font-weight:600;border-color:var(--white)}
+.row{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.cell{width:760px;max-width:100%;background:var(--surface);border:1px solid var(--white);border-radius:10px;overflow:hidden}
+.ch{display:flex;align-items:center;gap:8px;padding:7px 10px}
+.num{width:18px;height:18px;border-radius:5px;background:var(--white);color:var(--bg);font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center}
+.tag{font-size:11px;font-weight:700;padding:2px 6px;border-radius:5px;background:var(--lime);color:var(--bg)}
+.tag.lost{background:var(--lost)}
+.v{position:relative;aspect-ratio:16/9;background:#2b3036;overflow:hidden}
+.v svg{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+.plate{position:absolute;left:10px;bottom:10px;right:10px;width:fit-content;max-width:calc(100% - 20px);background:rgba(23,25,29,.88);border-radius:7px;padding:5px 9px;font-size:12.5px;color:var(--dim);line-height:1.4}.plate b{color:var(--white)}
+.n{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--lime);color:#111;font:700 11px Inter,sans-serif;align-items:center;justify-content:center;flex:none}
+.notes{font-size:12.5px;color:var(--dim);line-height:1.45;max-width:440px;flex:1;min-width:280px}
+.notes ol{padding:0;margin:0;list-style:none}.notes li{margin-bottom:11px;display:flex;gap:8px}.notes b{color:var(--white)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;max-width:1220px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.card h3{margin:0 0 4px;font-size:14px;display:flex;gap:8px;align-items:center}.card p{color:var(--dim);font-size:12.5px;line-height:1.45;margin:0 0 10px}.card p b{color:var(--white)}
+.card .v{border-radius:8px}
+.rec{font-size:10px;font-weight:700;color:var(--bg);background:var(--lime);padding:1px 6px;border-radius:4px}
+.menu{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;width:270px}
+.menu .g{color:var(--faint);font-size:11px;padding:6px 10px 2px}
+.menu .i{height:32px;display:flex;align-items:center;gap:8px;padding:0 10px;border-radius:6px;color:var(--dim)}
+.menu .i.hot{background:rgba(183,243,74,.08);color:var(--white);box-shadow:inset 3px 0 0 var(--lime)}
+.menu .i span{margin-left:auto;color:var(--faint);font-size:12px}
+</style></head><body>
+<h1>Область сцены — где программа ищет человека</h1>
+<p class="sub">На концерте 13 ноября цель несколько раз <b>перескакивала на зрителя у нижнего края кадра</b>, и камера уезжала за ним вниз и на общий план. Программа не знает, где сцена, а где зал: для неё это просто люди. Предлагаю один раз показать ей сцену. <b>Людей вне области она не берёт в цель и не «узнаёт» в них потерянного.</b> Ниже — как это выглядит; картинку можно потрогать.</p>
+
+<div class="bar">
+ <div class="grp">Область сцены: <span class="b" data-m="off">выключена (как сейчас)</span><span class="b on" data-m="on">включена</span><span class="b" data-m="edit">настраиваю</span></div>
+</div>
+<div class="row">
+<div style="max-width:100%">
+ <div class="cell"><div class="ch"><span class="num">1</span><b>Club_1</b><span style="color:var(--faint)">общий план</span><span style="flex:1"></span><span class="tag" id="tag">ВЕДУ</span></div>
+ <div class="v"><svg id="stage" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice"></svg><div class="plate" id="plate"></div></div></div>
+</div>
+<div class="notes"><ol>
+ <li><span class="n">1</span><span><b>Область — рамка вокруг сцены.</b> Всё вне её слегка затемнено, чтобы было видно, где программа людей не ищет. Вне настройки рамка тонкая и не мешает картинке.</span></li>
+ <li><span class="n">2</span><span><b>Решает голова.</b> Человек «на сцене», если его голова внутри рамки. Зрители стоят ниже края сцены — их головы под рамкой, даже когда руки и телефоны подняты выше.</span></li>
+ <li><span class="n">3</span><span><b>Настройка — мышью, один раз на камеру.</b> Нажмите сверху «настраиваю» и потяните за любой край рамки (на макете двигается нижний и боковые). В программе: меню камеры → «Область сцены…» → тянете края → «Готово».</span></li>
+ <li><span class="n">4</span><span><b>Рамка привязана к залу, а не к картинке.</b> Камера поворачивается и наезжает — рамка остаётся на сцене. Для этого камера должна быть откалибрована и стоять на месте; переставили камеру — область задаётся заново.</span></li>
+ <li><span class="n">5</span><span><b>Ваш клик главнее.</b> Кликнули по человеку вне области — камера ведёт его: область ограничивает только то, что программа делает сама (выбор, поиск потерянного, узнавание).</span></li>
+ <li><span class="n" style="background:var(--raised-hi);color:var(--white)">i</span><span>Пока область не задана, всё работает как сейчас. Включается и выключается для каждой камеры отдельно.</span></li>
+</ol></div>
+</div>
+
+<h2>Как это работает во время слежения</h2>
+<div class="cards">
+ <div class="card"><h3><span class="n">6</span>Крупный план</h3><p>Край области виден тонкой линией, только если попал в кадр. Зритель под линией поднял руки — программа его <b>не рассматривает</b>, цель не перескочит.</p>
+  <div class="v"><svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" id="c1"></svg><div class="plate"><b>ВЕДУ</b> · под линией — зал, там не ищу</div></div></div>
+ <div class="card"><h3><span class="n">7</span>Цель потеряна</h3><p>Вокалиста закрыли — программа ищет его <b>только среди людей на сцене</b> и рядом с местом, где потеряла. Камера стоит, вниз не идёт.</p>
+  <div class="v"><svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" id="c2"></svg><div class="plate"><b style="color:var(--lost)">ИЩУ ЦЕЛЬ</b> · зрителей не беру</div></div></div>
+ <div class="card"><h3><span class="n">8</span>Артист сам вышел из области</h3><p>Вокалист спустился в зал. Того, кого камера <b>уже ведёт</b>, она ведёт дальше и за рамкой. Но если там он потеряется — искать его в зале программа не станет: кликните по нему сами.</p>
+  <div class="v"><svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" id="c3"></svg><div class="plate"><b>ВЕДУ</b> · цель вне области — веду, пока вижу</div></div></div>
+</div>
+
+<h2>Где включается</h2>
+<div class="row">
+ <div class="menu">
+  <div class="g">Слежение</div>
+  <div class="i">Калибровка…</div>
+  <div class="i hot">Область сцены…<span>задана</span></div>
+  <div class="g">Камера</div>
+  <div class="i">Видео и поток…</div>
+  <div class="i">Диагностика камеры…</div>
+ </div>
+ <div class="notes" style="max-width:640px"><ol>
+  <li><span class="n">9</span><span><b>Новый пункт в меню камеры.</b> Справа — состояние: «не задана», «задана», «выключена». Внутри настройки три кнопки: «Готово», «Выключить область», «Отмена». Новых кнопок на главном окне нет.</span></li>
+  <li><span class="n" style="background:var(--raised-hi);color:var(--white)">i</span><span>Настраивать удобнее на общем плане: программа сама предложит отъехать, если камера не в эфире; иначе рамка рисуется по тому, что видно, а остальное дотягивается после поворота камеры.</span></li>
+ </ol></div>
+</div>
+
+<h2>Один вопрос к вам — какой формы область</h2>
+<div class="cards" style="max-width:820px">
+ <div class="card"><h3>А · Одна линия «ниже — зал»</h3><p>Проводите одну линию по краю сцены. Проще некуда, но не отсекает людей сбоку: звукорежиссёра, бар, проход за кулисы.</p>
+  <div class="v"><svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" id="qa"></svg></div></div>
+ <div class="card"><h3>Б · Рамка с четырёх сторон <span class="rec">советую</span></h3><p>Та же линия снизу плюс бока и верх. По умолчанию бока и верх стоят широко — получается вариант А; нужно отсечь бар или балкон — подтягиваете край.</p>
+  <div class="v"><svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" id="qb"></svg></div></div>
+</div>
+<p class="sub" style="margin-top:14px">Честно о пределах: область не поможет, если зритель стоит так близко к камере, что его голова на картинке выше края сцены, — тогда он для программы «на сцене». И она не отличит музыкантов друг от друга: если цель перескакивает с вокалиста на гитариста, это лечится отдельно.</p>
+
+<script>
+const W=1600,H=900;
+// люди: [x головы, y головы, размер, цвет одежды, роль]
+const BAND=[[430,372,1,'#7d6a9a','гитарист'],[800,352,1.08,'#c08d82','вокалист'],[1150,378,1,'#5f8a7a','басист'],[985,300,.8,'#8a6a3a','барабанщик']];
+const HALL=[[150,742,1.25],[365,772,1.35],[610,752,1.3],[870,782,1.4],[1110,748,1.28],[1345,770,1.35],[1525,742,1.2]];
+const SIDE=[[1530,430,.9,'#566070','звукорежиссёр']];
+function room(){return `<rect width="1600" height="900" fill="#23272d"/>
+ <rect x="110" y="70" width="1300" height="470" fill="#343a44"/><rect x="110" y="70" width="1300" height="14" fill="#4a515c"/>
+ <g fill="#ffd9a0" opacity=".16"><path d="M330 84l-150 456h300z"/><path d="M800 84l-170 456h340z"/><path d="M1180 84l-150 456h300z"/></g>
+ <rect x="900" y="330" width="170" height="150" rx="10" fill="#3f3a36"/><ellipse cx="900" cy="330" rx="56" ry="10" fill="#b99a4a"/><ellipse cx="1075" cy="322" rx="50" ry="9" fill="#b99a4a"/>
+ <path d="M70 620h1380l60 34H10z" fill="#4a4038"/><rect x="10" y="654" width="1500" height="34" fill="#2f2924"/>
+ <rect x="1440" y="330" width="160" height="330" fill="#1c1f24"/><rect x="1462" y="500" width="120" height="60" rx="6" fill="#2a2f36"/>`}
+function body(x,y,s,c){return `<path d="M${x-62*s} ${y+250*s}V${y+92*s}q0-${40*s} ${40*s}-${40*s}h${44*s}q${40*s} 0 ${40*s} ${40*s}v${158*s}z" fill="${c}"/><ellipse cx="${x}" cy="${y}" rx="${30*s}" ry="${34*s}" fill="#d9ae96"/>`}
+function fan(x,y,s,up){return `<path d="M${x-95*s} 900V${y+105*s}q0-${55*s} ${55*s}-${55*s}h${80*s}q${55*s} 0 ${55*s} ${55*s}V900z" fill="#15171a"/><ellipse cx="${x}" cy="${y}" rx="${40*s}" ry="${46*s}" fill="#1b1e22"/>`+(up?`<path d="M${x+70*s} ${y+70*s}l${40*s}-${230*s}" stroke="#15171a" stroke-width="${34*s}" stroke-linecap="round"/><rect x="${x+92*s}" y="${y-205*s}" width="${40*s}" height="${66*s}" rx="6" fill="#9fb4d8"/>`:'')}
+function mark(x,y,s,kind){ // kind: seen | target | lost
+ const r=58*s,c=kind==='seen'?'rgba(245,245,242,.55)':kind==='lost'?'#F0A020':'#B7F34A',w=kind==='seen'?3.5:6,L=26*s;
+ let g=`<g fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"><path d="M${x+r-L} ${y-r}h${L}v${L}"/><path d="M${x-r} ${y+r-L}v${L}h${L}"/></g>`;
+ if(kind==='target')g+=`<rect x="${x-r}" y="${y-r-44}" width="92" height="34" rx="6" fill="#B7F34A"/><text x="${x-r+46}" y="${y-r-20}" text-anchor="middle" font-family="Inter" font-weight="700" font-size="21" fill="#17191D">ВЕДУ</text>`;
+ return g}
+function call(n,x,y){return `<circle cx="${x}" cy="${y}" r="20" fill="#B7F34A"/><text x="${x}" y="${y+7}" text-anchor="middle" font-family="Inter" font-weight="700" font-size="20" fill="#111">${n}</text>`}
+function shade(a,strong){ // затемнение вне области + тонкая рамка
+ const o=strong?.5:.34;
+ return `<path fill-rule="evenodd" fill="rgba(10,11,13,${o})" d="M0 0H1600V900H0z M${a.x0} ${a.y0}V${a.y1}H${a.x1}V${a.y0}z"/>
+ <rect x="${a.x0}" y="${a.y0}" width="${a.x1-a.x0}" height="${a.y1-a.y0}" rx="14" fill="none" stroke="rgba(245,245,242,${strong?.9:.45})" stroke-width="${strong?4:2.5}"/>`}
+function handles(a){const mx=(a.x0+a.x1)/2,my=(a.y0+a.y1)/2;
+ const h=(x,y,w,hh)=>`<rect x="${x-w/2}" y="${y-hh/2}" width="${w}" height="${hh}" rx="7" fill="#F5F5F2"/>`;
+ return h(mx,a.y1,110,16)+h(mx,a.y0,110,16)+h(a.x0,my,16,110)+h(a.x1,my,16,110)}
+const inside=(a,x,y)=>x>a.x0&&x<a.x1&&y>a.y0&&y<a.y1;
+
+// --- главный кадр ---
+const S={mode:'on',a:{x0:90,y0:40,x1:1420,y1:640}};let drag=null;
+function drawMain(){
+ const a=S.a,off=S.mode==='off',edit=S.mode==='edit';let s=room();
+ for(const p of BAND)s+=body(...p);for(const p of SIDE)s+=body(...p);
+ HALL.forEach((p,i)=>s+=fan(p[0],p[1],p[2],i===3||i===1));
+ if(!off)s+=shade(a,edit);
+ let seenHall=0,seenStage=0;
+ const all=[...BAND.map(p=>[p,'band']),...SIDE.map(p=>[p,'side']),...HALL.map(p=>[p,'hall'])];
+ const vocalIn=off||inside(a,BAND[1][0],BAND[1][1]);
+ for(const [p,k] of all){const ok=off||inside(a,p[0],p[1]);if(!ok)continue;
+  if(k==='band')seenStage++;else seenHall++;
+  const tgt=off?(k==='hall'&&p===HALL[3]):(p===BAND[1]);
+  s+=mark(p[0],p[1],k==='hall'?p[2]*1.05:p[2],tgt?'target':'seen')}
+ if(!off&&!vocalIn)s+=mark(BAND[1][0],BAND[1][1],BAND[1][2],'target');
+ if(edit)s+=handles(a);
+ if(!off){s+=call(1,a.x0+34,a.y0+34)+call(2,BAND[0][0]-96,BAND[0][1]-6);if(edit)s+=call(3,(a.x0+a.x1)/2+90,a.y1)}
+ document.getElementById('stage').innerHTML=s;
+ const tag=document.getElementById('tag');tag.textContent='ВЕДУ';
+ const pl=document.getElementById('plate');
+ if(off)pl.innerHTML=`<b>Как сейчас:</b> программа видит ${seenStage+seenHall} человек и не различает сцену и зал — цель ушла на зрителя с телефоном`;
+ else pl.innerHTML=(edit?'<b>Тяните за край рамки</b> · ':'')+`в области <b>${seenStage+seenHall}</b> из ${all.length} человек`+(seenHall?` · <b style="color:var(--lost)">внутри ${seenHall} не со сцены</b> — подтяните край`:' · зрители и пульт — вне области');
+}
+const svg=document.getElementById('stage');
+function pt(e){const r=svg.getBoundingClientRect();const k=Math.max(r.width/W,r.height/H);return [(e.clientX-r.left-(r.width-W*k)/2)/k,(e.clientY-r.top-(r.height-H*k)/2)/k]}
+svg.addEventListener('pointerdown',e=>{if(S.mode!=='edit')return;const [x,y]=pt(e),a=S.a,T=45;
+ const d=[['y1',Math.abs(y-a.y1)],['y0',Math.abs(y-a.y0)],['x0',Math.abs(x-a.x0)],['x1',Math.abs(x-a.x1)]].sort((p,q)=>p[1]-q[1])[0];
+ if(d[1]<T){drag=d[0];svg.setPointerCapture(e.pointerId)}});
+svg.addEventListener('pointermove',e=>{const [x,y]=pt(e),a=S.a;
+ if(S.mode==='edit'&&!drag){const near=Math.min(Math.abs(y-a.y1),Math.abs(y-a.y0))<45?'ns-resize':Math.min(Math.abs(x-a.x0),Math.abs(x-a.x1))<45?'ew-resize':'default';svg.style.cursor=near}
+ if(!drag)return;
+ if(drag==='y1')a.y1=Math.max(a.y0+200,Math.min(890,y));if(drag==='y0')a.y0=Math.max(10,Math.min(a.y1-200,y));
+ if(drag==='x0')a.x0=Math.max(10,Math.min(a.x1-300,x));if(drag==='x1')a.x1=Math.min(1590,Math.max(a.x0+300,x));drawMain()});
+svg.addEventListener('pointerup',()=>drag=null);
+document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>{S.mode=b.dataset.m;document.querySelectorAll('[data-m]').forEach(x=>x.classList.toggle('on',x===b));svg.style.cursor='default';drawMain()});
+drawMain();
+
+// --- карточки: крупный план ---
+function closeup(tx,ty,o){ // вокалист крупно; линия области на y=o.line
+ let s=`<rect width="1600" height="900" fill="#343a44"/><path d="M800 0l-520 900h1040z" fill="#ffd9a0" opacity=".12"/>`;
+ if(o.neighbor)s+=body(1330,300,2.3,'#5f8a7a');
+ if(!o.hidden)s+=body(tx,ty,2.6,'#c08d82');
+ if(o.cover)s+=`<path d="M430 900V330q0-120 120-120h240q120 0 120 120v570z" fill="#7d6a9a"/><ellipse cx="670" cy="150" rx="86" ry="98" fill="#caa088"/>`;
+ if(o.line){s+=`<rect x="0" y="${o.line}" width="1600" height="${900-o.line}" fill="rgba(10,11,13,.4)"/><path d="M0 ${o.line}H1600" stroke="rgba(245,245,242,.5)" stroke-width="3"/>`}
+ for(const f of o.fans||[])s+=fan(f[0],f[1],f[2],f[3]);
+ return s}
+document.getElementById('c1').innerHTML=closeup(800,250,{line:700,fans:[[330,860,1.5,true],[1250,880,1.5,false]]})+mark(800,250,2.2,'target')+call(6,120,660);
+document.getElementById('c2').innerHTML=closeup(800,250,{line:700,hidden:true,cover:true,neighbor:true,fans:[[1080,850,1.5,true]]})+mark(670,150,2.2,'seen')+mark(1330,300,2,'seen')
+ +`<g fill="none" stroke="#F0A020" stroke-width="5" stroke-dasharray="2 16" stroke-linecap="round"><circle cx="800" cy="250" r="230"/></g>`+call(7,1010,90);
+document.getElementById('c3').innerHTML=`<rect width="1600" height="900" fill="#23272d"/><rect x="0" y="0" width="1600" height="150" fill="#4a4038"/><rect y="150" width="1600" height="40" fill="#2f2924"/>`
+ +fan(250,520,1.5,true)+fan(1380,560,1.6,false)+fan(1090,700,1.7,true)+`<rect x="0" y="150" width="1600" height="750" fill="rgba(10,11,13,.34)"/><path d="M0 150H1600" stroke="rgba(245,245,242,.5)" stroke-width="3"/>`
+ +body(720,380,2.2,'#c08d82')+mark(720,380,1.9,'target')+call(8,120,110);
+
+// --- вопрос: линия или рамка ---
+function small(area,line){let s=room();for(const p of BAND)s+=body(...p);for(const p of SIDE)s+=body(...p);HALL.forEach((p,i)=>s+=fan(p[0],p[1],p[2],i===3));
+ if(line)s+=`<rect y="640" width="1600" height="260" fill="rgba(10,11,13,.45)"/><path d="M0 640H1600" stroke="rgba(245,245,242,.9)" stroke-width="4"/>`;
+ else s+=shade(area,true);
+ const a=line?{x0:-1,y0:-1,x1:1601,y1:640}:area;
+ for(const p of [...BAND,...SIDE])if(inside(a,p[0],p[1]))s+=mark(p[0],p[1],p[2],p===BAND[1]?'target':'seen');
+ return s}
+document.getElementById('qa').innerHTML=small(null,true);
+document.getElementById('qb').innerHTML=small({x0:90,y0:40,x1:1420,y1:640},false);
+</script>
+</body></html>

@@ -232,3 +232,77 @@ def test_tight_zone_follows_sway_that_loose_zone_ignores():
         late = [r[1] for r in rows if r[0] > 8]
         share[zone] = sum(1 for w in late if w > 0.5) / len(late)
     assert share[0.5] >= 0.1 and share[1.0] <= 0.02 and share[1.8] <= 0.02, share
+
+
+# --- площадка 2026-11-13: замеру верим не всякому (бракованный кадр, пачка кадров, прыжок цели) ---
+
+
+def _stand(p, t0=0.0, n=25, x=0.0, dt=0.085):
+    for i in range(n):
+        p.update(t0 + i * dt, x, 1.0)
+    return t0 + n * dt
+
+
+def test_one_glitched_measurement_is_ignored():
+    """Нейросеть на один кадр поставила человека в 0,45 кадра от места: ни положение, ни скорость не меняются."""
+    p = PersonEstimator()
+    t = _stand(p)
+    p.update(t, 0.45, 1.0)
+    assert abs(p.pos) < 1e-6 and p.vel == 0.0 and not p.settling
+    p.update(t + 0.085, 0.002, 1.0)  # следующий кадр — снова на месте
+    assert abs(p.pos) < 0.01 and abs(p.vel) < 0.05 and not p.settling
+
+
+def test_frames_from_a_burst_do_not_fake_speed():
+    """После затора кадры приходят пачкой, через миллисекунды: сдвиг 0,02 за 5 мс — это не 4 кадра/с."""
+    p = PersonEstimator()
+    t = _stand(p)
+    p.update(t + 0.4, 0.02, 1.0)   # затор 0,4 с
+    p.update(t + 0.405, 0.04, 1.0)  # и два кадра подряд
+    p.update(t + 0.41, 0.06, 1.0)
+    assert abs(p.vel) < 0.3
+
+
+def test_fast_steady_walker_is_not_taken_for_a_jump():
+    """Крупный план: человек идёт 2,5 кадра/с (в кадре) — 0,21 кадра за замер при 12 к/с. Это ход, а не скачок."""
+    p = PersonEstimator()
+    t, x, k = 0.0, 0.0, 3.0
+    for i in range(40):
+        v = min(2.5, 6.0 * i * 0.085) / k  # разгон за 0,4 с, мировые единицы
+        x += v * 0.085
+        t += 0.085
+        p.update(t, x, k)
+        assert not p.settling, i
+    assert abs(p.pos - x) * k < 0.2 and p.vel * k > 1.5
+
+
+def test_confirmed_jump_is_a_new_place_but_not_trusted_at_once():
+    """Цель перешла на другого человека: второй замер подтверждает новое место — оценка начинается заново, и 0,6 с
+    камера за ней не идёт (settling)."""
+    p = PersonEstimator()
+    t = _stand(p)
+    p.update(t, 0.4, 1.0)
+    p.update(t + 0.085, 0.41, 1.0)
+    assert abs(p.pos - 0.41) < 1e-6 and p.vel == 0.0 and p.settling
+    for i in range(2, 10):
+        p.update(t + i * 0.085, 0.41, 1.0)
+    assert not p.settling  # продержалась 0,6 с — верим
+
+
+def test_return_after_a_gap_on_the_same_course_is_trusted():
+    """Шёл 0,5 кадра/с, на 0,6 с скрылся за соседом и нашёлся там, куда шёл: это он — ведём сразу. А нашёлся в стороне
+    от своего хода — сначала присмотреться."""
+    def walker():
+        p, t, x = PersonEstimator(), 0.0, 0.0
+        for _ in range(30):
+            t += 0.085
+            x += 0.5 * 0.085
+            p.update(t, x, 1.0)
+        return p, t, x
+
+    p, t, x = walker()
+    p.update(t + 0.6, x + 0.3, 1.0)
+    assert not p.settling
+    p, t, x = walker()
+    p.update(t + 0.6, x - 0.4, 1.0)
+    assert p.settling

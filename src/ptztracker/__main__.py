@@ -132,6 +132,9 @@ def run_diagnose_cli(args) -> int:
     return 0
 
 
+VIDEO_EXIT_WAIT_S = 3.0  # поток приёма видео замечает остановку на следующем кадре; дольше — только при обрыве сети
+
+
 def run_gui(use_sim: bool) -> int:
     from PySide6.QtWidgets import QApplication
 
@@ -168,7 +171,10 @@ def run_gui(use_sim: bool) -> int:
 
     server.newConnection.connect(raise_window)
     w.show()
-    return app.exec()
+    code = app.exec()
+    # окно закрыто: до выхода из Python потоки приёма видео должны закончиться
+    w.grid.wait_video_stopped(VIDEO_EXIT_WAIT_S)
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:

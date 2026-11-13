@@ -103,6 +103,7 @@ class CellsMixin:
     def _build_cell_menu(self, slot: int, menu: QMenu, stream_menu: QMenu) -> None:
         """⋯ в шапке клетки: всё про эту камеру. Перед показом клетка выбирается — действия идут на неё."""
         menu.aboutToShow.connect(lambda: self.select_slot(slot))
+        menu.aboutToShow.connect(lambda: self.stage_action.setText(self.stage_action_text()))
 
         def ic(name: str):  # значки — как в меню ☰, серым
             return icon(name, C.TEXT_DIM, 16)
@@ -115,6 +116,8 @@ class CellsMixin:
         menu.addSeparator()
         menu.addAction(self.calib_action)
         self.calib_action.setIcon(ic("track"))
+        menu.addAction(self.stage_action)
+        self.stage_action.setIcon(ic("screen"))
         menu.addAction(self.diag_action)
         self.diag_action.setIcon(ic("chip"))
         menu.addSeparator()
@@ -493,6 +496,7 @@ class CellsMixin:
         cell.preview.set_source(None)
         cell.preview.set_analyzer(None)
         cell.preview.set_follow(None)
+        cell.preview.stage_source = None
         self._tag_shown.pop(slot, None)
         self._view_shown = None if selected else self._view_shown
         if cam is None:
@@ -573,6 +577,7 @@ class CellsMixin:
                 continue
             self.cells[i].preview.set_analyzer(c.session.analyzer)
             self.cells[i].preview.set_follow(c.session.follower)
+            self.cells[i].preview.stage_source = lambda t, s=c.session: (s.stage_area, s.stage_view(t))
             if c.session.follower:
                 c.session.follower.on_change = self._follow_cb(c.session)
         self._pad_limit_binding()
