@@ -1,4 +1,5 @@
 import argparse
+import logging
 import sys
 import time
 from pathlib import Path
@@ -136,6 +137,7 @@ def run_gui(use_sim: bool) -> int:
 
     from ptztracker.config import ConfigStore, default_config_path
     from ptztracker.logging_setup import setup_logging
+    from ptztracker.ui.hang_watch import HangWatch, hang_log_path
     from ptztracker.ui.main_window import MainWindow
     from ptztracker.ui.qt_gc import MainThreadGc
     from ptztracker.ui.single_instance import claim
@@ -150,7 +152,11 @@ def run_gui(use_sim: bool) -> int:
     server = claim()
     if server is None:  # уже запущена: вторая копия вела бы те же камеры тем же геймпадом
         print("PTZ Tracker уже запущен — показываю его окно.")
+        # у собранной программы консоли нет: без этой строки «запускаю — не открывается» не оставляет следов
+        logging.getLogger(__name__).info("Запуск второй копии: PTZ Tracker уже запущен, показываю его окно и выхожу")
         return 0
+    # до создания окна: зависший запуск (окно так и не появилось) тоже должен оставить запись
+    HangWatch(hang_log_path(), app).start()
     w = MainWindow(ConfigStore(default_config_path()), use_sim=use_sim, random_sim=use_sim)
 
     def raise_window() -> None:
