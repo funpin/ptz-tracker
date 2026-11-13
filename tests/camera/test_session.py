@@ -979,3 +979,29 @@ def test_night_mode_does_not_switch_following_off():
         assert _wait(lambda: s.image.night is True) and manual == []  # картинка камеру не двигает
     finally:
         s.stop()
+
+
+@pytest.mark.parametrize("poll_first", [True, False])
+def test_operator_step_query_goes_ahead_of_settings_poll(poll_first):
+    """CI macos-15, 2026-11-13 (и BACKLOG «Сборка под Mac»): шаг ириса, нажатый сразу после смены настройки картинки,
+    ждал ответа камеры в хвосте опроса настроек (11 запросов по 0,13 с — 1,5 с на свободной машине) и на медленной
+    пропадал по сроку PENDING_STEP_TTL_S = 2 с. Запрос, которого ждёт шаг оператора, уходит камере следующим."""
+    s = CameraSession(sim_cfg(), analysis=False)
+    s.start()
+    try:
+        assert _wait(lambda: _started(s), 5.0)
+        s._image = type(s._image)()  # значение неизвестно: шаг сначала спросит камеру
+        x = s.sim.iris_pos
+        s.sim.received.append("<<нажатие>>")
+        if poll_first:
+            s.refresh_image()  # опрос настроек уже стоит в очереди
+            s.iris_step(-1)
+        else:
+            s.iris_step(-1)
+            s.refresh_image()  # опрос, начатый сразу после нажатия, шаг назад в хвост не отправляет
+        assert _wait(lambda: s.sim.iris_pos < x)  # без продления срока: шаг успевает сам
+        got = list(s.sim.received)
+        after = got[got.index("<<нажатие>>") + 1:]
+        assert after.index("#GI") <= 1, after  # перед ним — разве что команда, которая уже была в пути
+    finally:
+        s.stop()

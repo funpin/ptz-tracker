@@ -98,10 +98,14 @@ def test_no_route_on_reconnect(hub, client_for):
 
 
 def test_dropped_connection_reconnects(hub, client_for):
-    c = client_for(hub.port)
+    seen = []
+    c = client_for(hub.port, on_change=seen.append)
     assert wait(lambda: c.snapshot().online)
+    before = len(seen)
     hub.drop_clients()
-    assert wait(lambda: not c.snapshot().online)
+    # по событиям, а не опросом: «нет связи» длится 0,05 с до новой попытки, и на занятой машине опрос раз в
+    # 0,01–0,03 с это окно пропускал (CI macos-15, 2026-11-13)
+    assert wait(lambda: any(not s.online for s in seen[before:]))
     assert wait(lambda: c.snapshot().online, 5)
     assert c.route(5, 4)
     assert wait(lambda: hub.input_on(5) == 4)

@@ -583,13 +583,17 @@ class CameraSession:
     def refresh_image(self) -> None:
         if self._power in ("standby", "switching"):
             return  # камера в ожидании отвечает ER2 — опросим после включения
+        now = time.monotonic()
+        with self._step_lock:  # этот запрос уже стоит впереди опросов: его ждёт шаг оператора (_queue_step)
+            ahead = {f"q_{what}" for what, (_, t) in self._pending_steps.items() if now - t <= PENDING_STEP_TTL_S}
         for key, cmd in (
             ("q_gain", P.Q_GAIN), ("q_wb", P.Q_WB), ("q_ctemp", P.Q_COLOR_TEMP), ("q_iris", P.Q_IRIS),
             ("q_shutter", P.Q_SHUTTER), ("q_synchro", P.Q_SYNCHRO), ("q_pedestal", P.Q_PEDESTAL),
             ("q_detail", P.Q_DETAIL), ("q_preset_speed", P.Q_PRESET_SPEED), ("q_scene", P.Q_SCENE),
             ("q_night", P.Q_NIGHT),
         ):
-            self.scheduler.submit(key, cmd, Priority.QUERY, only_if_changed=False)
+            if key not in ahead:
+                self.scheduler.submit(key, cmd, Priority.QUERY, only_if_changed=False)
 
     # --- положение камеры ---------------------------------------------
 
@@ -751,7 +755,11 @@ class CameraSession:
             old = self._pending_steps.get(what)
             prev = old[0] if old and now - old[1] <= PENDING_STEP_TTL_S else 0
             self._pending_steps[what] = (max(-4, min(4, prev + d)), now)
-        self.scheduler.submit(key, cmd, Priority.QUERY, only_if_changed=False)
+        # Запрос, которого ждёт шаг оператора, — впереди фоновых опросов настроек картинки: их десяток по 0,13 с, и
+        # в их хвосте шаг срабатывал через 1,5 с, а на медленной машине пропадал по сроку (CI macos-15, 2026-11-13).
+        # В режиме наблюдения уходят только запросы — там приоритет прежний
+        prio = Priority.QUERY if self.scheduler.queries_only else Priority.MANUAL
+        self.scheduler.submit(key, cmd, prio, only_if_changed=False)
         return True
 
     def iris_step(self, d: int) -> bool:
