@@ -296,7 +296,12 @@ def test_zoom_555_aaa_555_while_walking_no_swing_on_sim():
                 xs.append(kp[0, 0] / fr.image.shape[1])
             time.sleep(0.05)
         assert s.follower.enabled, s.follower.last_reason
-        assert max(zooms[:switched]) >= 0.5 and zooms[-1] <= 0.2, (max(zooms[:switched]), zooms[-1])
+        # «Общий» достигнут: человек заданного размера, зум у общего плана. Сам зум при этом — 0,19–0,20 диапазона
+        # (зависит от того, где человек встал), поэтому меряем размер, а зуму оставлен запас; до 2026-11-14 порог
+        # был 0,2 и проходил за счёт лишнего отъезда «от края» по пути (решение оператора, DECISIONS)
+        out = s.follower.output
+        assert out is not None and out.size_error is not None and abs(out.size_error) <= 0.05, out
+        assert max(zooms[:switched]) >= 0.5 and zooms[-1] <= 0.22, (max(zooms[:switched]), zooms[-1])
         assert 0.1 <= min(xs) and max(xs) <= 0.9, (min(xs), max(xs))
         scale = s.follower.speed_scale
         assert abs(scale["pan"] * UNCALIBRATED_SAFETY - 1) <= 0.15 and abs(scale["tilt"] * UNCALIBRATED_SAFETY - 1) <= 0.15, scale
