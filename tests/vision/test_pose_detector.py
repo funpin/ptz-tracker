@@ -167,3 +167,116 @@ def test_cpu_session_limits_threads_and_spinning(monkeypatch):
     o = seen["opts"]
     assert o is not None and 1 <= o.intra_op_num_threads <= 3
     assert o.get_session_config_entry("session.intra_op.allow_spinning") == "0"
+
+
+# --- DirectML: одна нейросеть на все камеры, считает по очереди (вылет на площадке 2026-11-13) ---
+
+
+class _DmlLikeSess:
+    """Сессия на процессоре, которая называет себя DirectML и считает, сколько прогонов идёт одновременно."""
+
+    def __init__(self, real, fail=None):
+        import threading
+
+        self.real, self.fail = real, fail or (lambda: False)
+        self.active = self.peak = self.runs = 0
+        self._count = threading.Lock()
+
+    def run(self, *a, **k):
+        import time
+
+        with self._count:
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+        try:
+            if self.fail():
+                raise RuntimeError("DmlExecutionProvider: device removed")
+            time.sleep(0.005)  # окно, в которое влез бы второй поток
+            return self.real.run(*a, **k)
+        finally:
+            with self._count:
+                self.active -= 1
+                self.runs += 1
+
+    def get_inputs(self):
+        return self.real.get_inputs()
+
+    def get_providers(self):
+        return ["DmlExecutionProvider", "CPUExecutionProvider"]
+
+
+@pytest.fixture
+def dml(monkeypatch):
+    """ort.InferenceSession, у которого запрос DirectML даёт _DmlLikeSess; made — созданные сессии по порядку."""
+    import onnxruntime as ort
+
+    from ptztracker.vision import pose_detector
+
+    real, made = ort.InferenceSession, []
+    monkeypatch.setattr(pose_detector, "_shared", {})  # общая сессия живёт весь процесс — тесту нужна своя
+
+    def fake(path, sess_options=None, providers=None, **kw):
+        if providers and providers[0] == "DmlExecutionProvider":
+            s = _DmlLikeSess(real(path, sess_options=sess_options, providers=["CPUExecutionProvider"]))
+        else:
+            s = real(path, sess_options=sess_options, providers=providers)
+        made.append(s)
+        return s
+
+    monkeypatch.setattr(ort, "InferenceSession", fake)
+    return made
+
+
+DML = ["DmlExecutionProvider", "CPUExecutionProvider"]
+
+
+def _blank():
+    return Frame(np.zeros((360, 640, 3), np.uint8), 0.0, 0)
+
+
+def test_directml_cameras_share_one_session(dml):
+    """Площадка 2026-11-13, Windows: включили «2 камеры на нейросети» — программа вылетела. Вторая камера создавала
+    свою сессию DirectML, пока первая считала. Теперь сессия DirectML в программе одна: вторая камера берёт её же."""
+    a, b = PoseDetector(providers=DML), PoseDetector(providers=DML)
+    assert len(dml) == 1
+    assert a.device == b.device == "DirectML"
+    assert a.detect(_blank()) == [] and b.detect(_blank()) == []
+
+
+def test_directml_runs_one_at_a_time(dml):
+    import threading
+
+    a, b = PoseDetector(providers=DML), PoseDetector(providers=DML)
+    sess = dml[0]
+    errors = []
+
+    def work(d):
+        try:
+            for _ in range(15):
+                d.detect(_blank())
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=work, args=(d,)) for d in (a, b)]
+    [t.start() for t in threads]
+    [t.join(30) for t in threads]
+    assert not errors and sess.runs == 31  # 30 кадров и один пробный прогон при создании
+    assert sess.peak == 1  # два потока — ни разу вместе
+
+
+def test_other_devices_keep_a_session_per_camera(dml):
+    """На процессоре и CoreML всё как было: у каждой камеры своя сессия, они считают параллельно."""
+    PoseDetector(providers=["CPUExecutionProvider"])
+    PoseDetector(providers=["CPUExecutionProvider"])
+    assert len(dml) == 2 and dml[0] is not dml[1]
+
+
+def test_broken_directml_session_is_replaced_on_next_create(dml):
+    """Анализатор после серии ошибок пересоздаёт детектор: сломанная общая сессия не должна вернуться к нему же."""
+    a = PoseDetector(providers=DML)
+    broken = {"on": True}
+    dml[0].fail = lambda: broken["on"]
+    with pytest.raises(RuntimeError):
+        a.detect(_blank())
+    b = PoseDetector(providers=DML)
+    assert len(dml) == 2 and b.detect(_blank()) == []

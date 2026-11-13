@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 import cv2
@@ -26,6 +27,13 @@ _DEVICE_NAMES = {
     "CoreMLExecutionProvider": "CoreML",
     "CPUExecutionProvider": "CPU",
 }
+# На этих устройствах нейросеть в программе одна, и считает она по очереди: камеры берут одну и ту же сессию.
+# Площадка 2026-11-13, Windows: оператор включил «2 камеры на нейросети» — программа вылетела. В этот момент вторая
+# камера создавала свою сессию DirectML в своём потоке, пока первая считала (DECISIONS). С одной камерой сессия
+# одна — так и работало; теперь так при любом числе камер. На CoreML и процессоре — по сессии на камеру, как было
+ONE_SESSION = frozenset({"DmlExecutionProvider"})
+_shared: dict[tuple, object] = {}  # (модель, устройства) → сессия
+_shared_lock = threading.Lock()  # создание общей сессии и каждый её прогон — по одному
 
 
 def choose_providers(available: list[str]) -> list[str]:
@@ -86,9 +94,11 @@ class PoseDetector:
         if not Path(model_path).is_file():
             raise RuntimeError(f"Не найден файл модели распознавания: {model_path}")
         wanted = providers or choose_providers(ort.get_available_providers())
+        self._key = (str(model_path), tuple(wanted)) if wanted[0] in ONE_SESSION else None
         try:
-            self._session = self._open(ort, model_path, wanted)
+            self._session = self._open_shared(ort, model_path, wanted) if self._key else self._open(ort, model_path, wanted)
         except Exception as e:
+            self._key = None
             if wanted == ["CPUExecutionProvider"]:
                 raise RuntimeError(f"Не удалось загрузить модель распознавания: {e}") from e
             log.warning("Видеокарта (%s) недоступна для распознавания: %s — перехожу на CPU", wanted, e)
@@ -112,7 +122,24 @@ class PoseDetector:
         sess.run(None, {sess.get_inputs()[0].name: np.zeros((1, 3, INPUT_SIZE, INPUT_SIZE), np.float32)})
         return sess
 
+    def _open_shared(self, ort, model_path: Path, providers: list[str]):
+        """Общая сессия: первая камера создаёт, остальные берут её же. Под замком — пока она создаётся, никто не считает."""
+        with _shared_lock:
+            sess = _shared.get(self._key)
+            if sess is None:
+                sess = _shared[self._key] = self._open(ort, model_path, providers)
+            return sess
+
     def detect(self, frame: Frame) -> list[Person]:
         tensor, scale, pad = letterbox(frame.image)
-        out = self._session.run(None, {self._input: tensor})[0]
+        if self._key is None:
+            out = self._session.run(None, {self._input: tensor})[0]
+        else:
+            with _shared_lock:
+                try:
+                    out = self._session.run(None, {self._input: tensor})[0]
+                except Exception:
+                    if _shared.get(self._key) is self._session:
+                        del _shared[self._key]  # сломалась: следующий PoseDetector() создаст новую, а не возьмёт эту
+                    raise
         return decode_yolo_pose(out, scale, pad, self.conf, self.iou)
