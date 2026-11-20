@@ -56,6 +56,43 @@ MAX_PADS = 4
 SCAN_PERIOD_S = 0.5  # как часто искать новые контроллеры
 
 
+_SDL_LIB = None
+
+
+def load_sdl_lib():
+    """SDL2 из пакета pygame (тот же, что у геймпада); иначе системный. Нет — OSError."""
+    global _SDL_LIB
+    if _SDL_LIB is not None:
+        return _SDL_LIB
+    import pathlib
+    cands: list[str] = []
+    try:
+        import pygame
+        base = pathlib.Path(pygame.__file__).parent
+        cands += [str(p) for p in (base / ".dylibs").glob("libSDL2*.dylib")]
+        cands += [str(base / "SDL2.dll")] if sys.platform == "win32" else []
+        cands += [str(p) for p in base.glob("libSDL2*.so*")]
+    except Exception:
+        pass
+    found = ctypes.util.find_library("SDL2")
+    cands += [found] if found else []
+    for c in cands:
+        try:
+            lib = ctypes.CDLL(c)
+            lib.SDL_GameControllerFromInstanceID.restype = ctypes.c_void_p
+            lib.SDL_GameControllerFromInstanceID.argtypes = [ctypes.c_int32]
+            lib.SDL_GameControllerSetPlayerIndex.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            lib.SDL_JoystickNameForIndex.restype = ctypes.c_char_p
+            lib.SDL_JoystickNameForIndex.argtypes = [ctypes.c_int]
+            for fn in (lib.SDL_JoystickGetDeviceVendor, lib.SDL_JoystickGetDeviceProduct):
+                fn.restype, fn.argtypes = ctypes.c_uint16, [ctypes.c_int]
+        except Exception:
+            continue
+        _SDL_LIB = lib
+        return lib
+    raise OSError("библиотека SDL2 не найдена")
+
+
 class SdlHub:
     """Один SDL на процесс: init/quit, event.pump и список подключённых контроллеров (до 4).
 
@@ -70,6 +107,7 @@ class SdlHub:
         self._clock = clock
         self._slots: list = [None] * MAX_PADS
         self._scan_next = 0.0
+        self._last_seen: tuple | None = None  # что SDL видел при прошлом поиске: в журнал — только перемены
 
     def backend(self, index: int) -> SdlBackend:
         """Вид одного контроллера. SDL не трогает (создаётся в потоке Qt): pygame берёт у хаба при первом опросе."""
@@ -100,6 +138,7 @@ class SdlHub:
                 "ps": p.CONTROLLER_BUTTON_GUIDE,
             }
             self.pg, self._controller = pygame, controller
+            log.info("Геймпады: SDL %s запущен (%s)", ".".join(map(str, pygame.get_sdl_version())), sys.platform)
             return True
         except Exception as e:
             log.warning("Геймпад недоступен: SDL не запустился (%s: %s)", type(e).__name__, e)
@@ -117,6 +156,7 @@ class SdlHub:
         for i, ctl in enumerate(self._slots):
             if ctl is not None and not self._attached(ctl):
                 self._slots[i] = None
+                self._log_dropped(i, ctl)
                 try:
                     ctl.quit()
                 except Exception:
@@ -126,12 +166,35 @@ class SdlHub:
             self._scan_next = now + SCAN_PERIOD_S
             self._scan()
 
+    def _log_dropped(self, i: int, ctl) -> None:
+        """Почему геймпад пропал: на Windows SDL отключала DualSense сразу после подключения (1.5.0, 2026-11-20)."""
+        try:
+            name = getattr(ctl, "name", None) or "?"
+        except Exception:
+            name = "?"
+        try:
+            err = self.pg.get_error() or "нет"
+        except Exception:
+            err = "?"
+        log.info("Геймпады: SDL отключила «%s» (номер %d); ошибка SDL: %s", name, i, err)
+
     @staticmethod
     def _attached(ctl) -> bool:
         try:
             return bool(ctl.attached())
         except Exception:
             return False
+
+    def _describe(self, i: int) -> str:
+        """«имя» VID:PID устройства SDL по индексу, не открывая его; сбой — «?». Только для журнала."""
+        try:
+            lib = load_sdl_lib()
+            raw = lib.SDL_JoystickNameForIndex(i)
+            name = raw.decode("utf-8", "replace") if raw else "?"
+            vid, pid = lib.SDL_JoystickGetDeviceVendor(i), lib.SDL_JoystickGetDeviceProduct(i)
+            return f"«{name}» {vid:04x}:{pid:04x}"
+        except Exception:
+            return "?"
 
     def _scan(self) -> None:
         c = self._controller
@@ -142,17 +205,21 @@ class SdlHub:
                     known.add(ctl.as_joystick().get_instance_id())
                 except Exception:
                     pass
+        seen: list[tuple[str, str]] = []  # (устройство, что с ним) — для журнала
         for i in range(c.get_count()):
-            if None not in self._slots:
-                return
             if not c.is_controller(i):
+                seen.append((self._describe(i), "пропущено: SDL не знает раскладку кнопок"))
+                continue
+            if None not in self._slots:
+                seen.append((self._describe(i), "геймпад"))
                 continue
             try:
                 ctl = c.Controller(i)
                 iid = ctl.as_joystick().get_instance_id()
             except Exception as e:
-                log.debug("Контроллер %s не открыт: %s: %s", i, type(e).__name__, e)
+                seen.append((self._describe(i), f"не открылось: {type(e).__name__}: {e}"))
                 continue
+            seen.append((self._describe(i), "геймпад"))
             if any(ctl is s for s in self._slots):
                 continue  # pygame отдаёт тот же объект: закрыть его — отключить свой же геймпад
             if iid in known:
@@ -163,6 +230,18 @@ class SdlHub:
                 continue
             known.add(iid)
             self._slots[self._slots.index(None)] = ctl
+        self._log_seen(tuple(seen))
+
+    def _log_seen(self, seen: tuple) -> None:
+        """Одна строка в журнал, когда меняется то, что видит SDL: по ней видно, почему геймпада нет."""
+        if seen == self._last_seen:
+            return
+        self._last_seen = seen
+        if not seen:
+            log.info("Геймпады: SDL не видит ни одного устройства ввода")
+            return
+        log.info("Геймпады: SDL видит %d устр.: %s", len(seen),
+                 "; ".join(f"{n} {d} — {what}" for n, (d, what) in enumerate(seen)))
 
     def close(self) -> None:
         try:
@@ -215,7 +294,7 @@ class SdlBackend:
         except self._pg.error as e:
             if not self._pump_error_logged:
                 self._pump_error_logged = True
-                log.debug("Опрос геймпада: pygame.error: %s", e)
+                log.info("Геймпады: опрос номера %d не удался: %s", self._index, e)
             self._ctl = None  # устройство пропало посреди опроса
             return None
 
@@ -319,30 +398,7 @@ class SdlBackend:
     def _sdl_lib(self):
         """SDL2 из пакета pygame (тот же, что у геймпада); иначе системный."""
         if self._sdl is None:
-            import pathlib
-            cands: list[str] = []
-            try:
-                import pygame
-                base = pathlib.Path(pygame.__file__).parent
-                cands += [str(p) for p in (base / ".dylibs").glob("libSDL2*.dylib")]
-                cands += [str(base / "SDL2.dll")] if sys.platform == "win32" else []
-                cands += [str(p) for p in base.glob("libSDL2*.so*")]
-            except Exception:
-                pass
-            found = ctypes.util.find_library("SDL2")
-            cands += [found] if found else []
-            for c in cands:
-                try:
-                    lib = ctypes.CDLL(c)
-                    lib.SDL_GameControllerFromInstanceID.restype = ctypes.c_void_p
-                    lib.SDL_GameControllerFromInstanceID.argtypes = [ctypes.c_int32]
-                    lib.SDL_GameControllerSetPlayerIndex.argtypes = [ctypes.c_void_p, ctypes.c_int]
-                    self._sdl = lib
-                    break
-                except Exception:
-                    continue
-            if self._sdl is None:
-                raise OSError("библиотека SDL2 не найдена")
+            self._sdl = load_sdl_lib()
         return self._sdl
 
     def _set_player_index(self, idx: int) -> bool:

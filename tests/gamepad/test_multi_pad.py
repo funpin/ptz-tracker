@@ -252,3 +252,107 @@ def test_hub_rescan_does_not_close_the_pad_it_already_holds():
         hub.pump()
     assert hub.controller(0) is first and not first.quit_called
     assert hub.controller(1) is None
+
+
+class PickyController(FakeController):
+    """Часть устройств SDL не считает геймпадом (нет раскладки), одно не открывается."""
+
+    def __init__(self, not_pads=(), broken=()):
+        super().__init__()
+        self.not_pads, self.broken = set(not_pads), set(broken)
+
+    def is_controller(self, i):
+        return self.devices[i] not in self.not_pads
+
+    def Controller(self, i):  # noqa: N802
+        if self.devices[i] in self.broken:
+            raise RuntimeError("Couldn't open joystick")
+        return super().Controller(i)
+
+
+def _seen_lines(caplog):
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("Геймпады: SDL")]
+
+
+def test_hub_logs_what_sdl_sees_and_why_a_device_is_skipped(caplog):
+    """На Windows геймпад «не виден», а в журнале пусто: пишем каждое устройство SDL и что с ним стало."""
+    caplog.set_level("INFO", logger="ptztracker.gamepad.device")
+    hub, _, _ = mk_hub()
+    hub._controller = ctrl = PickyController(not_pads={2}, broken={3})
+    hub._describe = lambda i: f"«Устройство {ctrl.devices[i]}» 054c:0ce6"
+    ctrl.devices = [1, 2, 3]
+    hub.pump()
+    (line,) = _seen_lines(caplog)
+    assert "3 устр" in line
+    assert "«Устройство 1» 054c:0ce6 — геймпад" in line
+    assert "«Устройство 2» 054c:0ce6 — пропущено: SDL не знает раскладку кнопок" in line
+    assert "«Устройство 3» 054c:0ce6 — не открылось: RuntimeError: Couldn't open joystick" in line
+    assert hub.controller(0).iid == 1 and hub.controller(1) is None
+
+
+def test_hub_logs_when_sdl_sees_nothing_and_only_on_change(caplog):
+    caplog.set_level("INFO", logger="ptztracker.gamepad.device")
+    hub, ctrl, clock = mk_hub()
+    hub._describe = lambda i: "«DualSense»"
+    for k in range(5):  # пусто: одна строка, а не каждые 0,5 с
+        clock.t = k * 0.6
+        hub.pump()
+    assert _seen_lines(caplog) == ["Геймпады: SDL не видит ни одного устройства ввода"]
+    ctrl.devices = [7]
+    clock.t = 5.0
+    hub.pump()
+    clock.t = 6.0
+    hub.pump()
+    assert len(_seen_lines(caplog)) == 2 and "«DualSense» — геймпад" in _seen_lines(caplog)[1]
+
+
+def test_hub_describe_survives_missing_sdl_library(monkeypatch):
+    from ptztracker.gamepad import device
+    monkeypatch.setattr(device, "load_sdl_lib", lambda: (_ for _ in ()).throw(OSError("нет SDL")))
+    assert SdlHub()._describe(0) == "?"
+
+
+class ErrPg(FakePg):
+    @staticmethod
+    def get_error():
+        return "HIDAPI read failed"
+
+
+def test_hub_logs_why_sdl_dropped_a_pad(caplog):
+    """Windows, 1.5.0: «подключён» и сразу «отключён», в журнале ни слова почему. Пишем ошибку SDL."""
+    caplog.set_level("INFO", logger="ptztracker.gamepad.device")
+    hub, ctrl, clock = mk_hub()
+    hub.pg = ErrPg
+    hub._describe = lambda i: "«DualSense»"
+    ctrl.devices = [5]
+    hub.pump()
+    ctl = hub.controller(0)
+    ctl.name = "DualSense Wireless Controller"
+    ctl.up = False
+    ctrl.devices = []
+    hub.pump()
+    lines = [r.getMessage() for r in caplog.records if "отключ" in r.getMessage()]
+    assert lines == ["Геймпады: SDL отключила «DualSense Wireless Controller» (номер 0); ошибка SDL: HIDAPI read failed"]
+    assert hub.controller(0) is None
+
+
+def test_backend_logs_sdl_error_while_polling_at_info(caplog):
+
+    class Boom(Exception):
+        pass
+
+    class Pg:
+        error = Boom
+        CONTROLLER_AXIS_LEFTX, CONTROLLER_AXIS_TRIGGERLEFT, CONTROLLER_AXIS_TRIGGERRIGHT = 0, 4, 5
+
+    class BadCtl:
+        def get_axis(self, a):
+            raise Boom("Controller is not initialized")
+
+    caplog.set_level("INFO", logger="ptztracker.gamepad.device")
+    hub = SdlHub()
+    hub.pg, hub._slots[0] = Pg, BadCtl()
+    b = hub.backend(0)
+    assert b.poll() is None and b.poll() is None
+    lines = [r.getMessage() for r in caplog.records if r.levelname == "INFO"]
+    assert lines == ["Геймпады: опрос номера 0 не удался: Controller is not initialized"]
