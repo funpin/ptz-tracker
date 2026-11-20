@@ -67,4 +67,6 @@ def test_native_crash_leaves_stacks_in_hang_log(tmp_path):
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=60)
     assert r.returncode != 0
     text = path.read_text(encoding="utf-8", errors="replace")
-    assert "=== запуск" in text and "Fatal Python error" in text and "crash_here" in text
+    # Mac/Linux: «Fatal Python error: Segmentation fault»; Windows: «Windows fatal exception: access violation»
+    assert "=== запуск" in text and "crash_here" in text
+    assert "Fatal Python error" in text or "Windows fatal exception" in text
