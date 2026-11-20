@@ -527,6 +527,7 @@ class MainWindow(CellsMixin, FollowMixin, PresetsMixin, RecordingMixin, StatusMi
         # одно меню ☰ в окне — одинаково на Mac и Windows; меню «Сервис» в строке macOS нет.
         # Строки ☰ — заместители этих действий (ui/main_menu.py): группы, значки, состояние справа, без подменю
         menu = self.main_menu_btn.menu()
+        menu.aboutToShow.connect(lambda: log.info("Меню ☰: открываю"))
         # про одну камеру — в ⋯ её клетки (спека «Меню ☰ (только общее)»); действия общие для всех клеток
         self.calib_action = QAction("Калибровка камеры…", self)
         self.calib_action.triggered.connect(self._run_calibration)

@@ -437,6 +437,9 @@ class SdlBackend:
 
 
 log_thread = logging.getLogger(__name__ + ".thread")
+_QUIET_INTENTS = ("PanTilt", "Zoom")  # движение — не нажатие: в журнал нажатий не идёт
+SLOW_POLL_S = 0.25  # такт опроса SDL дольше — в журнал: поток держит GIL, окно в это время может не отвечать
+SLOW_POLL_LOG_EVERY_S = 60.0
 _NEUTRAL_LED = (0, 0, 0)
 
 
@@ -461,6 +464,7 @@ class GamepadThread:
         self._clock = clock
         self._q: queue.SimpleQueue = queue.SimpleQueue()
         self._connected = False
+        self._logged_buttons: frozenset[str] = frozenset()  # для журнала нажатий
         self._dead = False
         self._led: tuple[int, int, int] | None = None
         self._player: int | None = None
@@ -585,6 +589,7 @@ class GamepadThread:
         if self._stop.is_set():
             return  # остановка запрошена (поток мог зависнуть в poll): новых подключений не оформляем
         intents = self._mapper.update(pad, now)
+        self._log_presses(pad, intents)
         if pad is not None and not self._connected:
             self._connected = True
             info = self._b.info()
@@ -608,6 +613,17 @@ class GamepadThread:
         if self._connected:
             self._step_rumble(now)
             self._poll_battery(now)
+
+    def _log_presses(self, pad, intents: list) -> None:
+        """Нажатые кнопки и во что они превратились — в журнал (стики и курки — нет: их слишком много).
+
+        Windows, 1.5.1: «PS не работает» — так видно, дошло ли нажатие от SDL и что из него сделал Mapper."""
+        buttons = pad.buttons if pad is not None else frozenset()
+        pressed, self._logged_buttons = buttons - self._logged_buttons, buttons
+        if not pressed or not self._connected:
+            return  # кнопки, зажатые при подключении, Mapper не считает нажатиями
+        acts = [type(i).__name__ for i in intents if type(i).__name__ not in _QUIET_INTENTS]
+        log_thread.info("Геймпад: нажато %s → %s", ", ".join(sorted(pressed)), ", ".join(acts) or "—")
 
     def _publish_battery(self, val: tuple) -> None:
         if self._on_battery is None or val == self._batt_last:
@@ -647,6 +663,8 @@ class MultiPadThread:
         self._pump_warned = False
         self._shut = False
         self._lock = threading.Lock()
+        self._slow_next = 0.0
+        self._slow_quiet = 0
 
     def start(self) -> None:
         if self._thread is None:
@@ -654,14 +672,28 @@ class MultiPadThread:
             self._thread.start()
 
     def tick(self) -> None:
+        t0 = self._clock()
         try:
             self._hub.pump()
         except Exception as e:
             if not self._pump_warned:
                 self._pump_warned = True
-                log_thread.debug("Опрос SDL: %s: %s", type(e).__name__, e)
+                log_thread.info("Опрос SDL: %s: %s", type(e).__name__, e)
         for t in self._threads:
             t.tick()
+        self._note_slow(self._clock() - t0)
+
+    def _note_slow(self, dt: float) -> None:
+        """Долгий такт опроса — в журнал, не чаще раза в минуту (с числом пропущенных)."""
+        if dt < SLOW_POLL_S:
+            return
+        now = self._clock()
+        if now < self._slow_next:
+            self._slow_quiet += 1
+            return
+        more = f"; ещё {self._slow_quiet} раз за минуту" if self._slow_quiet else ""
+        log_thread.info("Геймпады: опрос SDL занял %.0f мс (окно в это время может не отвечать)%s", dt * 1000, more)
+        self._slow_next, self._slow_quiet = now + SLOW_POLL_LOG_EVERY_S, 0
 
     def _run(self) -> None:
         try:

@@ -397,3 +397,35 @@ def test_pad_id_bluetooth_address_has_one_form():
     for serial in (b"48-18-8d-0f-68-98", b"48:18:8D:0F:68:98"):
         info = _id_backend(serial).info()
         assert info["id"] == "48:18:8D:0F:68:98"
+
+
+def test_button_presses_logged_with_what_they_mean(caplog):
+    """Windows 1.5.1: «PS не работает» — по журналу должно быть видно, дошло ли нажатие и во что превратилось."""
+    caplog.set_level("INFO", logger="ptztracker.gamepad.device.thread")
+    b, th, got, conn = mk([RawPad(), RawPad(buttons=frozenset({"ps"})), RawPad(buttons=frozenset({"ps"})),
+                           RawPad(), RawPad(axes={"leftx": 0.9})])
+    for _ in range(5):
+        th.tick()
+    lines = [r.getMessage() for r in caplog.records]
+    assert lines == ["Геймпад: нажато ps → Help"]
+
+
+def test_slow_sdl_poll_logged_rarely(caplog):
+    """Опрос SDL, надолго занявший поток с GIL, тормозит окно: в журнал — сколько длился, не чаще раза в минуту."""
+    from ptztracker.gamepad.device import MultiPadThread
+
+    clock = Clock()
+
+    class SlowHub:
+        def pump(self):
+            clock.t += 0.6
+
+    caplog.set_level("INFO", logger="ptztracker.gamepad.device.thread")
+    m = MultiPadThread(SlowHub(), [], clock=clock)
+    for _ in range(10):
+        m.tick()
+    lines = [r.getMessage() for r in caplog.records]
+    assert lines == ["Геймпады: опрос SDL занял 600 мс (окно в это время может не отвечать)"]
+    clock.t += 61
+    m.tick()
+    assert len(caplog.records) == 2 and "ещё 9 раз" in caplog.records[1].getMessage()

@@ -449,3 +449,19 @@ def test_close_window_stops_cameras_even_if_preparation_fails(qtbot, tmp_path):
     w.close()
     assert all(c is None for c in w.grid.cells)
     assert "#PTS5050" in sim.received
+
+
+def test_ps_press_is_traced_from_pad_to_help_in_log(qtbot, tmp_path, caplog):
+    """Windows 1.5.1: «PS не открывает справку». По журналу видно каждое звено: SDL → Mapper → окно → справка."""
+    caplog.set_level("INFO")
+    w, hub, _ = make_hub(qtbot, tmp_path)
+    hub.backends[0].pad = RawPad()
+    qtbot.waitUntil(lambda: len(w.pads) == 1, timeout=3000)
+    qtbot.wait(100)
+    hub.backends[0].pad = RawPad(buttons=frozenset({"ps"}))
+    qtbot.waitUntil(lambda: w.hotkeys_dialog is not None and w.hotkeys_dialog.isVisible(), timeout=3000)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert "Геймпад: нажато ps → Help" in msgs
+    assert "Окно: геймпад 1 → Help" in msgs and "Справка: открываю" in msgs
+    hub.backends[0].pad = RawPad()
+    w.close()

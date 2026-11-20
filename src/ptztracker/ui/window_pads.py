@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from ptztracker.camera.session import CameraSession
 from ptztracker.config import DEFAULT_GEAR, DEFAULT_TILT_SPEED, SPEED_GEARS, TILT_SPEED_MAX, TILT_SPEED_MIN
@@ -47,6 +48,8 @@ from ptztracker.ui.widgets import battery_level
 from ptztracker.ui.window_common import _PAD_SIZES, _is_action
 
 log = logging.getLogger(__name__)
+PAD_FLOOD_WINDOW_S = 10.0
+PAD_FLOOD_N = 200  # больше 20 команд движения в секунду дольше 10 с — в журнал
 
 
 class PadsMixin:
@@ -84,6 +87,7 @@ class PadsMixin:
         else:
             self.gamepads_dialog.set_rows(self.pad_rows())
             self.gamepads_dialog.set_slow_on_tele(self.cfg.slow_on_tele)
+        log.info("Окно «Геймпады…»: открываю")
         self.gamepads_dialog.show()
         self.gamepads_dialog.raise_()
 
@@ -377,6 +381,10 @@ class PadsMixin:
                 bridge.zero_velocity()
             return
         b = bridge if bridge is not None else (self.pads.get(pad) or self.pad)
+        acts = [type(it).__name__ for it in intents if not isinstance(it, (PanTilt, Zoom))]
+        self._count_pad_motion(pad, len(intents) - len(acts))
+        if acts:  # с отметкой времени потока опроса в журнале видно, сколько команда шла до окна
+            log.info("Окно: геймпад %s → %s", pad, ", ".join(acts))
         if any(_is_action(it) for it in intents):
             self._note_input("pad")
         moved = False
@@ -436,6 +444,20 @@ class PadsMixin:
             ps = self._pad_session(pad)
             if ps is not None and ps.limit_watch:
                 ps.limit_watch.set_demand(*b.velocity())
+
+    def _count_pad_motion(self, pad: int | None, n: int) -> None:
+        """Поток команд движения от геймпада — в журнал раз в PAD_FLOOD_WINDOW_S, если их больше PAD_FLOOD_N.
+
+        Windows, 1.5.1: при подключённом геймпаде не нажимались кнопки окна. Догадка: стик «гуляет» за мёртвой
+        зоной, и окно без конца занято движением; по этой строке видно, так ли это."""
+        now = time.monotonic()
+        start, count = getattr(self, "_pad_motion_win", (now, 0))
+        count += n
+        if now - start >= PAD_FLOOD_WINDOW_S:
+            if count > PAD_FLOOD_N:
+                log.info("Окно: от геймпада %s — %d команд движения за %.0f с", pad, count, now - start)
+            start, count = now, 0
+        self._pad_motion_win = (start, count)
 
     def _pad_rumble(self, pad: int | None, pattern) -> None:
         b = self.pads.get(pad) if pad is not None else None

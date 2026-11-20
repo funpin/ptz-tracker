@@ -108,6 +108,7 @@ def test_gui_start_moves_collection_to_qt_thread(qapp, monkeypatch):
     monkeypatch.setattr(theme, "install_russian", lambda _: None)
     monkeypatch.setattr(theme, "apply_dark_theme", lambda _: None)
     monkeypatch.setattr("ptztracker.logging_setup.setup_logging", lambda: None)
+    monkeypatch.setattr("ptztracker.logging_setup.install_error_hooks", lambda: None)
 
     assert entry.run_gui(use_sim=True) == 0
     installed.assert_called_once_with(qapp)

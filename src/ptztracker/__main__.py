@@ -139,7 +139,7 @@ def run_gui(use_sim: bool) -> int:
     from PySide6.QtWidgets import QApplication
 
     from ptztracker.config import ConfigStore, default_config_path
-    from ptztracker.logging_setup import setup_logging
+    from ptztracker.logging_setup import install_error_hooks, setup_logging
     from ptztracker.ui.hang_watch import HangWatch, hang_log_path
     from ptztracker.ui.main_window import MainWindow
     from ptztracker.ui.qt_gc import MainThreadGc
@@ -147,6 +147,7 @@ def run_gui(use_sim: bool) -> int:
     from ptztracker.ui.theme import apply_dark_theme, install_russian
 
     setup_logging()
+    install_error_hooks()
     app = QApplication(sys.argv[:1])
     MainThreadGc(app)
     app.setApplicationName("PTZ Tracker")

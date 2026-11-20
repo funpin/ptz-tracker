@@ -1,5 +1,7 @@
 import logging
 import logging.handlers
+import sys
+import threading
 from pathlib import Path
 
 import platformdirs
@@ -23,3 +25,33 @@ def setup_logging(level: int = logging.INFO) -> Path:
         sh.setFormatter(fmt)
         root.addHandler(sh)
     return log_file
+
+
+def install_error_hooks() -> None:
+    """Необработанные ошибки — в журнал. У собранной программы на Windows нет консоли, а Qt печатает ошибку
+    обработчика кнопки только в stderr: кнопка молча не срабатывала, в журнале не оставалось ничего (2026-11-20)."""
+    err = logging.getLogger("ptztracker.errors")
+    prev_sys, prev_thread = sys.excepthook, threading.excepthook
+
+    def on_error(etype, value, tb) -> None:
+        try:
+            err.error("Необработанная ошибка: %s: %s", etype.__name__, value, exc_info=(etype, value, tb))
+        except Exception:
+            pass
+        if sys.stderr is not None:
+            prev_sys(etype, value, tb)
+
+    def on_thread_error(args) -> None:
+        if args.exc_type is SystemExit:
+            return
+        name = args.thread.name if args.thread is not None else "?"
+        try:
+            err.error("Необработанная ошибка в потоке %s: %s: %s", name, args.exc_type.__name__, args.exc_value,
+                      exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+        except Exception:
+            pass
+        if sys.stderr is not None:
+            prev_thread(args)
+
+    sys.excepthook = on_error
+    threading.excepthook = on_thread_error

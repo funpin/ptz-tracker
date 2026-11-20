@@ -87,6 +87,7 @@ class VideohubMixin:
         return hub_menu_status(bool(self.cfg.videohub_ip), self._hub_snapshot(), self.cfg.videohub_ip)
 
     def _edit_videohub(self) -> None:
+        log.info("Окно Videohub: открываю")
         cams = [c.cfg for c in self.grid.cells if c is not None]
         slots = [i + 1 for i, c in enumerate(self.grid.cells) if c is not None]
         d = VideohubDialog(self.cfg.videohub_ip, hub_output_of(self.cfg), self.cfg.videohub_follow,

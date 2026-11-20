@@ -568,6 +568,7 @@ class StatusMixin:
         log.info("Поправка скорости камеры %s сохранена: %s", cam.name, scale)
 
     def show_hotkeys(self) -> None:
+        log.info("Справка: открываю")
         if self.hotkeys_dialog is None:
             self.hotkeys_dialog = HotkeysDialog(parent=self)
         self.hotkeys_dialog.show()

@@ -202,3 +202,19 @@ def test_gui_start_arms_the_watch_after_the_single_instance_check(monkeypatch, c
     installed.return_value.start.assert_called_once_with()
     # после закрытия окна, перед выходом: дождаться потоков приёма видео (иначе падение при завершении Python)
     main_window.MainWindow.return_value.grid.wait_video_stopped.assert_called_once()
+
+
+def test_short_stall_goes_to_main_log_rarely(watch, caplog):
+    """Замирание 1,5–5 с — не зависание, но кнопки «не нажимаются»: строка в журнал, не чаще раза в 30 с."""
+    w = watch(hang_s=5.0, beat_ms=60_000)
+    assert w.start()
+    caplog.set_level("WARNING", logger="ptztracker.ui.hang_watch")
+    for _ in range(3):
+        w._last = time.monotonic() - 2.0
+        w.beat()
+    w._stall_next = 0.0
+    w._last = time.monotonic() - 3.0
+    w.beat()
+    lines = [r.getMessage() for r in caplog.records]
+    assert len(lines) == 2 and lines[0].startswith("Окно не отвечало 2.0 с")
+    assert "и ещё 2 раз" in lines[1] and "ptztracker-hang" not in lines[0]

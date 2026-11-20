@@ -15,6 +15,7 @@ from __future__ import annotations
 import faulthandler
 import logging
 import os
+import sys
 import threading
 import time
 from datetime import datetime
@@ -32,6 +33,8 @@ FILE_NAME = "ptztracker-hang.log"
 HANG_S = 5.0  # окно молчит дольше — запись. Поток Qt не ждёт ни сеть, ни нейросеть: 5 с — уже не «занято»
 BEAT_MS = 1000
 MAX_BYTES = 1_000_000  # больше — прежний файл уходит в «.1» при запуске
+STALL_LOG_S = 1.5  # окно замерло дольше — строка в журнал (не чаще раза в STALL_LOG_EVERY_S): короче зависания
+STALL_LOG_EVERY_S = 30.0
 
 
 def hang_log_path() -> Path:
@@ -48,6 +51,9 @@ class HangWatch(QObject):
         self._file = None
         self._last = 0.0
         self._full = False
+        self._crash_on = False
+        self._stall_next = 0.0
+        self._stall_quiet = 0  # замираний, не попавших в журнал из-за редкости
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.beat)
 
@@ -61,6 +67,10 @@ class HangWatch(QObject):
             self._note(f"=== запуск {datetime.now():%Y-%m-%d %H:%M:%S}, версия {__version__} ===")
             self._last = time.monotonic()
             self._arm()
+            # аварийное завершение (на Windows — access violation в библиотеке на C) — стеки в тот же файл
+            self._had_crash_handler = faulthandler.is_enabled()
+            faulthandler.enable(file=self._file, all_threads=True)
+            self._crash_on = True
             self._timer.start(self._beat_ms)
             return True
         except Exception as e:  # noqa: BLE001 — сторож не должен мешать запуску
@@ -80,6 +90,8 @@ class HangWatch(QObject):
         try:
             now = time.monotonic()
             gap, self._last = now - self._last, now
+            if STALL_LOG_S < gap <= self._hang_s:
+                self._stall(now, gap)
             if gap > self._hang_s:
                 names = ", ".join(f"{t.ident:#x} = {t.name}" for t in threading.enumerate() if t.ident is not None)
                 self._note(f"--- {datetime.now():%Y-%m-%d %H:%M:%S}: окно ожило, не отвечало {gap:.1f} с. Потоки: {names}")
@@ -92,10 +104,24 @@ class HangWatch(QObject):
         except Exception:  # noqa: BLE001
             log.debug("Сторож зависаний: такт не прошёл", exc_info=True)
 
+    def _stall(self, now: float, gap: float) -> None:
+        """Окно замерло на 1,5–5 с: на площадке кнопки «не нажимались» — так видно, был ли занят поток Qt."""
+        if now < self._stall_next:
+            self._stall_quiet += 1
+            return
+        more = f" (и ещё {self._stall_quiet} раз за {STALL_LOG_EVERY_S:.0f} с)" if self._stall_quiet else ""
+        log.warning("Окно не отвечало %.1f с%s", gap, more)
+        self._stall_next, self._stall_quiet = now + STALL_LOG_EVERY_S, 0
+
     def stop(self) -> None:
         try:
             self._timer.stop()
             faulthandler.cancel_dump_traceback_later()
+            if self._crash_on:
+                self._crash_on = False
+                faulthandler.disable()
+                if self._had_crash_handler and sys.__stderr__ is not None:
+                    faulthandler.enable(file=sys.__stderr__)
             if self._file is not None:
                 self._file.close()
                 self._file = None
